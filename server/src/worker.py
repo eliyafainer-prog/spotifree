@@ -25,10 +25,17 @@ cookie_candidates = [
     os.path.join(os.getcwd(), 'cookies.txt'),
     os.path.join(os.getcwd(), 'server/cookies.txt')
 ]
+import shutil
 for cp in cookie_candidates:
     if cp and os.path.exists(cp):
-        ydl_opts['cookiefile'] = cp
-        sys.stderr.write(f"[Worker] Successfully loaded cookies from: {cp}\n")
+        try:
+            target_cp = '/tmp/cookies.txt' if os.name != 'nt' else os.path.join(os.environ.get('TEMP', '.'), 'cookies.txt')
+            shutil.copyfile(cp, target_cp)
+            ydl_opts['cookiefile'] = target_cp
+            sys.stderr.write(f"[Worker] Successfully copied and loaded cookies from: {target_cp}\n")
+        except Exception:
+            ydl_opts['cookiefile'] = cp
+            sys.stderr.write(f"[Worker] Successfully loaded cookies from: {cp}\n")
         sys.stderr.flush()
         break
 

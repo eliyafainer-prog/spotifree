@@ -60,7 +60,16 @@ router.get('/debug-extract', async (req, res) => {
     }
   }
 
-  const cookieFlag = foundCookie ? `--cookies "${foundCookie}"` : '';
+  let cookieFlag = '';
+  if (foundCookie) {
+    try {
+      const targetCp = process.platform === 'win32' ? path.join(process.env.TEMP || '.', 'cookies.txt') : '/tmp/cookies.txt';
+      fs.copyFileSync(foundCookie, targetCp);
+      cookieFlag = `--cookies "${targetCp}"`;
+    } catch (e) {
+      cookieFlag = `--cookies "${foundCookie}"`;
+    }
+  }
   exec(`${PYTHON_BIN} -m yt_dlp --version`, (err1, vOut) => {
     exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba ${cookieFlag} https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
       res.json({

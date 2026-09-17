@@ -169,6 +169,28 @@ function extractWithWorker(target, isPriority = true) {
  */
 function extractStreamWithYtDlp(target) {
   return new Promise((resolve, reject) => {
+    const cookieCandidates = [
+      process.env.COOKIE_FILE,
+      '/etc/secrets/cookies.txt',
+      path.join(__dirname, '../../cookies.txt'),
+      path.join(process.cwd(), 'cookies.txt'),
+      path.join(process.cwd(), 'server/cookies.txt')
+    ].filter(Boolean);
+
+    let cookiePath = null;
+    for (const c of cookieCandidates) {
+      if (fs.existsSync(c)) {
+        try {
+          const tmpCp = process.platform === 'win32' ? path.join(process.env.TEMP || '.', 'cookies.txt') : '/tmp/cookies.txt';
+          fs.copyFileSync(c, tmpCp);
+          cookiePath = tmpCp;
+        } catch (e) {
+          cookiePath = c;
+        }
+        break;
+      }
+    }
+
     const args = [
       '-m', 'yt_dlp',
       '-f', '140/ba[ext=m4a]/ba/best',
@@ -178,9 +200,14 @@ function extractStreamWithYtDlp(target) {
       '--no-check-certificates',
       '--no-config',
       '--geo-bypass',
-      '--socket-timeout', '8',
-      target
+      '--socket-timeout', '8'
     ];
+
+    if (cookiePath) {
+      args.push('--cookies', cookiePath);
+    }
+
+    args.push(target);
 
     const pyProcess = spawn(PYTHON_BIN, args);
 
