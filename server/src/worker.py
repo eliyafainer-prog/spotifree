@@ -29,6 +29,8 @@ cookie_candidates = [
 for cp in cookie_candidates:
     if cp and os.path.exists(cp):
         ydl_opts['cookiefile'] = cp
+        sys.stderr.write(f"[Worker] Successfully loaded cookies from: {cp}\n")
+        sys.stderr.flush()
         break
 
 ydl = yt_dlp.YoutubeDL(ydl_opts)

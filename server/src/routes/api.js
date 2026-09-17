@@ -36,14 +36,37 @@ router.get('/trending', async (req, res) => {
 
 router.get('/debug-extract', async (req, res) => {
   const { exec } = require('child_process');
+  const fs = require('fs');
   const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
   const targetId = req.query.id || 'kJQP7kiw5Fk';
+  
+  const cookieCandidates = [
+    process.env.COOKIE_FILE,
+    '/etc/secrets/cookies.txt',
+    path.join(__dirname, '../../cookies.txt'),
+    path.join(process.cwd(), 'cookies.txt'),
+    path.join(process.cwd(), 'server/cookies.txt')
+  ].filter(Boolean);
+
+  let foundCookie = null;
+  let cookieSize = 0;
+  for (const c of cookieCandidates) {
+    if (fs.existsSync(c)) {
+      foundCookie = c;
+      cookieSize = fs.statSync(c).size;
+      break;
+    }
+  }
+
+  const cookieFlag = foundCookie ? `--cookies "${foundCookie}"` : '';
   exec(`${PYTHON_BIN} -m yt_dlp --version`, (err1, vOut) => {
-    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba --extractor-args "youtube:player_client=android,ios,web" https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
+    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba ${cookieFlag} --extractor-args "youtube:player_client=android,ios,web" https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
       res.json({
         pythonBin: PYTHON_BIN,
+        foundCookie,
+        cookieSize,
         version: vOut ? vOut.trim() : (err1?.message || 'failed'),
-        stdout: stdout ? stdout.trim().slice(0, 200) : null,
+        stdout: stdout ? stdout.trim().slice(0, 300) : null,
         stderr: stderr ? stderr.trim() : null,
         error: err2 ? err2.message : null
       });
