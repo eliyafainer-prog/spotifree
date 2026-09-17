@@ -81,6 +81,7 @@ export async function getPlayableAudioUrl(track) {
     streamableId = data.streamableId;
   }
 
-  // Use the backend pipe endpoint with HTTP Range support
-  return `${API_BASE}/stream/pipe/${streamableId}`;
+  // Use the backend pipe endpoint with HTTP Range support and fallback query
+  const fallbackQuery = encodeURIComponent(`${track.title} ${track.artist || ''}`.trim());
+  return `${API_BASE}/stream/pipe/${streamableId}?q=${fallbackQuery}`;
 }

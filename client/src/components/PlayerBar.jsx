@@ -11,7 +11,6 @@ import {
   VolumeX,
   Heart,
   Mic2,
-  ListMusic,
   Maximize2,
   Music
 } from 'lucide-react';
@@ -54,9 +53,9 @@ export function PlayerBar({
       {/* Mobile Mini Player */}
       <div
         onClick={onOpenFullscreen}
-        className="md:hidden flex flex-col bg-spotify-elevated/95 backdrop-blur-md border-t border-spotify-border px-3 py-2 cursor-pointer z-30 relative"
+        className="md:hidden flex flex-col bg-spotify-elevated/95 backdrop-blur-md border-t border-spotify-border px-3.5 py-2 cursor-pointer z-30 relative"
       >
-        {/* Progress Line */}
+        {/* Progress Line at Top */}
         <div className="absolute top-0 left-0 right-0 h-0.5 bg-white/10">
           <div
             className="h-full bg-spotify-green transition-all"
@@ -65,8 +64,8 @@ export function PlayerBar({
         </div>
 
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-            <div className="w-10 h-10 rounded bg-spotify-dark overflow-hidden flex-shrink-0">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-10 h-10 rounded-md bg-spotify-dark overflow-hidden flex-shrink-0 shadow">
               {currentTrack.thumbnail ? (
                 <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover" />
               ) : (
@@ -75,13 +74,13 @@ export function PlayerBar({
                 </div>
               )}
             </div>
-            <div className="flex flex-col min-w-0 truncate">
+            <div className="flex flex-col min-w-0 truncate text-right">
               <span className="text-sm font-semibold text-white truncate">{currentTrack.title}</span>
               <span className="text-xs text-spotify-subtext truncate">{currentTrack.artist}</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-2.5" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => onToggleLike(currentTrack)}
               className={`p-1.5 ${isLiked ? 'text-spotify-green' : 'text-spotify-subtext'}`}
@@ -91,7 +90,7 @@ export function PlayerBar({
 
             <button
               onClick={onTogglePlay}
-              className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
+              className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-md"
             >
               {isPlaying ? (
                 <Pause className="w-4 h-4 fill-current" />
@@ -103,11 +102,11 @@ export function PlayerBar({
         </div>
       </div>
 
-      {/* Desktop Fixed Bottom Bar */}
+      {/* Desktop Fixed Bottom Bar (RTL aligned) */}
       <div className="hidden md:flex items-center justify-between bg-black border-t border-spotify-border/40 h-20 px-4 z-40 select-none">
-        {/* Left: Track Information */}
-        <div className="flex items-center gap-3.5 w-[30%] min-w-[180px]">
-          <div className="w-14 h-14 rounded bg-spotify-elevated overflow-hidden flex-shrink-0 relative shadow-md">
+        {/* Right side in RTL: Track Information */}
+        <div className="flex items-center gap-3.5 w-[30%] min-w-[200px]">
+          <div className="w-14 h-14 rounded-md bg-spotify-elevated overflow-hidden flex-shrink-0 relative shadow-md">
             {currentTrack.thumbnail ? (
               <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover" />
             ) : (
@@ -117,7 +116,7 @@ export function PlayerBar({
             )}
           </div>
 
-          <div className="flex flex-col min-w-0 truncate">
+          <div className="flex flex-col min-w-0 truncate text-right">
             <span className="text-sm font-semibold text-white truncate hover:underline cursor-pointer">
               {currentTrack.title}
             </span>
@@ -150,17 +149,19 @@ export function PlayerBar({
               <Shuffle className="w-4 h-4" />
             </button>
 
+            {/* Previous track */}
             <button
               onClick={onPrev}
               title="הקודם"
               className="text-spotify-subtext hover:text-white transition-colors"
             >
-              <SkipBack className="w-5 h-5 fill-current" />
+              <SkipForward className="w-5 h-5 fill-current" />
             </button>
 
+            {/* Big Play/Pause Button */}
             <button
               onClick={onTogglePlay}
-              className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
+              className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-md"
             >
               {isPlaying ? (
                 <Pause className="w-4 h-4 fill-current" />
@@ -169,12 +170,13 @@ export function PlayerBar({
               )}
             </button>
 
+            {/* Next track */}
             <button
               onClick={onNext}
               title="הבא"
               className="text-spotify-subtext hover:text-white transition-colors"
             >
-              <SkipForward className="w-5 h-5 fill-current" />
+              <SkipBack className="w-5 h-5 fill-current" />
             </button>
 
             <button
@@ -201,14 +203,14 @@ export function PlayerBar({
               onChange={(e) => onSeek(parseFloat(e.target.value))}
               className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-spotify-green"
             />
-            <span className="text-[11px] text-spotify-subtext font-mono w-9">
+            <span className="text-[11px] text-spotify-subtext font-mono w-9 text-left">
               {formatTime(duration)}
             </span>
           </div>
         </div>
 
-        {/* Right: Extra Tools (Lyrics, Volume, Fullscreen) */}
-        <div className="flex items-center justify-end gap-3 w-[30%]">
+        {/* Left side in RTL: Lyrics, Volume, Fullscreen */}
+        <div className="flex items-center justify-end gap-3.5 w-[30%]">
           <button
             onClick={onOpenLyrics}
             title="מילים מסונכרנות"

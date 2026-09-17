@@ -15,18 +15,18 @@ export function TrackRow({ track, index, isCurrentTrack, isPlaying, onPlay, isLi
       className={`group flex items-center justify-between p-2 rounded-md transition-colors cursor-pointer select-none ${
         isCurrentTrack
           ? 'bg-spotify-highlight text-spotify-green'
-          : 'hover:bg-spotify-highlight/40 text-white'
+          : 'hover:bg-spotify-highlight/50 text-white'
       }`}
     >
-      {/* Left: Index / Play state + Artwork + Title/Artist */}
-      <div className="flex items-center gap-3 min-w-0 flex-1">
+      {/* Right side in RTL: Index / Play Icon + Artwork + Title & Artist */}
+      <div className="flex items-center gap-3.5 min-w-0 flex-1">
         <div className="w-6 text-center text-xs text-spotify-subtext font-mono flex-shrink-0 flex items-center justify-center">
           {isCurrentTrack ? (
             isPlaying ? (
-              <span className="flex items-end justify-center gap-0.5 h-3">
-                <span className="w-1 bg-spotify-green animate-pulse h-full"></span>
-                <span className="w-1 bg-spotify-green animate-pulse h-2"></span>
-                <span className="w-1 bg-spotify-green animate-pulse h-full"></span>
+              <span className="flex items-end justify-center gap-0.5 h-3.5">
+                <span className="w-1 bg-spotify-green animate-pulse h-full rounded-full"></span>
+                <span className="w-1 bg-spotify-green animate-pulse h-2 rounded-full"></span>
+                <span className="w-1 bg-spotify-green animate-pulse h-full rounded-full"></span>
               </span>
             ) : (
               <Play className="w-4 h-4 fill-spotify-green text-spotify-green" />
@@ -39,7 +39,7 @@ export function TrackRow({ track, index, isCurrentTrack, isPlaying, onPlay, isLi
           )}
         </div>
 
-        <div className="w-10 h-10 rounded bg-spotify-elevated flex-shrink-0 overflow-hidden relative">
+        <div className="w-10 h-10 rounded bg-spotify-elevated flex-shrink-0 overflow-hidden shadow-sm relative">
           {track.thumbnail ? (
             <img src={track.thumbnail} alt="" className="w-full h-full object-cover" />
           ) : (
@@ -49,8 +49,8 @@ export function TrackRow({ track, index, isCurrentTrack, isPlaying, onPlay, isLi
           )}
         </div>
 
-        <div className="flex flex-col min-w-0 truncate">
-          <span className={`text-sm font-medium truncate ${isCurrentTrack ? 'text-spotify-green font-bold' : 'text-white'}`}>
+        <div className="flex flex-col min-w-0 truncate text-right">
+          <span className={`text-sm font-semibold truncate ${isCurrentTrack ? 'text-spotify-green' : 'text-white'}`}>
             {track.title}
           </span>
           <span className="text-xs text-spotify-subtext truncate group-hover:text-white transition-colors">
@@ -59,8 +59,8 @@ export function TrackRow({ track, index, isCurrentTrack, isPlaying, onPlay, isLi
         </div>
       </div>
 
-      {/* Right: Like Button & Duration */}
-      <div className="flex items-center gap-4 flex-shrink-0 pr-2">
+      {/* Left side in RTL: Like Button & Duration */}
+      <div className="flex items-center gap-4 flex-shrink-0 pl-2">
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -74,7 +74,7 @@ export function TrackRow({ track, index, isCurrentTrack, isPlaying, onPlay, isLi
           <Heart className={`w-4 h-4 ${isLiked ? 'fill-spotify-green' : ''}`} />
         </button>
 
-        <span className="text-xs text-spotify-subtext font-mono w-10 text-right">
+        <span className="text-xs text-spotify-subtext font-mono w-10 text-left">
           {formatDuration(track.durationSeconds)}
         </span>
       </div>

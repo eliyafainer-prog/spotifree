@@ -182,13 +182,13 @@ export default function App() {
           <div className="flex items-center justify-between p-4 bg-spotify-dark/80 backdrop-blur-md sticky top-0 z-20 border-b border-spotify-border/40">
             {currentView === 'search' ? (
               <form onSubmit={handleSearchSubmit} className="flex-1 max-w-md relative">
-                <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-spotify-subtext" />
+                <Search className="w-5 h-5 absolute right-3.5 top-1/2 -translate-y-1/2 text-spotify-subtext" />
                 <input
                   type="text"
                   placeholder="מה תרצה לשמוע? (שיר, אמן, אלבום...)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-spotify-elevated text-white text-sm pl-11 pr-4 py-2.5 rounded-full border border-transparent focus:border-spotify-green focus:outline-none transition-all placeholder:text-spotify-subtext"
+                  className="w-full bg-spotify-elevated text-white text-sm pr-11 pl-4 py-2.5 rounded-full border border-transparent focus:border-spotify-green focus:outline-none transition-all placeholder:text-spotify-subtext text-right"
                   autoFocus
                 />
               </form>

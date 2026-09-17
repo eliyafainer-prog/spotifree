@@ -1,72 +1,99 @@
 const { spawn } = require('child_process');
 const axios = require('axios');
 
-// In-memory cache for stream URLs (valid for ~4-6 hours)
+// In-memory cache for stream URLs (valid for ~3-4 hours)
 const urlCache = new Map();
 
 /**
- * Extract audio stream URL for a given YouTube video ID
+ * Extract audio stream URL using yt-dlp
  */
-function getAudioStreamUrl(videoId) {
+function extractStreamWithYtDlp(target) {
   return new Promise((resolve, reject) => {
-    // Check cache
-    const cached = urlCache.get(videoId);
-    if (cached && cached.expiresAt > Date.now()) {
-      return resolve(cached.url);
-    }
-
-    const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const pyProcess = spawn('python', [
+    const args = [
       '-m', 'yt_dlp',
       '-f', 'ba/b[height<=480]/best',
       '--get-url',
       '--no-playlist',
-      targetUrl
-    ]);
+      '--no-warnings',
+      '--default-search', 'ytsearch5',
+      target
+    ];
+
+    const pyProcess = spawn('python', args);
 
     let output = '';
     let errorOutput = '';
 
-    pyProcess.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    pyProcess.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
+    pyProcess.stdout.on('data', d => output += d.toString());
+    pyProcess.stderr.on('data', d => errorOutput += d.toString());
 
     pyProcess.on('close', (code) => {
-      if (code !== 0) {
-        console.error(`yt-dlp error for ${videoId}:`, errorOutput);
-        return reject(new Error(`Failed to extract stream: ${errorOutput}`));
+      const urls = output.trim().split('\n').filter(u => u.startsWith('http'));
+      if (urls.length > 0) {
+        return resolve(urls[0].trim());
       }
-
-      const streamUrl = output.trim().split('\n')[0];
-      if (!streamUrl || !streamUrl.startsWith('http')) {
-        return reject(new Error('Invalid stream URL returned'));
-      }
-
-      // Cache for 3 hours
-      urlCache.set(videoId, {
-        url: streamUrl,
-        expiresAt: Date.now() + 3 * 60 * 60 * 1000
-      });
-
-      resolve(streamUrl);
+      reject(new Error(`Failed to extract stream: ${errorOutput || 'No playable stream found'}`));
     });
 
-    pyProcess.on('error', (err) => {
-      reject(err);
-    });
+    pyProcess.on('error', reject);
   });
+}
+
+/**
+ * Get audio stream URL for a given video ID or search query, with optional fallback query
+ */
+async function getAudioStreamUrl(videoId, fallbackQuery = null) {
+  const cacheKey = videoId || fallbackQuery;
+  const cached = urlCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+
+  let streamUrl = null;
+
+  // 1. Try video ID directly if valid
+  const isVideoId = videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId);
+  if (isVideoId) {
+    try {
+      streamUrl = await extractStreamWithYtDlp(`https://www.youtube.com/watch?v=${videoId}`);
+    } catch (err) {
+      console.warn(`Direct stream for ${videoId} failed (${err.message}). Trying fallback query...`);
+    }
+  }
+
+  // 2. If direct video failed or wasn't provided, try fallback query or query search
+  if (!streamUrl && fallbackQuery) {
+    try {
+      streamUrl = await extractStreamWithYtDlp(`ytsearch5:${fallbackQuery}`);
+    } catch (fallbackErr) {
+      console.error(`Fallback query search failed:`, fallbackErr.message);
+    }
+  }
+
+  // 3. If still no stream and videoId has text
+  if (!streamUrl && !isVideoId && videoId) {
+    streamUrl = await extractStreamWithYtDlp(`ytsearch5:${videoId}`);
+  }
+
+  if (!streamUrl) {
+    throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
+  }
+
+  // Cache for 3 hours
+  urlCache.set(cacheKey, {
+    url: streamUrl,
+    expiresAt: Date.now() + 3 * 60 * 60 * 1000
+  });
+
+  return streamUrl;
 }
 
 /**
  * Proxy stream to handle HTTP Range requests smoothly
  */
-async function pipeStream(videoId, req, res) {
+async function pipeStream(videoId, req, res, fallbackQuery = null) {
   try {
-    const streamUrl = await getAudioStreamUrl(videoId);
+    const streamUrl = await getAudioStreamUrl(videoId, fallbackQuery);
     const range = req.headers.range;
 
     const headers = {
@@ -87,7 +114,6 @@ async function pipeStream(videoId, req, res) {
 
     res.status(response.status);
     for (const [key, value] of Object.entries(response.headers)) {
-      // Pass audio content headers to client
       if (['content-type', 'content-length', 'content-range', 'accept-ranges'].includes(key.toLowerCase())) {
         res.setHeader(key, value);
       }
@@ -99,7 +125,7 @@ async function pipeStream(videoId, req, res) {
   } catch (err) {
     console.error('Error piping stream:', err.message);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to stream audio' });
+      res.status(500).json({ error: 'שגיאה בהזרמת השמע: ' + err.message });
     }
   }
 }

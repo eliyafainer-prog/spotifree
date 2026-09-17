@@ -7,6 +7,7 @@ const { cleanTitle } = require('./search');
  * Extract Spotify ID and type from URL (supports intl-xx, queries, and URIs)
  */
 function parseSpotifyUrl(url) {
+  if (!url) return null;
   const match = url.match(/(?:spotify\.com\/(?:intl-[a-zA-Z-]+\/)?|spotify:)(playlist|album|track)[:/]([a-zA-Z0-9]+)/);
   if (!match) return null;
   return {
@@ -16,12 +17,49 @@ function parseSpotifyUrl(url) {
 }
 
 /**
- * Fetch tracks from a Spotify URL using embed endpoint (No API key required)
+ * Extract the highest resolution cover image from Spotify entity
+ */
+async function extractCoverArt(entity, rawUrl) {
+  // 1. Try visualIdentity (new Spotify embed format: 640x640)
+  if (entity?.visualIdentity?.image && Array.isArray(entity.visualIdentity.image) && entity.visualIdentity.image.length > 0) {
+    const sorted = [...entity.visualIdentity.image].sort((a, b) => (b.maxWidth || 0) - (a.maxWidth || 0));
+    if (sorted[0]?.url) return sorted[0].url;
+  }
+
+  // 2. Try coverArt.sources
+  if (entity?.coverArt?.sources && Array.isArray(entity.coverArt.sources) && entity.coverArt.sources.length > 0) {
+    const sorted = [...entity.coverArt.sources].sort((a, b) => (b.width || 0) - (a.width || 0));
+    if (sorted[0]?.url) return sorted[0].url;
+  }
+
+  // 3. Try entity.images
+  if (entity?.images && Array.isArray(entity.images) && entity.images.length > 0) {
+    const sorted = [...entity.images].sort((a, b) => (b.width || 0) - (a.width || 0));
+    if (sorted[0]?.url) return sorted[0].url;
+  }
+
+  // 4. Fallback: Spotify oEmbed API (guaranteed high-quality thumbnail)
+  try {
+    const oembedRes = await axios.get(`https://open.spotify.com/oembed?url=${encodeURIComponent(rawUrl)}`, {
+      timeout: 4000
+    });
+    if (oembedRes.data?.thumbnail_url) {
+      return oembedRes.data.thumbnail_url;
+    }
+  } catch (e) {
+    // Ignored
+  }
+
+  return '';
+}
+
+/**
+ * Fetch tracks and artwork from Spotify URL (no API key required)
  */
 async function importSpotify(url) {
   const parsed = parseSpotifyUrl(url);
   if (!parsed) {
-    throw new Error('קישור ספוטיפיי אינו תקין. יש להזין קישור לפלייליסט, אלבום או שיר.');
+    throw new Error('קישור ספוטיפיי אינו תקין. אנא ודא שהעתקת קישור לפלייליסט, אלבום או שיר.');
   }
 
   const embedUrl = `https://open.spotify.com/embed/${parsed.type}/${parsed.id}`;
@@ -30,17 +68,17 @@ async function importSpotify(url) {
     response = await axios.get(embedUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'Accept-Language': 'he,en-US,en;q=0.9'
       },
       timeout: 10000,
       validateStatus: () => true
     });
   } catch (netErr) {
-    throw new Error('שגיאת תקשורת מול ספוטיפיי. בדוק את החיבור לרשת.');
+    throw new Error('שגיאת תקשורת מול ספוטיפיי. אנא בדוק את החיבור לרשת.');
   }
 
   if (response.status === 404) {
-    throw new Error('הפלייליסט או האלבום לא נמצא בספוטיפיי (ייתכן שהוא פרטי או שהקישור שגוי).');
+    throw new Error('התוכן לא נמצא בספוטיפיי. ייתכן שהקישור שגוי או שהפלייליסט הוגדר כפרטי.');
   }
 
   const html = response.data || '';
@@ -58,13 +96,12 @@ async function importSpotify(url) {
   }
 
   const entity = nextData.props?.pageProps?.state?.data?.entity;
-
   if (!entity) {
     throw new Error('האלבום או הפלייליסט לא נמצא בספוטיפיי (בדוק את הקישור שהדבקת).');
   }
 
-  const playlistTitle = entity.name || entity.title || 'Imported Spotify Playlist';
-  const playlistCover = entity.images?.[0]?.url || entity.coverArt?.sources?.[0]?.url || '';
+  const playlistTitle = entity.name || entity.title || 'אלבום מיובא';
+  const playlistCover = await extractCoverArt(entity, url);
 
   let rawTracks = [];
   if (parsed.type === 'track') {
@@ -74,7 +111,7 @@ async function importSpotify(url) {
   }
 
   const tracks = rawTracks.map((t, index) => {
-    const title = t.title || t.name || 'Unknown Track';
+    const title = t.title || t.name || 'שיר ללא שם';
     const artist = t.subtitle || (t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist');
     const durationMs = t.duration || 0;
     const durationSec = Math.round(durationMs / 1000);
@@ -174,12 +211,12 @@ async function importYouTubePlaylist(url) {
  */
 async function universalImport(inputUrl) {
   const trimmed = inputUrl.trim();
-  if (trimmed.includes('spotify.com')) {
+  if (trimmed.includes('spotify.com') || trimmed.startsWith('spotify:')) {
     return await importSpotify(trimmed);
   } else if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
     return await importYouTubePlaylist(trimmed);
   } else {
-    throw new Error('Unsupported URL. Please enter a valid Spotify or YouTube playlist URL.');
+    throw new Error('כתובת לא נתמכת. יש להדביק קישור תקין מ-Spotify או מ-YouTube.');
   }
 }
 
@@ -191,13 +228,21 @@ async function resolveTrackToStreamableId(track) {
     return track.id;
   }
 
-  const query = track.query || `${track.artist} ${track.title} audio`;
+  // Search with artist and title
+  const query = track.query || `${track.artist} ${track.title}`;
   const results = await yts(query);
   if (results && results.videos && results.videos.length > 0) {
+    // Return top video ID
     return results.videos[0].videoId;
   }
 
-  throw new Error(`Could not find audio for ${track.title}`);
+  // Fallback: search title only
+  const fallbackResults = await yts(track.title);
+  if (fallbackResults && fallbackResults.videos && fallbackResults.videos.length > 0) {
+    return fallbackResults.videos[0].videoId;
+  }
+
+  throw new Error(`לא נמצא מקור שמע עבור: ${track.title}`);
 }
 
 module.exports = {

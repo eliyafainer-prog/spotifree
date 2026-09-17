@@ -52,7 +52,8 @@ router.get('/stream/:id', async (req, res) => {
  */
 router.get('/stream/pipe/:id', (req, res) => {
   const { id } = req.params;
-  pipeStream(id, req, res);
+  const fallbackQuery = req.query.q || null;
+  pipeStream(id, req, res, fallbackQuery);
 });
 
 /**
