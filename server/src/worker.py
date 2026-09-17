@@ -13,7 +13,8 @@ ydl_opts = {
     'socket_timeout': 6,
     'noplaylist': True,
     'extract_flat': False,
-    'skip_download': True
+    'skip_download': True,
+    'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
 }
 
 ydl = yt_dlp.YoutubeDL(ydl_opts)

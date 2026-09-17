@@ -67,6 +67,9 @@ function saveCachesToDisk() {
 // Periodically sync caches to disk
 setInterval(saveCachesToDisk, 20000);
 
+// Persistent cross-platform Python binary (python on Windows, python3 on Linux/Cloud)
+const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+
 // ==========================================
 // PERSISTENT MULTI-THREADED PYTHON WORKER
 // ==========================================
@@ -77,7 +80,7 @@ const pendingRequests = new Map();
 
 function startWorker() {
   const workerScript = path.join(__dirname, '../worker.py');
-  workerProcess = spawn('python', [workerScript]);
+  workerProcess = spawn(PYTHON_BIN, [workerScript]);
 
   let buffer = '';
 
@@ -174,10 +177,11 @@ function extractStreamWithYtDlp(target) {
       '--no-config',
       '--geo-bypass',
       '--socket-timeout', '6',
+      '--extractor-args', 'youtube:player_client=android,web',
       target
     ];
 
-    const pyProcess = spawn('python', args);
+    const pyProcess = spawn(PYTHON_BIN, args);
 
     let output = '';
     let errorOutput = '';

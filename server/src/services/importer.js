@@ -143,12 +143,14 @@ async function importSpotify(url) {
   };
 }
 
+const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+
 /**
  * Import a YouTube playlist
  */
 async function importYouTubePlaylist(url) {
   return new Promise((resolve, reject) => {
-    const pyProcess = spawn('python', [
+    const pyProcess = spawn(PYTHON_BIN, [
       '-m', 'yt_dlp',
       '--dump-single-json',
       '--flat-playlist',

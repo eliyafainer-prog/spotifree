@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: spotifree
+    runtime: docker
+    plan: free
+    region: frankfurt
+    envVars:
+      - key: PORT
+        value: 5050
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /health
