@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 import threading
@@ -16,6 +17,19 @@ ydl_opts = {
     'skip_download': True,
     'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web']}}
 }
+
+# Auto-detect cookiefile (Render Secret File, local file, or env var)
+cookie_candidates = [
+    os.environ.get('COOKIE_FILE', ''),
+    '/etc/secrets/cookies.txt',
+    os.path.join(os.path.dirname(__file__), '../cookies.txt'),
+    os.path.join(os.getcwd(), 'cookies.txt'),
+    os.path.join(os.getcwd(), 'server/cookies.txt')
+]
+for cp in cookie_candidates:
+    if cp and os.path.exists(cp):
+        ydl_opts['cookiefile'] = cp
+        break
 
 ydl = yt_dlp.YoutubeDL(ydl_opts)
 lock = threading.Lock()

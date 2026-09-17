@@ -34,5 +34,7 @@ yarn-error.log*
 Thumbs.db
 *.exe
 server/cache/
+*cookies.txt
+cookies.txt
 
 
