@@ -61,7 +61,7 @@ router.get('/debug-extract', async (req, res) => {
   }
 
   let cookieFlag = '';
-  if (foundCookie) {
+  if (foundCookie && !req.query.no_cookie) {
     try {
       const targetCp = process.platform === 'win32' ? path.join(process.env.TEMP || '.', 'cookies.txt') : '/tmp/cookies.txt';
       fs.copyFileSync(foundCookie, targetCp);
