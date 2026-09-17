@@ -1,0 +1,16 @@
+{
+  "name": "spotifree",
+  "version": "1.0.0",
+  "description": "Ad-free Spotify clone with PWA, headphone controls, playlist import & synced lyrics",
+  "private": true,
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue,green\" \"npm run dev:server\" \"npm run dev:client\"",
+    "build": "npm --prefix client run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
