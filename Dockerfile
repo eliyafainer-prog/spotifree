@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
     curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Deno (official JS runtime for yt-dlp signature solving)
