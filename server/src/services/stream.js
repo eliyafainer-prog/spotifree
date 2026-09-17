@@ -182,7 +182,19 @@ function extractStreamWithYtDlp(target) {
       if (fs.existsSync(c)) {
         try {
           const tmpCp = process.platform === 'win32' ? path.join(process.env.TEMP || '.', 'cookies.txt') : '/tmp/cookies.txt';
-          fs.copyFileSync(c, tmpCp);
+          const raw = fs.readFileSync(c, 'utf8');
+          const lines = raw.split('\n');
+          const clean = ['# Netscape HTTP Cookie File\n'];
+          for (const line of lines) {
+            const stripped = line.trim();
+            if (!stripped || stripped.startsWith('#')) continue;
+            const parts = stripped.split(/\s+/);
+            if (parts.length >= 7) {
+              const val = parts.slice(6).join(' ');
+              clean.push(`${parts[0]}\t${parts[1]}\t${parts[2]}\t${parts[3]}\t${parts[4]}\t${parts[5]}\t${val}\n`);
+            }
+          }
+          fs.writeFileSync(tmpCp, clean.join(''), 'utf8');
           cookiePath = tmpCp;
         } catch (e) {
           cookiePath = c;

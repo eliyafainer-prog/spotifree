@@ -64,7 +64,19 @@ router.get('/debug-extract', async (req, res) => {
   if (foundCookie && !req.query.no_cookie) {
     try {
       const targetCp = process.platform === 'win32' ? path.join(process.env.TEMP || '.', 'cookies.txt') : '/tmp/cookies.txt';
-      fs.copyFileSync(foundCookie, targetCp);
+      const raw = fs.readFileSync(foundCookie, 'utf8');
+      const lines = raw.split('\n');
+      const clean = ['# Netscape HTTP Cookie File\n'];
+      for (const line of lines) {
+        const stripped = line.trim();
+        if (!stripped || stripped.startsWith('#')) continue;
+        const parts = stripped.split(/\s+/);
+        if (parts.length >= 7) {
+          const val = parts.slice(6).join(' ');
+          clean.push(`${parts[0]}\t${parts[1]}\t${parts[2]}\t${parts[3]}\t${parts[4]}\t${parts[5]}\t${val}\n`);
+        }
+      }
+      fs.writeFileSync(targetCp, clean.join(''), 'utf8');
       cookieFlag = `--cookies "${targetCp}"`;
     } catch (e) {
       cookieFlag = `--cookies "${foundCookie}"`;

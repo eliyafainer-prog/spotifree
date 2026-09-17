@@ -26,17 +26,37 @@ cookie_candidates = [
     os.path.join(os.getcwd(), 'cookies.txt'),
     os.path.join(os.getcwd(), 'server/cookies.txt')
 ]
-import shutil
+def normalize_cookies(src_path, dst_path):
+    with open(src_path, 'r', encoding='utf-8', errors='ignore') as f:
+        lines = f.readlines()
+    clean_lines = ['# Netscape HTTP Cookie File\n']
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        parts = stripped.split()
+        if len(parts) >= 7:
+            domain = parts[0]
+            flag = parts[1]
+            path = parts[2]
+            secure = parts[3]
+            expiration = parts[4]
+            name = parts[5]
+            value = ' '.join(parts[6:])
+            clean_lines.append(f"{domain}\t{flag}\t{path}\t{secure}\t{expiration}\t{name}\t{value}\n")
+    with open(dst_path, 'w', encoding='utf-8') as f:
+        f.writelines(clean_lines)
+
 for cp in cookie_candidates:
     if cp and os.path.exists(cp):
         try:
             target_cp = '/tmp/cookies.txt' if os.name != 'nt' else os.path.join(os.environ.get('TEMP', '.'), 'cookies.txt')
-            shutil.copyfile(cp, target_cp)
+            normalize_cookies(cp, target_cp)
             ydl_opts['cookiefile'] = target_cp
-            sys.stderr.write(f"[Worker] Successfully copied and loaded cookies from: {target_cp}\n")
-        except Exception:
+            sys.stderr.write(f"[Worker] Successfully normalized and loaded cookies from: {target_cp}\n")
+        except Exception as e:
             ydl_opts['cookiefile'] = cp
-            sys.stderr.write(f"[Worker] Successfully loaded cookies from: {cp}\n")
+            sys.stderr.write(f"[Worker] Failed to normalize cookies, fallback: {e}\n")
         sys.stderr.flush()
         break
 
