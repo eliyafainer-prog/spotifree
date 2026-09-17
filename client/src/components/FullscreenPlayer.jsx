@@ -29,7 +29,7 @@ export function FullscreenPlayer({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
 
   return (
     <div className="fixed inset-0 z-50 bg-gradient-to-b from-spotify-elevated via-spotify-dark to-black flex flex-col justify-between p-6 animate-slideUp select-none">
@@ -79,7 +79,7 @@ export function FullscreenPlayer({
 
       {/* Song Info & Like Button */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex flex-col min-w-0 flex-1 pr-4">
+        <div className="flex flex-col min-w-0 flex-1 pr-4 text-right">
           <h1 className="text-xl font-bold text-white truncate">
             {currentTrack.title}
           </h1>
@@ -98,16 +98,20 @@ export function FullscreenPlayer({
         </button>
       </div>
 
-      {/* Progress Slider */}
-      <div className="flex flex-col gap-1.5 mb-6 group">
+      {/* Progress Slider (LTR) */}
+      <div className="flex flex-col gap-1.5 mb-6 group" dir="ltr">
         <div className="relative w-full flex items-center">
           <input
             type="range"
             min="0"
             max={duration || 100}
+            step="0.1"
             value={currentTime}
             onChange={(e) => onSeek(parseFloat(e.target.value))}
-            className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-spotify-green"
+            style={{
+              background: `linear-gradient(to right, #1ed760 ${progressPercent}%, rgba(255, 255, 255, 0.25) ${progressPercent}%)`
+            }}
+            className="spotify-slider w-full h-1.5"
           />
         </div>
         <div className="flex justify-between text-[11px] text-spotify-subtext font-mono">
@@ -116,8 +120,8 @@ export function FullscreenPlayer({
         </div>
       </div>
 
-      {/* Main Controls (Big Buttons for Mobile) */}
-      <div className="flex items-center justify-between px-2 mb-6">
+      {/* Main Controls (Big Buttons for Mobile) (LTR) */}
+      <div className="flex items-center justify-between px-2 mb-6" dir="ltr">
         <button
           onClick={onToggleShuffle}
           className={`p-2 transition-colors ${

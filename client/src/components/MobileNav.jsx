@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Search, Library, PlusCircle } from 'lucide-react';
+import { Home, Search, Library, PlusCircle, BarChart3 } from 'lucide-react';
 
 export function MobileNav({ currentView, setCurrentView, openImportModal, setSelectedPlaylistId }) {
   return (
@@ -32,10 +32,23 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
 
       <button
         onClick={() => {
+          setCurrentView('analytics');
+          setSelectedPlaylistId(null);
+        }}
+        className={`flex flex-col items-center justify-center gap-1 w-14 py-1 transition-colors ${
+          currentView === 'analytics' ? 'text-emerald-400' : 'text-spotify-subtext hover:text-white'
+        }`}
+      >
+        <BarChart3 className="w-5 h-5" />
+        <span className="text-[10px] font-medium">נתונים</span>
+      </button>
+
+      <button
+        onClick={() => {
           setCurrentView('library');
           setSelectedPlaylistId(null);
         }}
-        className={`flex flex-col items-center justify-center gap-1 w-16 py-1 transition-colors ${
+        className={`flex flex-col items-center justify-center gap-1 w-14 py-1 transition-colors ${
           currentView === 'library' || currentView === 'liked' || currentView === 'playlist' ? 'text-white' : 'text-spotify-subtext hover:text-white'
         }`}
       >

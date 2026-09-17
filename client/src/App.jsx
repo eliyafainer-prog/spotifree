@@ -24,6 +24,7 @@ import {
   deletePlaylist,
   getRecentTracks
 } from './services/storage';
+import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
 
 import { Sidebar } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
@@ -33,6 +34,7 @@ import { SyncedLyrics } from './components/SyncedLyrics';
 import { ImportModal } from './components/ImportModal';
 import { TrackRow } from './components/TrackRow';
 import { PlaylistView } from './components/PlaylistView';
+import { AnalyticsView } from './components/AnalyticsView';
 
 export default function App() {
   // Navigation & Views
@@ -147,13 +149,54 @@ export default function App() {
     }
   };
 
-  // Play track helper (updates recent tracks)
+  // Play track helper (updates recent tracks and analytics)
   const handlePlayTrack = (track, queueList = null, index = -1) => {
     player.playTrack(track, queueList, index);
+    recordTrackPlay(track);
     setTimeout(() => {
       setRecentTracks(getRecentTracks());
     }, 500);
   };
+
+  // Track listening time while playing
+  useEffect(() => {
+    if (!player.isPlaying) return;
+    const interval = setInterval(() => {
+      recordListeningSeconds(1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [player.isPlaying]);
+
+  // Global Keyboard Shortcuts (Space to toggle, arrows to seek/volume, M to mute)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Don't intercept when typing in search input
+      if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        player.togglePlay();
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        player.seek(Math.min(player.currentTime + 5, player.duration));
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        player.seek(Math.max(player.currentTime - 5, 0));
+      } else if (e.code === 'ArrowUp') {
+        e.preventDefault();
+        player.setVolume(player.volume + 0.05);
+      } else if (e.code === 'ArrowDown') {
+        e.preventDefault();
+        player.setVolume(player.volume - 0.05);
+      } else if (e.key === 'm' || e.key === 'M' || e.key === 'צ') {
+        e.preventDefault();
+        player.toggleMute();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [player]);
 
   // Get currently viewed playlist object
   const activePlaylist = selectedPlaylistId
@@ -198,6 +241,7 @@ export default function App() {
                   {currentView === 'home' && 'דף הבית'}
                   {currentView === 'library' && 'הספרייה שלך'}
                   {currentView === 'liked' && 'שירים שאהבתי'}
+                  {currentView === 'analytics' && 'ניתוח נתונים (Listening Analytics)'}
                   {currentView === 'playlist' && (activePlaylist?.title || 'פלייליסט')}
                 </span>
               </div>
@@ -415,6 +459,11 @@ export default function App() {
                 onToggleLike={handleToggleLike}
                 onDeletePlaylist={handleDeletePlaylist}
               />
+            )}
+
+            {/* VIEW: DATA ANALYTICS & STATS */}
+            {currentView === 'analytics' && (
+              <AnalyticsView />
             )}
           </div>
         </main>

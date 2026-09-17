@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Search, Library, Heart, PlusCircle, Music2 } from 'lucide-react';
+import { Home, Search, Library, Heart, PlusCircle, Music2, BarChart3 } from 'lucide-react';
 
 export function Sidebar({ currentView, setCurrentView, playlists, openImportModal, selectedPlaylistId, setSelectedPlaylistId }) {
   return (
@@ -38,6 +38,19 @@ export function Sidebar({ currentView, setCurrentView, playlists, openImportModa
           >
             <Search className="w-5 h-5 flex-shrink-0" />
             <span>חיפוש</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setCurrentView('analytics');
+              setSelectedPlaylistId(null);
+            }}
+            className={`flex items-center gap-4 px-3 py-2.5 rounded-md font-semibold text-sm transition-colors text-right ${
+              currentView === 'analytics' ? 'text-white bg-spotify-highlight' : 'text-spotify-subtext hover:text-white'
+            }`}
+          >
+            <BarChart3 className="w-5 h-5 flex-shrink-0 text-emerald-400" />
+            <span>ניתוח נתונים (Stats)</span>
           </button>
         </nav>
       </div>

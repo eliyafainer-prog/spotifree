@@ -46,7 +46,9 @@ export function PlayerBar({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+  const currentVolume = isMuted ? 0 : volume;
+  const volumePercent = Math.min(100, Math.max(0, currentVolume * 100));
 
   return (
     <>
@@ -56,7 +58,7 @@ export function PlayerBar({
         className="md:hidden flex flex-col bg-spotify-elevated/95 backdrop-blur-md border-t border-spotify-border px-3.5 py-2 cursor-pointer z-30 relative"
       >
         {/* Progress Line at Top */}
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-white/10">
+        <div className="absolute top-0 left-0 right-0 h-0.5 bg-white/10" dir="ltr">
           <div
             className="h-full bg-spotify-green transition-all"
             style={{ width: `${progressPercent}%` }}
@@ -102,9 +104,9 @@ export function PlayerBar({
         </div>
       </div>
 
-      {/* Desktop Fixed Bottom Bar (RTL aligned) */}
+      {/* Desktop Fixed Bottom Bar */}
       <div className="hidden md:flex items-center justify-between bg-black border-t border-spotify-border/40 h-20 px-4 z-40 select-none">
-        {/* Right side in RTL: Track Information */}
+        {/* Right side (RTL): Track Info */}
         <div className="flex items-center gap-3.5 w-[30%] min-w-[200px]">
           <div className="w-14 h-14 rounded-md bg-spotify-elevated overflow-hidden flex-shrink-0 relative shadow-md">
             {currentTrack.thumbnail ? (
@@ -136,9 +138,10 @@ export function PlayerBar({
           </button>
         </div>
 
-        {/* Center: Playback Controls & Scrubber */}
-        <div className="flex flex-col items-center gap-1.5 w-[40%] max-w-xl">
+        {/* Center: Playback Controls & Scrubber - Explicitly LTR! */}
+        <div className="flex flex-col items-center gap-1.5 w-[40%] max-w-xl" dir="ltr">
           <div className="flex items-center gap-5">
+            {/* Shuffle */}
             <button
               onClick={onToggleShuffle}
               title="ערבוב (Shuffle)"
@@ -149,13 +152,13 @@ export function PlayerBar({
               <Shuffle className="w-4 h-4" />
             </button>
 
-            {/* Previous track */}
+            {/* Previous Track (points left) */}
             <button
               onClick={onPrev}
               title="הקודם"
               className="text-spotify-subtext hover:text-white transition-colors"
             >
-              <SkipForward className="w-5 h-5 fill-current" />
+              <SkipBack className="w-5 h-5 fill-current" />
             </button>
 
             {/* Big Play/Pause Button */}
@@ -170,15 +173,16 @@ export function PlayerBar({
               )}
             </button>
 
-            {/* Next track */}
+            {/* Next Track (points right) */}
             <button
               onClick={onNext}
               title="הבא"
               className="text-spotify-subtext hover:text-white transition-colors"
             >
-              <SkipBack className="w-5 h-5 fill-current" />
+              <SkipForward className="w-5 h-5 fill-current" />
             </button>
 
+            {/* Repeat */}
             <button
               onClick={onToggleRepeat}
               title="חזרה (Repeat)"
@@ -190,27 +194,31 @@ export function PlayerBar({
             </button>
           </div>
 
-          {/* Time Scrubber */}
-          <div className="flex items-center gap-2 w-full group">
-            <span className="text-[11px] text-spotify-subtext font-mono w-9 text-right">
+          {/* Time Scrubber (Left to Right: 0:00 -> [======|......] -> 3:07) */}
+          <div className="flex items-center gap-2.5 w-full group">
+            <span className="text-[11px] text-spotify-subtext font-mono w-9 text-right select-none">
               {formatTime(currentTime)}
             </span>
             <input
               type="range"
               min="0"
               max={duration || 100}
+              step="0.1"
               value={currentTime}
               onChange={(e) => onSeek(parseFloat(e.target.value))}
-              className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-spotify-green"
+              style={{
+                background: `linear-gradient(to right, #1ed760 ${progressPercent}%, rgba(255, 255, 255, 0.25) ${progressPercent}%)`
+              }}
+              className="spotify-slider flex-1"
             />
-            <span className="text-[11px] text-spotify-subtext font-mono w-9 text-left">
+            <span className="text-[11px] text-spotify-subtext font-mono w-9 text-left select-none">
               {formatTime(duration)}
             </span>
           </div>
         </div>
 
-        {/* Left side in RTL: Lyrics, Volume, Fullscreen */}
-        <div className="flex items-center justify-end gap-3.5 w-[30%]">
+        {/* Left side (RTL): Extra Tools (Lyrics, Volume, Fullscreen) - LTR for slider */}
+        <div className="flex items-center justify-end gap-3.5 w-[30%]" dir="ltr">
           <button
             onClick={onOpenLyrics}
             title="מילים מסונכרנות"
@@ -224,16 +232,19 @@ export function PlayerBar({
               onClick={onToggleMute}
               className="p-1.5 text-spotify-subtext hover:text-white transition-colors"
             >
-              {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+              {isMuted || currentVolume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
             </button>
             <input
               type="range"
               min="0"
               max="1"
               step="0.01"
-              value={isMuted ? 0 : volume}
+              value={currentVolume}
               onChange={(e) => onSetVolume(parseFloat(e.target.value))}
-              className="w-24 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-spotify-green"
+              style={{
+                background: `linear-gradient(to right, #1ed760 ${volumePercent}%, rgba(255, 255, 255, 0.25) ${volumePercent}%)`
+              }}
+              className="spotify-slider w-24"
             />
           </div>
 
