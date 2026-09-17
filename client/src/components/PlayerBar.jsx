@@ -12,7 +12,8 @@ import {
   Heart,
   Mic2,
   Maximize2,
-  Music
+  Music,
+  Headphones
 } from 'lucide-react';
 
 export function PlayerBar({
@@ -35,7 +36,8 @@ export function PlayerBar({
   isLiked,
   onToggleLike,
   onOpenLyrics,
-  onOpenFullscreen
+  onOpenFullscreen,
+  onOpenHeadphoneTest
 }) {
   if (!currentTrack) return null;
 
@@ -83,6 +85,14 @@ export function PlayerBar({
           </div>
 
           <div className="flex items-center gap-2.5" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={onOpenHeadphoneTest}
+              title="בדיקת חיבור אוזניות"
+              className="p-1 text-spotify-subtext hover:text-emerald-400 active:scale-95 transition-all"
+            >
+              <Headphones className="w-4 h-4" />
+            </button>
+
             <button
               onClick={() => onToggleLike(currentTrack)}
               className={`p-1.5 ${isLiked ? 'text-spotify-green' : 'text-spotify-subtext'}`}
@@ -217,8 +227,16 @@ export function PlayerBar({
           </div>
         </div>
 
-        {/* Left side (RTL): Extra Tools (Lyrics, Volume, Fullscreen) - LTR for slider */}
+        {/* Left side (RTL): Extra Tools (Lyrics, Volume, Headphone Test, Fullscreen) - LTR for slider */}
         <div className="flex items-center justify-end gap-3.5 w-[30%]" dir="ltr">
+          <button
+            onClick={onOpenHeadphoneTest}
+            title="בדיקת חיבור אוזניות ושמע"
+            className="p-1.5 text-spotify-subtext hover:text-emerald-400 hover:scale-110 transition-all"
+          >
+            <Headphones className="w-5 h-5" />
+          </button>
+
           <button
             onClick={onOpenLyrics}
             title="מילים מסונכרנות"

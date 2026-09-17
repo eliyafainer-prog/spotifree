@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
  * Custom hook to bind HTML5 Audio to native MediaSession API
- * Supports headphone buttons, lock-screen controls, smartwatch sync, and disconnect detection
+ * Supports headphone buttons (single click, double click, triple click),
+ * lock-screen controls, smartwatch sync, and disconnect detection.
  */
 export function useMediaSession({
   currentTrack,
@@ -15,11 +16,29 @@ export function useMediaSession({
   onPrev,
   onSeek
 }) {
-  // Update track metadata and artwork
+  // Keep handlers in a ref so action handlers are bound once and never dropped or missed
+  const handlersRef = useRef({});
+  handlersRef.current = {
+    onPlay,
+    onPause,
+    onNext,
+    onPrev,
+    onSeek,
+    currentTime,
+    duration,
+    isPlaying
+  };
+
+  // Update track metadata and artwork (absolute URLs for mobile OS lock screens)
   useEffect(() => {
     if (!('mediaSession' in navigator) || !currentTrack) return;
 
-    const artworkUrl = currentTrack.thumbnail || '/icons/music-icon.svg';
+    let artworkUrl = currentTrack.thumbnail || '/icons/music-icon.svg';
+    try {
+      artworkUrl = new URL(artworkUrl, window.location.href).href;
+    } catch {
+      // Fallback if URL parsing fails
+    }
 
     navigator.mediaSession.metadata = new window.MediaMetadata({
       title: currentTrack.title || 'Unknown Title',
@@ -58,36 +77,38 @@ export function useMediaSession({
     }
   }, [currentTime, duration]);
 
-  // Set action handlers for headphone buttons and keyboard shortcuts
+  // Register action handlers ONCE - never drop connection during playback
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
 
     const actionHandlers = [
-      ['play', onPlay],
-      ['pause', onPause],
-      ['previoustrack', onPrev],
-      ['nexttrack', onNext],
+      ['play', () => handlersRef.current.onPlay?.()],
+      ['pause', () => handlersRef.current.onPause?.()],
+      ['stop', () => handlersRef.current.onPause?.()],
+      ['previoustrack', () => handlersRef.current.onPrev?.()],
+      ['nexttrack', () => handlersRef.current.onNext?.()],
       ['seekto', (details) => {
-        if (details.seekTime !== undefined && onSeek) {
-          onSeek(details.seekTime);
+        if (details.seekTime !== undefined && handlersRef.current.onSeek) {
+          handlersRef.current.onSeek(details.seekTime);
         }
       }],
       ['seekforward', (details) => {
         const offset = details.seekOffset || 10;
-        if (onSeek) onSeek(Math.min((currentTime || 0) + offset, duration || 0));
+        const cur = handlersRef.current.currentTime || 0;
+        const dur = handlersRef.current.duration || 0;
+        handlersRef.current.onSeek?.(Math.min(cur + offset, dur));
       }],
       ['seekbackward', (details) => {
         const offset = details.seekOffset || 10;
-        if (onSeek) onSeek(Math.max((currentTime || 0) - offset, 0));
+        const cur = handlersRef.current.currentTime || 0;
+        handlersRef.current.onSeek?.(Math.max(cur - offset, 0));
       }]
     ];
 
     for (const [action, handler] of actionHandlers) {
       try {
         navigator.mediaSession.setActionHandler(action, handler);
-      } catch (e) {
-        // Some actions might not be supported on all browsers
-      }
+      } catch (e) {}
     }
 
     return () => {
@@ -97,17 +118,16 @@ export function useMediaSession({
         } catch (e) {}
       }
     };
-  }, [onPlay, onPause, onNext, onPrev, onSeek, currentTime, duration]);
+  }, []);
 
   // Handle Headphone / Bluetooth disconnect (devicechange event)
   useEffect(() => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.addEventListener) return;
 
     const handleDeviceChange = () => {
-      // When audio devices change (e.g. headphones unplugged), pause playback automatically
-      if (isPlaying && onPause) {
-        console.log('Audio output device changed, auto-pausing playback.');
-        onPause();
+      if (handlersRef.current.isPlaying && handlersRef.current.onPause) {
+        console.log('🎧 Audio device change detected (headphones unplugged/disconnected) -> Auto-pausing.');
+        handlersRef.current.onPause();
       }
     };
 
@@ -115,5 +135,5 @@ export function useMediaSession({
     return () => {
       navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
     };
-  }, [isPlaying, onPause]);
+  }, []);
 }

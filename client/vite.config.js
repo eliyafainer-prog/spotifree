@@ -6,6 +6,8 @@ export default defineConfig({
   server: {
     host: '0.0.0.0', // Listen on all network interfaces for phone access
     port: 3000,
+    cors: true,
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:5050',

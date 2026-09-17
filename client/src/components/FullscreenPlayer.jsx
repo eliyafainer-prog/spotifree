@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, Mic2, Music } from 'lucide-react';
+import { ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, Mic2, Music, Headphones } from 'lucide-react';
 
 export function FullscreenPlayer({
   isOpen,
@@ -18,7 +18,8 @@ export function FullscreenPlayer({
   onToggleRepeat,
   isLiked,
   onToggleLike,
-  onOpenLyrics
+  onOpenLyrics,
+  onOpenHeadphoneTest
 }) {
   if (!isOpen || !currentTrack) return null;
 
@@ -167,7 +168,15 @@ export function FullscreenPlayer({
       </div>
 
       {/* Bottom Footer Actions */}
-      <div className="flex justify-center pb-2">
+      <div className="flex items-center justify-center gap-3 pb-2">
+        <button
+          onClick={onOpenHeadphoneTest}
+          className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold px-4 py-2 rounded-full backdrop-blur-md transition-colors"
+        >
+          <Headphones className="w-4 h-4 text-emerald-400" />
+          <span>בדיקת אוזניות</span>
+        </button>
+
         <button
           onClick={onOpenLyrics}
           className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold px-4 py-2 rounded-full backdrop-blur-md transition-colors"

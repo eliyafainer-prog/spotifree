@@ -38,6 +38,7 @@ import { TrackRow } from './components/TrackRow';
 import { PlaylistView } from './components/PlaylistView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { OfflineView } from './components/OfflineView';
+import { HeadphoneModal } from './components/HeadphoneModal';
 
 export default function App() {
   // Navigation & Views
@@ -63,6 +64,7 @@ export default function App() {
   const [isFullscreenPlayerOpen, setIsFullscreenPlayerOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [lyricsData, setLyricsData] = useState({ synced: [], plain: [], hasSynced: false });
+  const [isHeadphoneModalOpen, setIsHeadphoneModalOpen] = useState(false);
 
   // Offline Downloads state
   const [downloadedIds, setDownloadedIds] = useState(new Set());
@@ -564,6 +566,7 @@ export default function App() {
         onToggleLike={handleToggleLike}
         onOpenLyrics={() => setIsLyricsOpen(true)}
         onOpenFullscreen={() => setIsFullscreenPlayerOpen(true)}
+        onOpenHeadphoneTest={() => setIsHeadphoneModalOpen(true)}
       />
 
       {/* Mobile Tab Bar */}
@@ -596,6 +599,10 @@ export default function App() {
           setIsFullscreenPlayerOpen(false);
           setIsLyricsOpen(true);
         }}
+        onOpenHeadphoneTest={() => {
+          setIsFullscreenPlayerOpen(false);
+          setIsHeadphoneModalOpen(true);
+        }}
       />
 
       {/* Synced Lyrics Modal */}
@@ -614,6 +621,12 @@ export default function App() {
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         onPlaylistImported={handlePlaylistImported}
+      />
+
+      {/* Headphone Connection & Audio Diagnostic Modal */}
+      <HeadphoneModal
+        isOpen={isHeadphoneModalOpen}
+        onClose={() => setIsHeadphoneModalOpen(false)}
       />
     </div>
   );
