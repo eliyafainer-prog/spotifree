@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { getPlayableAudioUrl, prefetchNextTracks } from '../services/api';
 import { addRecentTrack } from '../services/storage';
 import { getOfflineTrack } from '../services/offlineStorage';
