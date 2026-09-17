@@ -71,11 +71,20 @@ router.get('/debug-extract', async (req, res) => {
     }
   }
   exec(`${PYTHON_BIN} -m yt_dlp --version`, (err1, vOut) => {
-    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba ${cookieFlag} https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
+    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba ${cookieFlag} --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36" https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
+      let cookiePreview = null;
+      if (foundCookie) {
+        try {
+          cookiePreview = fs.readFileSync(foundCookie, 'utf8').slice(0, 300);
+        } catch (e) {
+          cookiePreview = e.message;
+        }
+      }
       res.json({
         pythonBin: PYTHON_BIN,
         foundCookie,
         cookieSize,
+        cookiePreview,
         version: vOut ? vOut.trim() : (err1?.message || 'failed'),
         stdout: stdout ? stdout.trim().slice(0, 300) : null,
         stderr: stderr ? stderr.trim() : null,
