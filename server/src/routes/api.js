@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
+const fs = require('fs');
 const { searchTracks, getTrendingTracks } = require('../services/search');
 const { getAudioStreamUrl, pipeStream } = require('../services/stream');
 const { getLyrics } = require('../services/lyrics');
