@@ -101,3 +101,24 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
   const blob = await response.blob();
   return blob;
 }
+
+/**
+ * Resolve track (e.g. Spotify imported track) to streamable YouTube videoId and individual artwork
+ */
+export async function resolveTrack(track) {
+  if (track.streamableId && !track.streamableId.startsWith('sp_')) {
+    return { streamableId: track.streamableId, thumbnail: track.thumbnail };
+  }
+  if (track.id && !track.id.startsWith('sp_')) {
+    return { streamableId: track.id, thumbnail: track.thumbnail };
+  }
+
+  const res = await fetch(`${API_BASE}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ track })
+  });
+  if (!res.ok) throw new Error('Failed to resolve track to streamable source');
+  return await res.json();
+}
+

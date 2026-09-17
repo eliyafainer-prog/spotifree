@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getPlayableAudioUrl, prefetchNextTracks } from '../services/api';
-import { addRecentTrack } from '../services/storage';
+import { getPlayableAudioUrl, prefetchNextTracks, resolveTrack } from '../services/api';
+import { addRecentTrack, updateTrackInPlaylists } from '../services/storage';
 import { getOfflineTrack } from '../services/offlineStorage';
 
 export function useAudioPlayer() {
@@ -249,14 +249,43 @@ export function useAudioPlayer() {
       setQueueIndex(indexInQueue);
     }
 
-    setCurrentTrack(track);
+    let playableTrack = { ...track };
+    const isUnresolved = !playableTrack.streamableId && (!playableTrack.id || playableTrack.id.startsWith('sp_'));
+
+    setCurrentTrack(playableTrack);
     setIsLoading(true);
     setCurrentTime(0);
-    setDuration(track.durationSeconds || 0);
+    setDuration(playableTrack.durationSeconds || 0);
+
+    if (isUnresolved) {
+      try {
+        const resolved = await resolveTrack(playableTrack);
+        if (resolved && resolved.streamableId) {
+          playableTrack.originalId = track.id;
+          playableTrack.streamableId = resolved.streamableId;
+          playableTrack.id = resolved.streamableId;
+          if (resolved.thumbnail) {
+            playableTrack.thumbnail = resolved.thumbnail;
+          }
+          if (resolved.durationSeconds) {
+            playableTrack.durationSeconds = resolved.durationSeconds;
+            setDuration(resolved.durationSeconds);
+          }
+          setCurrentTrack({ ...playableTrack });
+          updateTrackInPlaylists(playableTrack);
+        }
+      } catch (err) {
+        console.error('Failed to resolve track to streamable source:', err);
+        setIsLoading(false);
+        return;
+      }
+    } else if (playableTrack.streamableId) {
+      playableTrack.id = playableTrack.streamableId;
+    }
 
     // 1. Check Offline Storage first (0ms instant playback without internet!)
     try {
-      const offlineRecord = await getOfflineTrack(track);
+      const offlineRecord = await getOfflineTrack(playableTrack);
       if (offlineRecord && offlineRecord.audioBlob && audioRef.current) {
         activeEngineRef.current = 'audio';
         if (ytPlayerRef.current?.pauseVideo) {
@@ -268,7 +297,7 @@ export function useAudioPlayer() {
         await audioRef.current.play();
         setIsPlaying(true);
         setIsLoading(false);
-        addRecentTrack(track);
+        addRecentTrack(playableTrack);
 
         if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
           prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
@@ -279,9 +308,9 @@ export function useAudioPlayer() {
       console.warn('Offline storage check skipped:', e);
     }
 
-    // 2. Play immediately via native client YouTube Player (synchronous with user tap to satisfy mobile autoplay policies!)
-    playViaYouTubePlayer(track);
-    addRecentTrack(track);
+    // 2. Play immediately via native client YouTube Player
+    playViaYouTubePlayer(playableTrack);
+    addRecentTrack(playableTrack);
 
     if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
       prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));

@@ -16,14 +16,15 @@ import {
 
 import { useAudioPlayer } from './hooks/useAudioPlayer';
 import { useMediaSession } from './hooks/useMediaSession';
-import { searchTracks, getTrendingTracks, getLyrics, downloadTrackAudioBlob, prefetchNextTracks } from './services/api';
+import { searchTracks, getTrendingTracks, getLyrics, downloadTrackAudioBlob, prefetchNextTracks, resolveTrack } from './services/api';
 import {
   getLikedSongs,
   toggleLikeSong,
   getPlaylists,
   savePlaylist,
   deletePlaylist,
-  getRecentTracks
+  getRecentTracks,
+  updateTrackInPlaylists
 } from './services/storage';
 import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
 import { saveTrackOffline, getAllOfflineTracks } from './services/offlineStorage';
@@ -141,13 +142,44 @@ export default function App() {
     return () => { isMounted = false; };
   }, []);
 
-  // Proactively prefetch playlist tracks when opening a playlist
+  // Proactively prefetch and auto-enrich playlist tracks when opening a playlist
   useEffect(() => {
     const activePl = playlists.find(p => p.id === selectedPlaylistId);
-    if (activePl && activePl.tracks && activePl.tracks.length > 0) {
-      prefetchNextTracks(activePl.tracks.slice(0, 5));
+    if (!activePl || !activePl.tracks || activePl.tracks.length === 0) return;
+
+    prefetchNextTracks(activePl.tracks.slice(0, 5));
+
+    // Background auto-enrich existing imported playlist tracks with individual artwork and YouTube IDs
+    const needsEnrichment = activePl.tracks.some(t => t.id?.startsWith('sp_') || !t.thumbnail || t.thumbnail === activePl.cover);
+    if (needsEnrichment) {
+      let cancelled = false;
+      const unverified = activePl.tracks.filter(t => t.id?.startsWith('sp_') || !t.thumbnail || t.thumbnail === activePl.cover).slice(0, 10);
+
+      Promise.all(
+        unverified.map(async (t) => {
+          try {
+            const res = await resolveTrack(t);
+            if (res && res.streamableId) {
+              updateTrackInPlaylists({
+                ...t,
+                originalId: t.id,
+                streamableId: res.streamableId,
+                id: res.streamableId,
+                thumbnail: res.thumbnail || t.thumbnail,
+                durationSeconds: res.durationSeconds || t.durationSeconds
+              });
+            }
+          } catch (e) {}
+        })
+      ).then(() => {
+        if (!cancelled) {
+          setPlaylists(getPlaylists());
+        }
+      });
+
+      return () => { cancelled = true; };
     }
-  }, [selectedPlaylistId, playlists]);
+  }, [selectedPlaylistId, playlists.length]);
 
   // Proactively prefetch liked songs when entering liked view
   useEffect(() => {
@@ -215,13 +247,14 @@ export default function App() {
     }
   };
 
-  // Play track helper (updates recent tracks and analytics)
+  // Play track helper (updates recent tracks, playlists and analytics)
   const handlePlayTrack = (track, queueList = null, index = -1) => {
     player.playTrack(track, queueList, index);
     recordTrackPlay(track);
     setTimeout(() => {
       setRecentTracks(getRecentTracks());
-    }, 500);
+      setPlaylists(getPlaylists());
+    }, 600);
   };
 
   // Track listening time while playing

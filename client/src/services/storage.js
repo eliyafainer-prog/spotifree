@@ -86,3 +86,38 @@ export function addRecentTrack(track) {
     return [];
   }
 }
+
+export function updateTrackInPlaylists(resolvedTrack) {
+  if (!resolvedTrack) return;
+  try {
+    const playlists = getPlaylists();
+    let changed = false;
+    const updated = playlists.map(p => {
+      if (!p.tracks) return p;
+      let pChanged = false;
+      const newTracks = p.tracks.map(t => {
+        if (
+          t.id === resolvedTrack.originalId ||
+          t.id === resolvedTrack.id ||
+          (t.title === resolvedTrack.title && t.artist === resolvedTrack.artist)
+        ) {
+          pChanged = true;
+          changed = true;
+          return {
+            ...t,
+            streamableId: resolvedTrack.streamableId || resolvedTrack.id,
+            id: resolvedTrack.streamableId || resolvedTrack.id,
+            thumbnail: resolvedTrack.thumbnail || t.thumbnail
+          };
+        }
+        return t;
+      });
+      return pChanged ? { ...p, tracks: newTracks } : p;
+    });
+
+    if (changed) {
+      localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+    }
+  } catch (e) {}
+}
+

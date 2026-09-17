@@ -134,6 +134,24 @@ async function importSpotify(url) {
     };
   });
 
+  // Parallel batch enrich album covers from Deezer (batches of 10 for blazing fast import)
+  const chunkSize = 10;
+  for (let i = 0; i < tracks.length; i += chunkSize) {
+    const chunk = tracks.slice(i, i + chunkSize);
+    await Promise.all(
+      chunk.map(async (t) => {
+        try {
+          const q = `${t.artist} ${t.title}`.trim();
+          const dRes = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(q)}`, { timeout: 2500 });
+          const cover = dRes.data?.data?.[0]?.album?.cover_medium;
+          if (cover) {
+            t.thumbnail = cover;
+          }
+        } catch (e) {}
+      })
+    );
+  }
+
   return {
     title: playlistTitle,
     cover: playlistCover,
@@ -182,6 +200,7 @@ async function importYouTubePlaylist(url) {
 
           return {
             id: v.id,
+            streamableId: v.id,
             title: cleanTitle(v.title) || v.title,
             originalTitle: v.title,
             artist: v.uploader || v.channel || 'YouTube Artist',
@@ -223,28 +242,54 @@ async function universalImport(inputUrl) {
 }
 
 /**
- * Resolve a track to a streamable audio ID (matches Spotify track to YouTube videoId)
+ * Resolve a track to a streamable audio ID (matches Spotify track to YouTube videoId and artwork)
  */
 async function resolveTrackToStreamableId(track) {
   if (track.source === 'youtube' && track.id && !track.id.startsWith('sp_')) {
-    return track.id;
+    return {
+      streamableId: track.id,
+      thumbnail: track.thumbnail,
+      durationSeconds: track.durationSeconds
+    };
   }
 
-  // Search with artist and title
-  const query = track.query || `${track.artist} ${track.title}`;
-  const results = await yts(query);
-  if (results && results.videos && results.videos.length > 0) {
-    // Return top video ID
-    return results.videos[0].videoId;
+  const query = track.query || `${track.artist} ${track.title}`.trim();
+
+  // 1. Fetch individual studio cover from Deezer in parallel
+  let albumCover = null;
+  try {
+    const dRes = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`, { timeout: 2500 });
+    albumCover = dRes.data?.data?.[0]?.album?.cover_medium || null;
+  } catch (e) {}
+
+  // 2. Search on YouTube for videoId and video thumbnail
+  let topVideo = null;
+  try {
+    const results = await yts(query);
+    if (results && results.videos && results.videos.length > 0) {
+      topVideo = results.videos[0];
+    }
+  } catch (e) {}
+
+  // 3. Fallback search with title only
+  if (!topVideo) {
+    try {
+      const fallbackResults = await yts(track.title);
+      if (fallbackResults && fallbackResults.videos && fallbackResults.videos.length > 0) {
+        topVideo = fallbackResults.videos[0];
+      }
+    } catch (e) {}
   }
 
-  // Fallback: search title only
-  const fallbackResults = await yts(track.title);
-  if (fallbackResults && fallbackResults.videos && fallbackResults.videos.length > 0) {
-    return fallbackResults.videos[0].videoId;
+  if (!topVideo) {
+    throw new Error(`לא נמצא מקור שמע עבור: ${track.title}`);
   }
 
-  throw new Error(`לא נמצא מקור שמע עבור: ${track.title}`);
+  return {
+    streamableId: topVideo.videoId,
+    thumbnail: albumCover || topVideo.image || topVideo.thumbnail || `https://i.ytimg.com/vi/${topVideo.videoId}/hqdefault.jpg`,
+    durationSeconds: topVideo.duration?.seconds || track.durationSeconds || 0
+  };
 }
 
 module.exports = {

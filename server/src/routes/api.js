@@ -151,8 +151,8 @@ router.post('/resolve', async (req, res) => {
   }
 
   try {
-    const streamableId = await resolveTrackToStreamableId(track);
-    res.json({ streamableId });
+    const resolved = await resolveTrackToStreamableId(track);
+    res.json(resolved);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
