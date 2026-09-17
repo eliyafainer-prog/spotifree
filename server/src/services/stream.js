@@ -178,8 +178,7 @@ function extractStreamWithYtDlp(target) {
       '--no-check-certificates',
       '--no-config',
       '--geo-bypass',
-      '--socket-timeout', '6',
-      '--extractor-args', 'youtube:player_client=android,ios,web',
+      '--socket-timeout', '8',
       target
     ];
 

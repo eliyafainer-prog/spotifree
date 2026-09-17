@@ -11,11 +11,10 @@ ydl_opts = {
     'no_warnings': True,
     'no_color': True,
     'no_check_certificates': True,
-    'socket_timeout': 6,
+    'socket_timeout': 8,
     'noplaylist': True,
     'extract_flat': False,
-    'skip_download': True,
-    'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web']}}
+    'skip_download': True
 }
 
 # Auto-detect cookiefile (Render Secret File, local file, or env var)

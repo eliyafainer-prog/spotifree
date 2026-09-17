@@ -60,7 +60,7 @@ router.get('/debug-extract', async (req, res) => {
 
   const cookieFlag = foundCookie ? `--cookies "${foundCookie}"` : '';
   exec(`${PYTHON_BIN} -m yt_dlp --version`, (err1, vOut) => {
-    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba ${cookieFlag} --extractor-args "youtube:player_client=android,ios,web" https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
+    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba ${cookieFlag} https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
       res.json({
         pythonBin: PYTHON_BIN,
         foundCookie,
