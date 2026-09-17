@@ -129,15 +129,76 @@ export function useAudioPlayer() {
     };
   }, [isPlaying]);
 
+  // Initialize YouTube Player immediately on mount so it's warm and ready for instant playback
+  useEffect(() => {
+    let checkTimer = null;
+    const initYT = () => {
+      if (!window.YT || !window.YT.Player) {
+        checkTimer = setTimeout(initYT, 200);
+        return;
+      }
+      if (!ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current = new window.YT.Player('spotifree-yt-player', {
+            height: '100',
+            width: '100',
+            playerVars: {
+              autoplay: 0,
+              controls: 0,
+              disablekb: 1,
+              fs: 0,
+              playsinline: 1,
+              rel: 0
+            },
+            events: {
+              onReady: (e) => {
+                try {
+                  e.target.setVolume(isMuted ? 0 : volume * 100);
+                } catch (err) {}
+              },
+              onStateChange: (e) => {
+                if (e.data === 1) { // PLAYING
+                  setIsPlaying(true);
+                  setIsLoading(false);
+                } else if (e.data === 2) { // PAUSED
+                  setIsPlaying(false);
+                } else if (e.data === 0) { // ENDED
+                  nextTrackRef.current?.();
+                } else if (e.data === 3) { // BUFFERING
+                  setIsLoading(true);
+                }
+              },
+              onError: (err) => {
+                console.warn('YouTube playback error:', err);
+                setIsLoading(false);
+              }
+            }
+          });
+        } catch (e) {
+          console.error('Failed to init YT player on mount:', e);
+        }
+      }
+    };
+
+    initYT();
+    return () => {
+      if (checkTimer) clearTimeout(checkTimer);
+    };
+  }, []);
+
   /**
    * Play track using client-side YouTube Player API (100% immune to cloud datacenter IP blocks!)
    */
   const playViaYouTubePlayer = useCallback((track) => {
     if (!track || !track.id) return;
 
+    // Keep silent audio playing on HTML5 audio to keep mediaSession and background audio session active
     if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.removeAttribute('src');
+      try {
+        audioRef.current.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+        audioRef.current.loop = true;
+        audioRef.current.play().catch(() => {});
+      } catch (e) {}
     }
 
     activeEngineRef.current = 'yt';
@@ -148,66 +209,27 @@ export function useAudioPlayer() {
         player.setVolume(isMuted ? 0 : volume * 100);
         player.loadVideoById(track.id);
         player.playVideo();
-        setIsLoading(false);
-        setIsPlaying(true);
       } catch (e) {
-        console.error('Error in YT onReady play:', e);
+        console.error('Error in YT play:', e);
+        setIsLoading(false);
       }
     };
 
     if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
       onPlayerReady(ytPlayerRef.current);
-      return;
+    } else {
+      let attempts = 0;
+      const retry = setInterval(() => {
+        attempts++;
+        if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
+          clearInterval(retry);
+          onPlayerReady(ytPlayerRef.current);
+        } else if (attempts > 25) {
+          clearInterval(retry);
+          setIsLoading(false);
+        }
+      }, 100);
     }
-
-    // Initialize YouTube Player if not ready yet
-    const initYT = () => {
-      if (!window.YT || !window.YT.Player) {
-        setTimeout(initYT, 300);
-        return;
-      }
-
-      try {
-        ytPlayerRef.current = new window.YT.Player('spotifree-yt-player', {
-          height: '200',
-          width: '200',
-          videoId: track.id,
-          playerVars: {
-            autoplay: 1,
-            controls: 0,
-            disablekb: 1,
-            fs: 0,
-            playsinline: 1,
-            rel: 0
-          },
-          events: {
-            onReady: (e) => {
-              onPlayerReady(e.target);
-            },
-            onStateChange: (e) => {
-              if (e.data === 1) {
-                setIsPlaying(true);
-                setIsLoading(false);
-              } else if (e.data === 2) {
-                setIsPlaying(false);
-              } else if (e.data === 0) {
-                nextTrackRef.current?.();
-              } else if (e.data === 3) {
-                setIsLoading(true);
-              }
-            },
-            onError: (err) => {
-              console.warn('YouTube playback error:', err);
-              setIsLoading(false);
-            }
-          }
-        });
-      } catch (e) {
-        console.error('Failed to instantiate YT Player:', e);
-      }
-    };
-
-    initYT();
   }, [volume, isMuted]);
 
   /**
@@ -257,39 +279,12 @@ export function useAudioPlayer() {
       console.warn('Offline storage check skipped:', e);
     }
 
-    // 2. Try HTML5 Audio Stream with fast seamless fallback to YouTube Player
-    activeEngineRef.current = 'audio';
-    const audioUrl = getPlayableAudioUrl(track);
+    // 2. Play immediately via native client YouTube Player (synchronous with user tap to satisfy mobile autoplay policies!)
+    playViaYouTubePlayer(track);
+    addRecentTrack(track);
 
-    fallbackTimerRef.current = setTimeout(() => {
-      console.log('⚡ Server stream stalled/blocked -> Instant fallback to native client YouTube player');
-      playViaYouTubePlayer(track);
-    }, 2400);
-
-    if (audioRef.current) {
-      audioRef.current.src = audioUrl;
-      audioRef.current.currentTime = 0;
-
-      audioRef.current.onerror = () => {
-        if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-        console.log('⚡ Server stream returned error -> Instant fallback to native client YouTube player');
-        playViaYouTubePlayer(track);
-      };
-
-      try {
-        await audioRef.current.play();
-        if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-        setIsPlaying(true);
-        setIsLoading(false);
-        addRecentTrack(track);
-
-        if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
-          prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
-        }
-      } catch (err) {
-        if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-        playViaYouTubePlayer(track);
-      }
+    if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
+      prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
     }
   }, [queue, playViaYouTubePlayer]);
 
