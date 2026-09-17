@@ -112,7 +112,9 @@ function startWorker() {
     }
   });
 
-  workerProcess.stderr.on('data', () => {});
+  workerProcess.stderr.on('data', (d) => {
+    console.error('[Worker stderr]:', d.toString().trim());
+  });
 
   workerProcess.on('exit', () => {
     workerReady = false;
@@ -177,7 +179,7 @@ function extractStreamWithYtDlp(target) {
       '--no-config',
       '--geo-bypass',
       '--socket-timeout', '6',
-      '--extractor-args', 'youtube:player_client=android,web',
+      '--extractor-args', 'youtube:player_client=android,ios,web',
       target
     ];
 

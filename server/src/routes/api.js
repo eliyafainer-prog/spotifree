@@ -34,6 +34,23 @@ router.get('/trending', async (req, res) => {
   }
 });
 
+router.get('/debug-extract', async (req, res) => {
+  const { exec } = require('child_process');
+  const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+  const targetId = req.query.id || 'kJQP7kiw5Fk';
+  exec(`${PYTHON_BIN} -m yt_dlp --version`, (err1, vOut) => {
+    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba --extractor-args "youtube:player_client=android,ios,web" https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
+      res.json({
+        pythonBin: PYTHON_BIN,
+        version: vOut ? vOut.trim() : (err1?.message || 'failed'),
+        stdout: stdout ? stdout.trim().slice(0, 200) : null,
+        stderr: stderr ? stderr.trim() : null,
+        error: err2 ? err2.message : null
+      });
+    });
+  });
+});
+
 /**
  * Get stream URL directly
  */
