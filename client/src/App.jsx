@@ -403,7 +403,6 @@ export default function App() {
                           key={track.id || idx}
                           onClick={() => handlePlayTrack(track, trendingTracks, idx)}
                           onMouseEnter={() => prefetchNextTracks([track])}
-                          onTouchStart={() => prefetchNextTracks([track])}
                           className="bg-spotify-dark hover:bg-spotify-elevated p-3 rounded-lg flex flex-col gap-2.5 group cursor-pointer transition-all duration-200"
                         >
                           <div className="relative aspect-square w-full rounded-md overflow-hidden bg-spotify-highlight shadow-md">
@@ -412,8 +411,18 @@ export default function App() {
                             ) : (
                               <Music2 className="w-10 h-10 m-auto text-spotify-subtext" />
                             )}
-                            <button className="absolute bottom-2 right-2 w-10 h-10 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-lg opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 hover:scale-105">
-                              <Play className="w-5 h-5 fill-current translate-x-0.5" />
+                            <button className={`absolute bottom-2 right-2 w-10 h-10 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-lg transition-all duration-200 hover:scale-105 ${
+                              player.currentTrack?.id === track.id
+                                ? 'opacity-100 translate-y-0'
+                                : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
+                            }`}>
+                              {player.currentTrack?.id === track.id && player.isLoading ? (
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                              ) : player.currentTrack?.id === track.id && player.isPlaying ? (
+                                <Pause className="w-5 h-5 fill-current" />
+                              ) : (
+                                <Play className="w-5 h-5 fill-current translate-x-0.5" />
+                              )}
                             </button>
                           </div>
                           <span className="font-bold text-xs truncate text-white">{track.title}</span>
@@ -444,6 +453,7 @@ export default function App() {
                         track={track}
                         isCurrentTrack={player.currentTrack?.id === track.id}
                         isPlaying={player.isPlaying}
+                        isLoading={player.isLoading}
                         onPlay={(t) => handlePlayTrack(t, searchResults, idx)}
                         isLiked={likedSongs.some(s => s.id === track.id || (s.title === track.title && s.artist === track.artist))}
                         onToggleLike={handleToggleLike}
@@ -524,6 +534,7 @@ export default function App() {
                 }}
                 currentTrack={player.currentTrack}
                 isPlaying={player.isPlaying}
+                isLoading={player.isLoading}
                 onPlayTrack={handlePlayTrack}
                 likedSongs={likedSongs}
                 onToggleLike={handleToggleLike}
@@ -539,6 +550,7 @@ export default function App() {
                 playlist={activePlaylist}
                 currentTrack={player.currentTrack}
                 isPlaying={player.isPlaying}
+                isLoading={player.isLoading}
                 onPlayTrack={handlePlayTrack}
                 likedSongs={likedSongs}
                 onToggleLike={handleToggleLike}
@@ -573,6 +585,7 @@ export default function App() {
       <PlayerBar
         currentTrack={player.currentTrack}
         isPlaying={player.isPlaying}
+        isLoading={player.isLoading}
         currentTime={player.currentTime}
         duration={player.duration}
         volume={player.volume}

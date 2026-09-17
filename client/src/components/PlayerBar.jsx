@@ -13,12 +13,14 @@ import {
   Mic2,
   Maximize2,
   Music,
-  Headphones
+  Headphones,
+  Loader2
 } from 'lucide-react';
 
 export function PlayerBar({
   currentTrack,
   isPlaying,
+  isLoading = false,
   currentTime,
   duration,
   volume,
@@ -104,7 +106,9 @@ export function PlayerBar({
               onClick={onTogglePlay}
               className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-md"
             >
-              {isPlaying ? (
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin text-black" />
+              ) : isPlaying ? (
                 <Pause className="w-4 h-4 fill-current" />
               ) : (
                 <Play className="w-4 h-4 fill-current translate-x-0.5" />
@@ -176,7 +180,9 @@ export function PlayerBar({
               onClick={onTogglePlay}
               className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-md"
             >
-              {isPlaying ? (
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin text-black" />
+              ) : isPlaying ? (
                 <Pause className="w-4 h-4 fill-current" />
               ) : (
                 <Play className="w-4 h-4 fill-current translate-x-0.5" />

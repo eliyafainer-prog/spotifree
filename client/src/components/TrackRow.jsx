@@ -7,6 +7,7 @@ export function TrackRow({
   index,
   isCurrentTrack,
   isPlaying,
+  isLoading = false,
   onPlay,
   isLiked,
   onToggleLike,
@@ -21,11 +22,15 @@ export function TrackRow({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
+  const handleClick = () => {
+    if (isCurrentTrack && isLoading) return;
+    onPlay(track);
+  };
+
   return (
     <div
-      onClick={() => onPlay(track)}
+      onClick={handleClick}
       onMouseEnter={() => prefetchNextTracks([track])}
-      onTouchStart={() => prefetchNextTracks([track])}
       className={`group flex items-center justify-between p-2 rounded-md transition-colors cursor-pointer select-none ${
         isCurrentTrack
           ? 'bg-spotify-highlight text-spotify-green'
@@ -36,7 +41,9 @@ export function TrackRow({
       <div className="flex items-center gap-3.5 min-w-0 flex-1">
         <div className="w-6 text-center text-xs text-spotify-subtext font-mono flex-shrink-0 flex items-center justify-center">
           {isCurrentTrack ? (
-            isPlaying ? (
+            isLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin text-spotify-green" />
+            ) : isPlaying ? (
               <span className="flex items-end justify-center gap-0.5 h-3.5">
                 <span className="w-1 bg-spotify-green animate-pulse h-full rounded-full"></span>
                 <span className="w-1 bg-spotify-green animate-pulse h-2 rounded-full"></span>

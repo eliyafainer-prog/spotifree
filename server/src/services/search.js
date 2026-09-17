@@ -21,7 +21,11 @@ async function searchTracks(query, limit = 20) {
     const r = await yts(query);
     const videos = r.videos || [];
     
-    return videos.slice(0, limit).map(v => {
+    // Filter out long DJ mixes / compilation videos (> 10 mins) for fast streaming
+    let filtered = videos.filter(v => !v.seconds || v.seconds < 600);
+    if (filtered.length === 0) filtered = videos; // fallback if user explicitly searched for a mix
+
+    return filtered.slice(0, limit).map(v => {
       // Best available thumbnail
       const thumbnail = v.image || v.thumbnail || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
       
@@ -44,16 +48,20 @@ async function searchTracks(query, limit = 20) {
 }
 
 /**
- * Get trending / popular tracks for home feed
+ * Get trending / popular tracks for home feed (guaranteed fast single tracks)
  */
 async function getTrendingTracks() {
   const trendingQueries = [
-    'top hits today',
-    'billboard hot 100',
-    'popular songs 2026'
+    'top hits music video',
+    'billboard hot songs',
+    'popular official audio',
+    'hit songs 2026'
   ];
   const q = trendingQueries[Math.floor(Math.random() * trendingQueries.length)];
-  return await searchTracks(q, 24);
+  const tracks = await searchTracks(q, 30);
+  // Filter for authentic single tracks between 1.5 and 7 minutes
+  const singleTracks = tracks.filter(t => !t.durationSeconds || (t.durationSeconds >= 90 && t.durationSeconds <= 420));
+  return singleTracks.length >= 10 ? singleTracks.slice(0, 24) : tracks.slice(0, 24);
 }
 
 module.exports = {

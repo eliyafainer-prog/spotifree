@@ -6,6 +6,7 @@ export function PlaylistView({
   playlist,
   currentTrack,
   isPlaying,
+  isLoading = false,
   onPlayTrack,
   likedSongs,
   onToggleLike,
@@ -103,6 +104,7 @@ export function PlaylistView({
               track={track}
               isCurrentTrack={currentTrack?.id === track.id}
               isPlaying={isPlaying}
+              isLoading={isLoading}
               onPlay={(t) => onPlayTrack(t, tracks, idx)}
               isLiked={likedSongs.some(s => s.id === track.id || (s.title === track.title && s.artist === track.artist))}
               onToggleLike={onToggleLike}

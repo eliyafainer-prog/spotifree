@@ -8,7 +8,7 @@
     "dev:server": "npm --prefix server run dev",
     "dev:client": "npm --prefix client run dev",
     "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue,green\" \"npm run dev:server\" \"npm run dev:client\"",
-    "tunnel": ".\\cloudflared.exe tunnel --url http://localhost:3000",
+    "tunnel": ".\\cloudflared.exe tunnel --url http://127.0.0.1:5050",
     "build": "npm --prefix client run build"
   },
   "devDependencies": {

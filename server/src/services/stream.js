@@ -3,6 +3,10 @@ const axios = require('axios');
 const yts = require('yt-search');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+
+// Persistent HTTP Keep-Alive Agent for reusable CDN sockets
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 // Ensure cache directory exists
 const CACHE_DIR = path.join(__dirname, '../../cache');
@@ -16,14 +20,16 @@ const RESOLVE_CACHE_FILE = path.join(CACHE_DIR, 'resolutions.json');
 // In-memory caches with persistent disk backing
 const urlCache = new Map();
 const resolveCache = new Map();
+const inFlightRequests = new Map();
+const failedVideoIds = new Set();
 
-// Load disk caches on boot
+// Load disk caches on boot (filtering out old WebM streams)
 try {
   if (fs.existsSync(URL_CACHE_FILE)) {
     const data = JSON.parse(fs.readFileSync(URL_CACHE_FILE, 'utf8'));
     const now = Date.now();
     for (const [k, v] of Object.entries(data)) {
-      if (v && v.expiresAt > now) {
+      if (v && v.expiresAt > now && v.url && !v.url.includes('mime=audio%2Fwebm')) {
         urlCache.set(k, v);
       }
     }
@@ -44,7 +50,9 @@ function saveCachesToDisk() {
     const urlObj = {};
     const now = Date.now();
     for (const [k, v] of urlCache.entries()) {
-      if (v && v.expiresAt > now) urlObj[k] = v;
+      if (v && v.expiresAt > now && v.url && !v.url.includes('mime=audio%2Fwebm')) {
+        urlObj[k] = v;
+      }
     }
     fs.writeFileSync(URL_CACHE_FILE, JSON.stringify(urlObj), 'utf8');
 
@@ -60,7 +68,7 @@ function saveCachesToDisk() {
 setInterval(saveCachesToDisk, 20000);
 
 // ==========================================
-// PERSISTENT PYTHON WORKER (Zero boot time)
+// PERSISTENT MULTI-THREADED PYTHON WORKER
 // ==========================================
 let workerProcess = null;
 let workerReady = false;
@@ -114,23 +122,33 @@ function startWorker() {
 startWorker();
 
 /**
- * Extract audio stream URL via persistent in-memory worker
+ * Extract audio stream URL via persistent multi-threaded in-memory worker
  */
-function extractWithWorker(target) {
+function extractWithWorker(target, isPriority = true) {
   return new Promise((resolve, reject) => {
     if (!workerProcess || !workerReady) {
       return extractStreamWithYtDlp(target).then(resolve).catch(reject);
     }
 
     const id = nextReqId++;
+
     const timer = setTimeout(() => {
       if (pendingRequests.has(id)) {
         pendingRequests.delete(id);
         extractStreamWithYtDlp(target).then(resolve).catch(reject);
       }
-    }, 8000);
+    }, 7000);
 
-    pendingRequests.set(id, { resolve, reject, timer });
+    pendingRequests.set(id, {
+      resolve: (url) => {
+        resolve(url);
+      },
+      reject: (err) => {
+        reject(err);
+      },
+      timer
+    });
+
     try {
       workerProcess.stdin.write(JSON.stringify({ id, target }) + '\n');
     } catch (e) {
@@ -148,7 +166,7 @@ function extractStreamWithYtDlp(target) {
   return new Promise((resolve, reject) => {
     const args = [
       '-m', 'yt_dlp',
-      '-f', 'ba/b[height<=480]/best',
+      '-f', '140/ba[ext=m4a]/ba/best',
       '--get-url',
       '--no-playlist',
       '--no-warnings',
@@ -182,102 +200,126 @@ function extractStreamWithYtDlp(target) {
 /**
  * Get audio stream URL for a given video ID or search query, with fast in-memory & disk caching
  */
-async function getAudioStreamUrl(videoId, fallbackQuery = null) {
+async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = true) {
   const cacheKey = videoId || fallbackQuery;
   const cached = urlCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (cached && cached.expiresAt > Date.now() && cached.url && !cached.url.includes('mime=audio%2Fwebm')) {
     return cached.url;
   }
 
-  let streamUrl = null;
-
-  // 1. Direct video ID (11 chars YouTube ID)
-  const isVideoId = videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId);
-  if (isVideoId) {
-    try {
-      streamUrl = await extractWithWorker(`https://www.youtube.com/watch?v=${videoId}`);
-      if (streamUrl) {
-        urlCache.set(videoId, {
-          url: streamUrl,
-          expiresAt: Date.now() + 4 * 60 * 60 * 1000
-        });
-        return streamUrl;
-      }
-    } catch (err) {
-      console.warn(`Direct stream for ${videoId} failed (${err.message}). Trying query resolution...`);
-    }
+  // Deduplicate concurrent in-flight extractions (prevents mobile Safari multi-range stampede)
+  if (inFlightRequests.has(cacheKey)) {
+    return await inFlightRequests.get(cacheKey);
   }
 
-  // 2. Query resolution using resolveCache (0ms if previously resolved)
-  if (!streamUrl && fallbackQuery) {
-    const cleanKey = fallbackQuery.toLowerCase().trim();
-    let targetVideoId = resolveCache.get(cleanKey);
+  const jobPromise = (async () => {
+    let streamUrl = null;
 
-    if (!targetVideoId) {
+    // 1. Direct video ID (11 chars YouTube ID)
+    const isVideoId = videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId);
+    if (isVideoId && !failedVideoIds.has(videoId)) {
       try {
-        const ytsRes = await yts(fallbackQuery);
-        if (ytsRes && ytsRes.videos && ytsRes.videos.length > 0) {
-          targetVideoId = ytsRes.videos[0].videoId;
-          resolveCache.set(cleanKey, targetVideoId);
-        }
-      } catch (e) {
-        console.error('yts search failed:', e.message);
-      }
-    }
-
-    if (targetVideoId) {
-      // Check if videoId itself was already cached
-      const cachedVideo = urlCache.get(targetVideoId);
-      if (cachedVideo && cachedVideo.expiresAt > Date.now()) {
-        urlCache.set(cacheKey, cachedVideo);
-        return cachedVideo.url;
-      }
-
-      try {
-        streamUrl = await extractWithWorker(`https://www.youtube.com/watch?v=${targetVideoId}`);
+        streamUrl = await extractWithWorker(`https://www.youtube.com/watch?v=${videoId}`, isPriority);
         if (streamUrl) {
-          const entry = { url: streamUrl, expiresAt: Date.now() + 4 * 60 * 60 * 1000 };
-          urlCache.set(targetVideoId, entry);
-          urlCache.set(cacheKey, entry);
+          urlCache.set(videoId, {
+            url: streamUrl,
+            expiresAt: Date.now() + 4 * 60 * 60 * 1000
+          });
           return streamUrl;
         }
-      } catch (e) {
-        console.error('extractWithWorker failed for targetVideoId:', e.message);
+      } catch (err) {
+        console.warn(`Direct stream for ${videoId} failed (${err.message}). Trying query resolution...`);
+        failedVideoIds.add(videoId);
       }
     }
+
+    // 2. Query resolution using resolveCache (0ms if previously resolved)
+    if (!streamUrl && fallbackQuery) {
+      const cleanKey = fallbackQuery.toLowerCase().trim();
+      let targetVideoId = resolveCache.get(cleanKey);
+
+      if (targetVideoId && failedVideoIds.has(targetVideoId)) {
+        targetVideoId = null;
+      }
+
+      if (!targetVideoId) {
+        try {
+          const ytsRes = await yts(fallbackQuery);
+          if (ytsRes && ytsRes.videos && ytsRes.videos.length > 0) {
+            // Find first video that is NOT blacklisted and under 10 minutes (avoids multi-hour mix files)
+            const candidate = ytsRes.videos.find(v => !failedVideoIds.has(v.videoId) && (!v.seconds || v.seconds < 600));
+            if (candidate) {
+              targetVideoId = candidate.videoId;
+              resolveCache.set(cleanKey, targetVideoId);
+            }
+          }
+        } catch (e) {
+          console.error('yts search failed:', e.message);
+        }
+      }
+
+      if (targetVideoId && !failedVideoIds.has(targetVideoId)) {
+        // Check if videoId itself was already cached
+        const cachedVideo = urlCache.get(targetVideoId);
+        if (cachedVideo && cachedVideo.expiresAt > Date.now() && cachedVideo.url && !cachedVideo.url.includes('mime=audio%2Fwebm')) {
+          urlCache.set(cacheKey, cachedVideo);
+          return cachedVideo.url;
+        }
+
+        try {
+          streamUrl = await extractWithWorker(`https://www.youtube.com/watch?v=${targetVideoId}`, isPriority);
+          if (streamUrl) {
+            const entry = { url: streamUrl, expiresAt: Date.now() + 4 * 60 * 60 * 1000 };
+            urlCache.set(targetVideoId, entry);
+            urlCache.set(cacheKey, entry);
+            return streamUrl;
+          }
+        } catch (e) {
+          console.error('extractWithWorker failed for targetVideoId:', e.message);
+          failedVideoIds.add(targetVideoId);
+        }
+      }
+    }
+
+    // 3. Fallback search
+    if (!streamUrl && videoId && !isVideoId) {
+      try {
+        streamUrl = await extractWithWorker(`ytsearch5:${videoId}`, isPriority);
+      } catch (e) {}
+    }
+
+    if (!streamUrl) {
+      throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
+    }
+
+    // Cache for 4 hours
+    urlCache.set(cacheKey, {
+      url: streamUrl,
+      expiresAt: Date.now() + 4 * 60 * 60 * 1000
+    });
+
+    return streamUrl;
+  })();
+
+  inFlightRequests.set(cacheKey, jobPromise);
+  try {
+    return await jobPromise;
+  } finally {
+    inFlightRequests.delete(cacheKey);
   }
-
-  // 3. Fallback search
-  if (!streamUrl && videoId && !isVideoId) {
-    try {
-      streamUrl = await extractWithWorker(`ytsearch5:${videoId}`);
-    } catch (e) {}
-  }
-
-  if (!streamUrl) {
-    throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
-  }
-
-  // Cache for 4 hours
-  urlCache.set(cacheKey, {
-    url: streamUrl,
-    expiresAt: Date.now() + 4 * 60 * 60 * 1000
-  });
-
-  return streamUrl;
 }
 
 /**
- * Background pre-fetching for upcoming tracks (runs asynchronously without blocking)
+ * Background pre-fetching for upcoming tracks (runs in parallel via multi-threaded worker)
  */
 async function prefetchTracks(tracks) {
   if (!Array.isArray(tracks)) return;
-  for (const t of tracks.slice(0, 6)) {
+  for (const t of tracks.slice(0, 3)) {
     if (!t) continue;
     const query = `${t.title || ''} ${t.artist || ''}`.trim();
     const key = t.id || query;
     if (!urlCache.has(key)) {
-      getAudioStreamUrl(t.id, query).catch(() => {});
+      getAudioStreamUrl(t.id, query, false).catch(() => {});
     }
   }
 }
@@ -286,6 +328,15 @@ async function prefetchTracks(tracks) {
  * Proxy stream with zero-buffering and immediate header flushing for minimum audio latency
  */
 async function pipeStream(videoId, req, res, fallbackQuery = null) {
+  let upstreamStream = null;
+
+  // Destroy upstream stream if mobile client closes or aborts request
+  req.on('close', () => {
+    if (upstreamStream && typeof upstreamStream.destroy === 'function') {
+      upstreamStream.destroy();
+    }
+  });
+
   try {
     const streamUrl = await getAudioStreamUrl(videoId, fallbackQuery);
     const range = req.headers.range;
@@ -303,10 +354,13 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
       url: streamUrl,
       responseType: 'stream',
       headers: headers,
+      httpsAgent: httpsAgent,
       decompress: false, // Prevents axios decompression latency
       maxRedirects: 5,
       validateStatus: () => true
     });
+
+    upstreamStream = response.data;
 
     res.status(response.status);
     res.setHeader('Accept-Ranges', 'bytes');
@@ -324,7 +378,6 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
 
     response.data.pipe(res);
   } catch (err) {
-    console.error('Error piping stream:', err.message);
     if (!res.headersSent) {
       res.status(500).json({ error: 'שגיאה בהזרמת השמע: ' + err.message });
     }
