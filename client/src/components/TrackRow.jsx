@@ -1,5 +1,6 @@
 import React from 'react';
 import { Play, Pause, Heart, Music, ArrowDownCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { prefetchNextTracks } from '../services/api';
 
 export function TrackRow({
   track,
@@ -23,6 +24,8 @@ export function TrackRow({
   return (
     <div
       onClick={() => onPlay(track)}
+      onMouseEnter={() => prefetchNextTracks([track])}
+      onTouchStart={() => prefetchNextTracks([track])}
       className={`group flex items-center justify-between p-2 rounded-md transition-colors cursor-pointer select-none ${
         isCurrentTrack
           ? 'bg-spotify-highlight text-spotify-green'

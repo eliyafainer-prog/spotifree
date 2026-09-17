@@ -16,7 +16,7 @@ import {
 
 import { useAudioPlayer } from './hooks/useAudioPlayer';
 import { useMediaSession } from './hooks/useMediaSession';
-import { searchTracks, getTrendingTracks, getLyrics, downloadTrackAudioBlob } from './services/api';
+import { searchTracks, getTrendingTracks, getLyrics, downloadTrackAudioBlob, prefetchNextTracks } from './services/api';
 import {
   getLikedSongs,
   toggleLikeSong,
@@ -120,13 +120,18 @@ export default function App() {
     onSeek: player.seek
   });
 
-  // Load trending tracks on mount
+  // Load trending tracks on mount and proactively prefetch top songs
   useEffect(() => {
     let isMounted = true;
     setIsTrendingLoading(true);
     getTrendingTracks()
       .then(tracks => {
-        if (isMounted) setTrendingTracks(tracks);
+        if (isMounted) {
+          setTrendingTracks(tracks);
+          if (tracks.length > 0) {
+            prefetchNextTracks(tracks.slice(0, 5));
+          }
+        }
       })
       .catch(err => console.error('Failed to load trending:', err))
       .finally(() => {
@@ -135,6 +140,21 @@ export default function App() {
 
     return () => { isMounted = false; };
   }, []);
+
+  // Proactively prefetch playlist tracks when opening a playlist
+  useEffect(() => {
+    const activePl = playlists.find(p => p.id === selectedPlaylistId);
+    if (activePl && activePl.tracks && activePl.tracks.length > 0) {
+      prefetchNextTracks(activePl.tracks.slice(0, 5));
+    }
+  }, [selectedPlaylistId, playlists]);
+
+  // Proactively prefetch liked songs when entering liked view
+  useEffect(() => {
+    if (currentView === 'liked' && likedSongs.length > 0) {
+      prefetchNextTracks(likedSongs.slice(0, 5));
+    }
+  }, [currentView, likedSongs]);
 
   // Fetch lyrics whenever currentTrack changes
   useEffect(() => {
@@ -152,7 +172,7 @@ export default function App() {
     return () => { isMounted = false; };
   }, [player.currentTrack]);
 
-  // Handle Search input
+  // Handle Search input and proactively prefetch top results
   const handleSearchSubmit = async (e) => {
     e?.preventDefault();
     if (!searchQuery.trim()) return;
@@ -161,6 +181,9 @@ export default function App() {
     try {
       const results = await searchTracks(searchQuery.trim());
       setSearchResults(results);
+      if (results && results.length > 0) {
+        prefetchNextTracks(results.slice(0, 4));
+      }
     } catch (err) {
       console.error('Search error:', err);
     } finally {
@@ -379,6 +402,8 @@ export default function App() {
                         <div
                           key={track.id || idx}
                           onClick={() => handlePlayTrack(track, trendingTracks, idx)}
+                          onMouseEnter={() => prefetchNextTracks([track])}
+                          onTouchStart={() => prefetchNextTracks([track])}
                           className="bg-spotify-dark hover:bg-spotify-elevated p-3 rounded-lg flex flex-col gap-2.5 group cursor-pointer transition-all duration-200"
                         >
                           <div className="relative aspect-square w-full rounded-md overflow-hidden bg-spotify-highlight shadow-md">
