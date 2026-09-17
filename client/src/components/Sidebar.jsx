@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Search, Library, Heart, PlusCircle, Music2, BarChart3 } from 'lucide-react';
+import { Home, Search, Library, Heart, PlusCircle, Music2, BarChart3, ArrowDownCircle } from 'lucide-react';
 
 export function Sidebar({ currentView, setCurrentView, playlists, openImportModal, selectedPlaylistId, setSelectedPlaylistId }) {
   return (
@@ -93,6 +93,21 @@ export function Sidebar({ currentView, setCurrentView, playlists, openImportModa
               <Heart className="w-4 h-4 fill-white" />
             </div>
             <span>שירים שאהבתי</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setCurrentView('offline');
+              setSelectedPlaylistId(null);
+            }}
+            className={`flex items-center gap-3 p-2 rounded-md font-medium text-sm transition-colors text-right ${
+              currentView === 'offline' ? 'bg-spotify-highlight text-white' : 'text-spotify-subtext hover:text-white'
+            }`}
+          >
+            <div className="w-8 h-8 rounded bg-teal-600/20 border border-teal-500/40 flex items-center justify-center text-teal-400 flex-shrink-0 shadow">
+              <ArrowDownCircle className="w-4 h-4" />
+            </div>
+            <span>שירים שהורדו (אופליין)</span>
           </button>
 
           <button

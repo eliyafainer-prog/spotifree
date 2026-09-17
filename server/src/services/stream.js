@@ -1,11 +1,12 @@
 const { spawn } = require('child_process');
 const axios = require('axios');
+const yts = require('yt-search');
 
 // In-memory cache for stream URLs (valid for ~3-4 hours)
 const urlCache = new Map();
 
 /**
- * Extract audio stream URL using yt-dlp
+ * Extract audio stream URL using yt-dlp with optimized flags for fast startup
  */
 function extractStreamWithYtDlp(target) {
   return new Promise((resolve, reject) => {
@@ -15,6 +16,9 @@ function extractStreamWithYtDlp(target) {
       '--get-url',
       '--no-playlist',
       '--no-warnings',
+      '--no-check-certificates',
+      '--geo-bypass',
+      '--socket-timeout', '6',
       '--default-search', 'ytsearch5',
       target
     ];
@@ -51,7 +55,7 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null) {
 
   let streamUrl = null;
 
-  // 1. Try video ID directly if valid
+  // 1. Try video ID directly if valid 11-char YouTube ID
   const isVideoId = videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId);
   if (isVideoId) {
     try {
@@ -61,12 +65,29 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null) {
     }
   }
 
-  // 2. If direct video failed or wasn't provided, try fallback query or query search
+  // 2. If direct video failed or wasn't provided, try fallback query with fast yts matching
   if (!streamUrl && fallbackQuery) {
     try {
-      streamUrl = await extractStreamWithYtDlp(`ytsearch5:${fallbackQuery}`);
+      const ytsRes = await yts(fallbackQuery);
+      if (ytsRes && ytsRes.videos && ytsRes.videos.length > 0) {
+        const topVideo = ytsRes.videos[0];
+        streamUrl = await extractStreamWithYtDlp(`https://www.youtube.com/watch?v=${topVideo.videoId}`);
+        if (streamUrl) {
+          urlCache.set(topVideo.videoId, {
+            url: streamUrl,
+            expiresAt: Date.now() + 3 * 60 * 60 * 1000
+          });
+        }
+      } else {
+        streamUrl = await extractStreamWithYtDlp(`ytsearch5:${fallbackQuery}`);
+      }
     } catch (fallbackErr) {
       console.error(`Fallback query search failed:`, fallbackErr.message);
+      try {
+        streamUrl = await extractStreamWithYtDlp(`ytsearch5:${fallbackQuery}`);
+      } catch (e) {
+        console.error(`Secondary fallback failed:`, e.message);
+      }
     }
   }
 
@@ -86,6 +107,21 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null) {
   });
 
   return streamUrl;
+}
+
+/**
+ * Background pre-fetching for upcoming tracks
+ */
+async function prefetchTracks(tracks) {
+  if (!Array.isArray(tracks)) return;
+  for (const t of tracks.slice(0, 3)) {
+    if (!t) continue;
+    const query = `${t.title || ''} ${t.artist || ''}`.trim();
+    const key = t.id || query;
+    if (!urlCache.has(key)) {
+      getAudioStreamUrl(t.id, query).catch(() => {});
+    }
+  }
 }
 
 /**
@@ -119,7 +155,7 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
       }
     }
     res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Cache-Control', 'public, max-age=7200');
 
     response.data.pipe(res);
   } catch (err) {
@@ -132,5 +168,6 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
 
 module.exports = {
   getAudioStreamUrl,
-  pipeStream
+  pipeStream,
+  prefetchTracks
 };

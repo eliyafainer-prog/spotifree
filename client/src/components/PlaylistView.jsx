@@ -9,7 +9,10 @@ export function PlaylistView({
   onPlayTrack,
   likedSongs,
   onToggleLike,
-  onDeletePlaylist
+  onDeletePlaylist,
+  downloadedIds = new Set(),
+  downloadingIds = new Set(),
+  onDownloadTrack
 }) {
   if (!playlist) return null;
 
@@ -103,6 +106,9 @@ export function PlaylistView({
               onPlay={(t) => onPlayTrack(t, tracks, idx)}
               isLiked={likedSongs.some(s => s.id === track.id || (s.title === track.title && s.artist === track.artist))}
               onToggleLike={onToggleLike}
+              isDownloaded={downloadedIds?.has(track.id)}
+              isDownloading={downloadingIds?.has(track.id)}
+              onDownload={onDownloadTrack}
             />
           ))
         )}

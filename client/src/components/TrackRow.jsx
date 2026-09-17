@@ -1,7 +1,18 @@
 import React from 'react';
-import { Play, Pause, Heart, Music } from 'lucide-react';
+import { Play, Pause, Heart, Music, ArrowDownCircle, CheckCircle2, Loader2 } from 'lucide-react';
 
-export function TrackRow({ track, index, isCurrentTrack, isPlaying, onPlay, isLiked, onToggleLike }) {
+export function TrackRow({
+  track,
+  index,
+  isCurrentTrack,
+  isPlaying,
+  onPlay,
+  isLiked,
+  onToggleLike,
+  isDownloaded = false,
+  isDownloading = false,
+  onDownload
+}) {
   const formatDuration = (seconds) => {
     if (!seconds) return track.duration || '0:00';
     const m = Math.floor(seconds / 60);
@@ -59,8 +70,31 @@ export function TrackRow({ track, index, isCurrentTrack, isPlaying, onPlay, isLi
         </div>
       </div>
 
-      {/* Left side in RTL: Like Button & Duration */}
-      <div className="flex items-center gap-4 flex-shrink-0 pl-2">
+      {/* Left side in RTL: Download Button, Like Button & Duration */}
+      <div className="flex items-center gap-3.5 flex-shrink-0 pl-2">
+        {/* Offline Download Button */}
+        {onDownload && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isDownloaded && !isDownloading) {
+                onDownload(track);
+              }
+            }}
+            title={isDownloaded ? 'שמור להאזנה אופליין' : 'הורד להאזנה אופליין'}
+            className="p-1 transition-transform active:scale-125 flex items-center justify-center"
+          >
+            {isDownloading ? (
+              <Loader2 className="w-4 h-4 text-teal-400 animate-spin" />
+            ) : isDownloaded ? (
+              <CheckCircle2 className="w-4 h-4 text-teal-400 fill-teal-400/20" />
+            ) : (
+              <ArrowDownCircle className="w-4 h-4 text-spotify-subtext opacity-0 group-hover:opacity-100 hover:text-teal-400 transition-opacity" />
+            )}
+          </button>
+        )}
+
+        {/* Like Button */}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -74,6 +108,7 @@ export function TrackRow({ track, index, isCurrentTrack, isPlaying, onPlay, isLi
           <Heart className={`w-4 h-4 ${isLiked ? 'fill-spotify-green' : ''}`} />
         </button>
 
+        {/* Duration */}
         <span className="text-xs text-spotify-subtext font-mono w-10 text-left">
           {formatDuration(track.durationSeconds)}
         </span>

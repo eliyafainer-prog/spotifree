@@ -10,12 +10,13 @@ import {
   Play,
   Loader2,
   ExternalLink,
-  Volume2
+  Volume2,
+  ArrowDownCircle
 } from 'lucide-react';
 
 import { useAudioPlayer } from './hooks/useAudioPlayer';
 import { useMediaSession } from './hooks/useMediaSession';
-import { searchTracks, getTrendingTracks, getLyrics } from './services/api';
+import { searchTracks, getTrendingTracks, getLyrics, downloadTrackAudioBlob } from './services/api';
 import {
   getLikedSongs,
   toggleLikeSong,
@@ -25,6 +26,7 @@ import {
   getRecentTracks
 } from './services/storage';
 import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
+import { saveTrackOffline, getAllOfflineTracks } from './services/offlineStorage';
 
 import { Sidebar } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
@@ -35,6 +37,7 @@ import { ImportModal } from './components/ImportModal';
 import { TrackRow } from './components/TrackRow';
 import { PlaylistView } from './components/PlaylistView';
 import { AnalyticsView } from './components/AnalyticsView';
+import { OfflineView } from './components/OfflineView';
 
 export default function App() {
   // Navigation & Views
@@ -60,6 +63,44 @@ export default function App() {
   const [isFullscreenPlayerOpen, setIsFullscreenPlayerOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [lyricsData, setLyricsData] = useState({ synced: [], plain: [], hasSynced: false });
+
+  // Offline Downloads state
+  const [downloadedIds, setDownloadedIds] = useState(new Set());
+  const [downloadingIds, setDownloadingIds] = useState(new Set());
+
+  // Load downloaded track IDs on mount
+  const refreshDownloads = useCallback(async () => {
+    try {
+      const tracks = await getAllOfflineTracks();
+      setDownloadedIds(new Set(tracks.map(t => t.id)));
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDownloads();
+  }, [refreshDownloads]);
+
+  // Handle Download Track
+  const handleDownloadTrack = async (track) => {
+    if (!track || downloadedIds.has(track.id) || downloadingIds.has(track.id)) return;
+
+    setDownloadingIds(prev => new Set([...prev, track.id]));
+    try {
+      const blob = await downloadTrackAudioBlob(track);
+      await saveTrackOffline(track, blob);
+      setDownloadedIds(prev => new Set([...prev, track.id]));
+    } catch (err) {
+      console.error('Download failed:', err);
+    } finally {
+      setDownloadingIds(prev => {
+        const next = new Set(prev);
+        next.delete(track.id);
+        return next;
+      });
+    }
+  };
 
   // Audio Player Engine
   const player = useAudioPlayer();
@@ -241,6 +282,7 @@ export default function App() {
                   {currentView === 'home' && 'דף הבית'}
                   {currentView === 'library' && 'הספרייה שלך'}
                   {currentView === 'liked' && 'שירים שאהבתי'}
+                  {currentView === 'offline' && 'שירים שהורדו (Offline Downloads)'}
                   {currentView === 'analytics' && 'ניתוח נתונים (Listening Analytics)'}
                   {currentView === 'playlist' && (activePlaylist?.title || 'פלייליסט')}
                 </span>
@@ -378,6 +420,9 @@ export default function App() {
                         onPlay={(t) => handlePlayTrack(t, searchResults, idx)}
                         isLiked={likedSongs.some(s => s.id === track.id || (s.title === track.title && s.artist === track.artist))}
                         onToggleLike={handleToggleLike}
+                        isDownloaded={downloadedIds?.has(track.id)}
+                        isDownloading={downloadingIds?.has(track.id)}
+                        onDownload={handleDownloadTrack}
                       />
                     ))}
                   </div>
@@ -403,6 +448,16 @@ export default function App() {
                     <Heart className="w-8 h-8 fill-white mb-2" />
                     <h3 className="font-black text-xl text-white">שירים שאהבתי</h3>
                     <p className="text-xs text-white/80">{likedSongs.length} שירים שמורים</p>
+                  </div>
+
+                  {/* Offline Downloads Tile */}
+                  <div
+                    onClick={() => setCurrentView('offline')}
+                    className="aspect-square rounded-lg bg-gradient-to-br from-teal-700 via-emerald-800 to-cyan-900 p-4 flex flex-col justify-end shadow-xl cursor-pointer hover:scale-[1.02] transition-transform"
+                  >
+                    <ArrowDownCircle className="w-8 h-8 text-white mb-2" />
+                    <h3 className="font-black text-xl text-white">הורדות אופליין</h3>
+                    <p className="text-xs text-white/80">{downloadedIds.size} שירים שמורים במכשיר</p>
                   </div>
 
                   {/* Playlists Tiles */}
@@ -445,6 +500,9 @@ export default function App() {
                 onPlayTrack={handlePlayTrack}
                 likedSongs={likedSongs}
                 onToggleLike={handleToggleLike}
+                downloadedIds={downloadedIds}
+                downloadingIds={downloadingIds}
+                onDownloadTrack={handleDownloadTrack}
               />
             )}
 
@@ -458,6 +516,21 @@ export default function App() {
                 likedSongs={likedSongs}
                 onToggleLike={handleToggleLike}
                 onDeletePlaylist={handleDeletePlaylist}
+                downloadedIds={downloadedIds}
+                downloadingIds={downloadingIds}
+                onDownloadTrack={handleDownloadTrack}
+              />
+            )}
+
+            {/* VIEW: OFFLINE DOWNLOADS */}
+            {currentView === 'offline' && (
+              <OfflineView
+                currentTrack={player.currentTrack}
+                isPlaying={player.isPlaying}
+                onPlayTrack={handlePlayTrack}
+                likedSongs={likedSongs}
+                onToggleLike={handleToggleLike}
+                onTrackDeleted={refreshDownloads}
               />
             )}
 

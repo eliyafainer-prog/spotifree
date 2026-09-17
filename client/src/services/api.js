@@ -64,24 +64,40 @@ export async function getLyrics(track, artist, duration) {
 }
 
 /**
- * Resolve a track and get playable audio URL
+ * Generate playable audio URL immediately without network round-trips
  */
-export async function getPlayableAudioUrl(track) {
-  let streamableId = track.id;
+export function getPlayableAudioUrl(track) {
+  const fallbackQuery = encodeURIComponent(`${track.title || ''} ${track.artist || ''}`.trim());
+  const streamableId = encodeURIComponent(track.id || '');
+  return `${API_BASE}/stream/pipe/${streamableId}?q=${fallbackQuery}`;
+}
 
-  // If track is from Spotify import or needs resolution
-  if (track.source === 'spotify' || (typeof track.id === 'string' && track.id.startsWith('sp_'))) {
-    const res = await fetch(`${API_BASE}/resolve`, {
+/**
+ * Pre-fetch next tracks in background to eliminate buffering latency
+ */
+export async function prefetchNextTracks(tracks) {
+  if (!tracks || tracks.length === 0) return;
+  try {
+    fetch(`${API_BASE}/stream/prefetch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ track })
-    });
-    if (!res.ok) throw new Error('Failed to resolve track audio');
-    const data = await res.json();
-    streamableId = data.streamableId;
+      body: JSON.stringify({ tracks: tracks.slice(0, 3) })
+    }).catch(() => {});
+  } catch {
+    // Background prefetch is non-blocking
+  }
+}
+
+/**
+ * Download track audio as a Blob for offline playback
+ */
+export async function downloadTrackAudioBlob(track, onProgress = null) {
+  const audioUrl = await getPlayableAudioUrl(track);
+  const response = await fetch(audioUrl);
+  if (!response.ok) {
+    throw new Error('הורדת קובץ השמע נכשלה מהשרת.');
   }
 
-  // Use the backend pipe endpoint with HTTP Range support and fallback query
-  const fallbackQuery = encodeURIComponent(`${track.title} ${track.artist || ''}`.trim());
-  return `${API_BASE}/stream/pipe/${streamableId}?q=${fallbackQuery}`;
+  const blob = await response.blob();
+  return blob;
 }

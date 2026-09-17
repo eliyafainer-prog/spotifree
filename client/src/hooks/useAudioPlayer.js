@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { getPlayableAudioUrl } from '../services/api';
+import { getPlayableAudioUrl, prefetchNextTracks } from '../services/api';
 import { addRecentTrack } from '../services/storage';
+import { getOfflineTrack } from '../services/offlineStorage';
 
 export function useAudioPlayer() {
   const audioRef = useRef(null);
@@ -76,9 +76,14 @@ export function useAudioPlayer() {
   const playTrack = useCallback(async (track, newQueue = null, indexInQueue = -1) => {
     if (!track) return;
 
+    const currentQ = newQueue || queue;
+    const targetIdx = indexInQueue >= 0 ? indexInQueue : currentQ.findIndex(t => t.id === track.id);
+
     if (newQueue) {
       setQueue(newQueue);
-      setQueueIndex(indexInQueue >= 0 ? indexInQueue : newQueue.findIndex(t => t.id === track.id));
+      setQueueIndex(targetIdx);
+    } else if (indexInQueue >= 0) {
+      setQueueIndex(indexInQueue);
     }
 
     setCurrentTrack(track);
@@ -87,20 +92,45 @@ export function useAudioPlayer() {
     setDuration(track.durationSeconds || 0);
 
     try {
-      const audioUrl = await getPlayableAudioUrl(track);
+      // 1. Check Offline Storage first (0ms instant playback without internet!)
+      const offlineRecord = await getOfflineTrack(track);
+      if (offlineRecord && offlineRecord.audioBlob && audioRef.current) {
+        const localBlobUrl = URL.createObjectURL(offlineRecord.audioBlob);
+        audioRef.current.src = localBlobUrl;
+        audioRef.current.currentTime = 0;
+        await audioRef.current.play();
+        setIsPlaying(true);
+        setIsLoading(false);
+        addRecentTrack(track);
+
+        // Pre-fetch next track in queue
+        if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
+          prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
+        }
+        return;
+      }
+
+      // 2. Stream from network immediately
+      const audioUrl = getPlayableAudioUrl(track);
       if (audioRef.current) {
         audioRef.current.src = audioUrl;
         audioRef.current.currentTime = 0;
         await audioRef.current.play();
         setIsPlaying(true);
+        setIsLoading(false);
         addRecentTrack(track);
+
+        // Pre-fetch next tracks in background to eliminate next song wait time
+        if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
+          prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
+        }
       }
     } catch (err) {
       console.error('Error playing track:', err);
       setIsLoading(false);
       setIsPlaying(false);
     }
-  }, []);
+  }, [queue]);
 
   /**
    * Toggle play / pause

@@ -57,6 +57,18 @@ router.get('/stream/pipe/:id', (req, res) => {
 });
 
 /**
+ * Prefetch stream URLs in the background for instant playback of next tracks
+ */
+router.post('/stream/prefetch', (req, res) => {
+  const { tracks } = req.body;
+  if (Array.isArray(tracks)) {
+    const { prefetchTracks } = require('../services/stream');
+    prefetchTracks(tracks);
+  }
+  res.json({ ok: true });
+});
+
+/**
  * Resolve track (e.g. Spotify track) to streamable YouTube ID
  */
 router.post('/resolve', async (req, res) => {
