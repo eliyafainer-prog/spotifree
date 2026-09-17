@@ -31,8 +31,15 @@ export async function importPlaylist(url) {
     body: JSON.stringify({ url })
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Import failed');
+    let errMsg = 'שגיאה בייבוא הפלייליסט';
+    try {
+      const err = await res.json();
+      errMsg = err.error || errMsg;
+    } catch {
+      const txt = await res.text();
+      if (txt) errMsg = txt;
+    }
+    throw new Error(errMsg);
   }
   const data = await res.json();
   return data.playlist;

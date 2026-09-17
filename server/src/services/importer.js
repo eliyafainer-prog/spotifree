@@ -4,10 +4,10 @@ const yts = require('yt-search');
 const { cleanTitle } = require('./search');
 
 /**
- * Extract Spotify ID and type from URL
+ * Extract Spotify ID and type from URL (supports intl-xx, queries, and URIs)
  */
 function parseSpotifyUrl(url) {
-  const match = url.match(/spotify\.com\/(playlist|album|track)\/([a-zA-Z0-9]+)/);
+  const match = url.match(/(?:spotify\.com\/(?:intl-[a-zA-Z-]+\/)?|spotify:)(playlist|album|track)[:/]([a-zA-Z0-9]+)/);
   if (!match) return null;
   return {
     type: match[1],
@@ -21,30 +21,46 @@ function parseSpotifyUrl(url) {
 async function importSpotify(url) {
   const parsed = parseSpotifyUrl(url);
   if (!parsed) {
-    throw new Error('Invalid Spotify URL');
+    throw new Error('קישור ספוטיפיי אינו תקין. יש להזין קישור לפלייליסט, אלבום או שיר.');
   }
 
   const embedUrl = `https://open.spotify.com/embed/${parsed.type}/${parsed.id}`;
-  const response = await axios.get(embedUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9'
-    },
-    timeout: 10000
-  });
+  let response;
+  try {
+    response = await axios.get(embedUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9'
+      },
+      timeout: 10000,
+      validateStatus: () => true
+    });
+  } catch (netErr) {
+    throw new Error('שגיאת תקשורת מול ספוטיפיי. בדוק את החיבור לרשת.');
+  }
 
-  const html = response.data;
+  if (response.status === 404) {
+    throw new Error('הפלייליסט או האלבום לא נמצא בספוטיפיי (ייתכן שהוא פרטי או שהקישור שגוי).');
+  }
+
+  const html = response.data || '';
   const match = html.match(/<script\s+id="__NEXT_DATA__"\s+type="application\/json">([\s\S]*?)<\/script>/);
 
   if (!match) {
-    throw new Error('Could not parse Spotify embed data');
+    throw new Error('לא ניתן היה לפענח את תוכן הפלייליסט. נסה קישור אחר.');
   }
 
-  const nextData = JSON.parse(match[1]);
+  let nextData;
+  try {
+    nextData = JSON.parse(match[1]);
+  } catch (e) {
+    throw new Error('שגיאה בקריאת המידע מספוטיפיי.');
+  }
+
   const entity = nextData.props?.pageProps?.state?.data?.entity;
 
   if (!entity) {
-    throw new Error('Spotify playlist/album not found');
+    throw new Error('האלבום או הפלייליסט לא נמצא בספוטיפיי (בדוק את הקישור שהדבקת).');
   }
 
   const playlistTitle = entity.name || entity.title || 'Imported Spotify Playlist';
