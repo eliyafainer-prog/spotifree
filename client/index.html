@@ -14,20 +14,9 @@
     <script>
       (function() {
         try {
-          Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
-          Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
-          Object.defineProperty(document, 'webkitHidden', { get: () => false, configurable: true });
-          Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
-
-          const swallow = function(e) {
-            e.stopImmediatePropagation();
-            e.stopPropagation();
-          };
-
-          window.addEventListener('visibilitychange', swallow, true);
-          document.addEventListener('visibilitychange', swallow, true);
-          window.addEventListener('webkitvisibilitychange', swallow, true);
-          document.addEventListener('webkitvisibilitychange', swallow, true);
+          if ('audioSession' in navigator) {
+            navigator.audioSession.type = 'playback';
+          }
         } catch (e) {}
       })();
     </script>

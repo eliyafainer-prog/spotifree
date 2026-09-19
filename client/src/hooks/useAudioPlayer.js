@@ -68,7 +68,14 @@ export function useAudioPlayer() {
 
     const handlePause = () => {
       if (activeEngineRef.current === 'audio') {
-        setIsPlaying(false);
+        if (!userPausedRef.current && currentTrackRef.current) {
+          // Browser or OS attempted to pause in background without user intent -> auto-resume!
+          audio.play().catch(() => {
+            setIsPlaying(false);
+          });
+        } else {
+          setIsPlaying(false);
+        }
       }
     };
 
@@ -143,6 +150,35 @@ export function useAudioPlayer() {
       if (ytTimerRef.current) clearInterval(ytTimerRef.current);
     };
   }, [isPlaying]);
+
+  // Background Audio Guardian: Prevent mobile browsers from freezing audio on app switch / screen lock
+  useEffect(() => {
+    const handleBackgroundWakeup = () => {
+      if (!userPausedRef.current && currentTrackRef.current) {
+        if (activeEngineRef.current === 'audio' && audioRef.current?.paused) {
+          audioRef.current.play().catch(() => {});
+        } else if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
+          try {
+            if (typeof ytPlayerRef.current.getPlayerState === 'function' && ytPlayerRef.current.getPlayerState() !== 1) {
+              ytPlayerRef.current.playVideo();
+            }
+          } catch (e) {}
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleBackgroundWakeup);
+    window.addEventListener('pagehide', handleBackgroundWakeup);
+    window.addEventListener('blur', handleBackgroundWakeup);
+    window.addEventListener('focus', handleBackgroundWakeup);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleBackgroundWakeup);
+      window.removeEventListener('pagehide', handleBackgroundWakeup);
+      window.removeEventListener('blur', handleBackgroundWakeup);
+      window.removeEventListener('focus', handleBackgroundWakeup);
+    };
+  }, []);
 
   // Initialize YouTube Player immediately on mount so it's warm and ready for instant playback
   useEffect(() => {

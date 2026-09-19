@@ -120,20 +120,12 @@ export function useMediaSession({
     };
   }, []);
 
-  // Handle Headphone / Bluetooth disconnect (devicechange event)
+  // Set audio session type for media playback
   useEffect(() => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.addEventListener) return;
-
-    const handleDeviceChange = () => {
-      if (handlersRef.current.isPlaying && handlersRef.current.onPause) {
-        console.log('🎧 Audio device change detected (headphones unplugged/disconnected) -> Auto-pausing.');
-        handlersRef.current.onPause();
-      }
-    };
-
-    navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
-    return () => {
-      navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
-    };
+    if ('audioSession' in navigator) {
+      try {
+        navigator.audioSession.type = 'playback';
+      } catch (e) {}
+    }
   }, []);
 }
