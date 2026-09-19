@@ -172,6 +172,7 @@ function extractStreamWithYtDlp(target) {
     const cookieCandidates = [
       process.env.COOKIE_FILE,
       '/etc/secrets/cookies.txt',
+      path.join(__dirname, '../cookies.txt'),
       path.join(__dirname, '../../cookies.txt'),
       path.join(process.cwd(), 'cookies.txt'),
       path.join(process.cwd(), 'server/cookies.txt')

@@ -28,6 +28,9 @@ export function useAudioPlayer() {
   const [queue, setQueue] = useState([]);
   const [queueIndex, setQueueIndex] = useState(-1);
 
+  const currentTrackRef = useRef(null);
+  const playViaYouTubePlayerRef = useRef(null);
+
   // Initialize HTML5 Audio instance once
   useEffect(() => {
     const audio = new Audio();
@@ -75,6 +78,15 @@ export function useAudioPlayer() {
       }
     };
 
+    const handleError = (e) => {
+      if (activeEngineRef.current === 'audio') {
+        console.warn('HTML5 audio error, falling back to YouTube engine:', e);
+        if (currentTrackRef.current && playViaYouTubePlayerRef.current) {
+          playViaYouTubePlayerRef.current(currentTrackRef.current);
+        }
+      }
+    };
+
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('durationchange', handleDurationChange);
     audio.addEventListener('waiting', handleWaiting);
@@ -82,6 +94,7 @@ export function useAudioPlayer() {
     audio.addEventListener('play', handlePlay);
     audio.addEventListener('pause', handlePause);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
 
     return () => {
       audio.pause();
@@ -92,6 +105,7 @@ export function useAudioPlayer() {
       audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
     };
   }, []);
 
@@ -241,6 +255,8 @@ export function useAudioPlayer() {
     }
   }, [volume, isMuted]);
 
+  playViaYouTubePlayerRef.current = playViaYouTubePlayer;
+
   /**
    * Play specific track from a given playlist or queue
    */
@@ -262,6 +278,7 @@ export function useAudioPlayer() {
     const isUnresolved = !playableTrack.streamableId && (!playableTrack.id || playableTrack.id.startsWith('sp_'));
 
     setCurrentTrack(playableTrack);
+    currentTrackRef.current = playableTrack;
     setIsLoading(true);
     setCurrentTime(0);
     setDuration(playableTrack.durationSeconds || 0);
@@ -281,6 +298,7 @@ export function useAudioPlayer() {
             setDuration(resolved.durationSeconds);
           }
           setCurrentTrack({ ...playableTrack });
+          currentTrackRef.current = { ...playableTrack };
           updateTrackInPlaylists(playableTrack);
         }
       } catch (err) {
@@ -317,7 +335,31 @@ export function useAudioPlayer() {
       console.warn('Offline storage check skipped:', e);
     }
 
-    // 2. Play immediately via native client YouTube Player
+    // 2. Play via direct audio stream on HTML5 Audio (Native background audio on iOS/Android!)
+    if (audioRef.current && playableTrack.id) {
+      try {
+        activeEngineRef.current = 'audio';
+        if (ytPlayerRef.current?.pauseVideo) {
+          try { ytPlayerRef.current.pauseVideo(); } catch (e) {}
+        }
+        const streamUrl = getPlayableAudioUrl(playableTrack);
+        audioRef.current.src = streamUrl;
+        audioRef.current.currentTime = 0;
+        await audioRef.current.play();
+        setIsPlaying(true);
+        setIsLoading(false);
+        addRecentTrack(playableTrack);
+
+        if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
+          prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
+        }
+        return;
+      } catch (err) {
+        console.warn('Direct audio stream start failed, falling back to YouTube:', err);
+      }
+    }
+
+    // 3. Fallback: Play via native client YouTube Player
     playViaYouTubePlayer(playableTrack);
     addRecentTrack(playableTrack);
 
