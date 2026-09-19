@@ -14,8 +14,7 @@ ydl_opts = {
     'socket_timeout': 8,
     'noplaylist': True,
     'extract_flat': False,
-    'skip_download': True,
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+    'skip_download': True
 }
 
 # Auto-detect cookiefile (Render Secret File, local file, or env var)

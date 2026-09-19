@@ -82,9 +82,9 @@ router.get('/debug-extract', async (req, res) => {
       cookieFlag = `--cookies "${foundCookie}"`;
     }
   }
-  const extraFlags = req.query.flags || '--verbose';
+  const uaFlag = req.query.ua ? `--user-agent "${req.query.ua}"` : '';
   exec(`${PYTHON_BIN} -m yt_dlp --version`, (err1, vOut) => {
-    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba ${cookieFlag} ${extraFlags} --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36" https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
+    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba ${cookieFlag} ${extraFlags} ${uaFlag} https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
       let cookiePreview = null;
       if (foundCookie) {
         try {
