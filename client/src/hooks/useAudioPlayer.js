@@ -141,8 +141,8 @@ export function useAudioPlayer() {
       if (!ytPlayerRef.current) {
         try {
           ytPlayerRef.current = new window.YT.Player('spotifree-yt-player', {
-            height: '100',
-            width: '100',
+            height: '200',
+            width: '200',
             playerVars: {
               autoplay: 0,
               controls: 0,
@@ -163,13 +163,11 @@ export function useAudioPlayer() {
                   setIsPlaying(true);
                   setIsLoading(false);
                 } else if (e.data === 2) { // PAUSED
+                  setIsPlaying(false);
                   if (!userPausedRef.current) {
-                    // System/OS paused it (e.g. screen lock or tab hidden) - auto-resume!
                     try {
                       e.target.playVideo();
                     } catch (err) {}
-                  } else {
-                    setIsPlaying(false);
                   }
                 } else if (e.data === 0) { // ENDED
                   nextTrackRef.current?.();
@@ -203,14 +201,12 @@ export function useAudioPlayer() {
 
     userPausedRef.current = false;
 
-    // Keep continuous 5s silence audio playing on HTML5 audio to keep OS audio session active
+    // Stop and clear HTML5 audio so it doesn't conflict or play silence over the real music
     if (audioRef.current) {
       try {
-        if (!audioRef.current.src.endsWith('/silence.wav')) {
-          audioRef.current.src = '/silence.wav';
-        }
-        audioRef.current.loop = true;
-        audioRef.current.play().catch(() => {});
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        audioRef.current.removeAttribute('src');
       } catch (e) {}
     }
 
@@ -338,21 +334,29 @@ export function useAudioPlayer() {
 
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
-        if (isPlaying) {
+        const state = typeof ytPlayerRef.current.getPlayerState === 'function'
+          ? ytPlayerRef.current.getPlayerState()
+          : (isPlaying ? 1 : 2);
+
+        if (state === 1) { // Currently PLAYING -> pause
           userPausedRef.current = true;
           ytPlayerRef.current.pauseVideo();
-          if (audioRef.current) audioRef.current.pause();
-        } else {
+          setIsPlaying(false);
+        } else { // Currently PAUSED / ENDED / BUFFERING -> play
           userPausedRef.current = false;
-          if (audioRef.current) audioRef.current.play().catch(() => {});
           ytPlayerRef.current.playVideo();
+          setIsPlaying(true);
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('togglePlay error:', e);
+      }
     } else if (audioRef.current) {
-      if (isPlaying) {
+      if (!audioRef.current.paused) {
         audioRef.current.pause();
+        setIsPlaying(false);
       } else {
         audioRef.current.play().catch(e => console.error('Play failed:', e));
+        setIsPlaying(true);
       }
     }
   }, [isPlaying, currentTrack]);

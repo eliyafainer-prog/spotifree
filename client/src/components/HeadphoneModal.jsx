@@ -210,6 +210,17 @@ export function HeadphoneModal({ isOpen, onClose }) {
           </div>
         </div>
 
+        {/* Background Playback Guide */}
+        <div className="bg-emerald-500/10 border border-emerald-500/20 p-3.5 rounded-xl flex flex-col gap-1.5">
+          <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span>שמיעה ברקע במסך נעול (טלפון נייד):</span>
+          </span>
+          <p className="text-[11px] text-gray-300 leading-relaxed">
+            כשנועלים את הטלפון, אם השיר נעצר על ידי הדפדפן: פתחו את וילון ההתראות / מסך הנעילה ולחצו על <strong className="text-white">Play ▶</strong> (או בכפתור האוזניות) — והמוזיקה תמשיך להתנגן כרגיל ברקע עם מסך כבוי!
+          </p>
+        </div>
+
         {/* Footer info */}
         <div className="flex items-center justify-between text-[11px] text-spotify-subtext pt-2 border-t border-spotify-border/40">
           <span>SpotiFree Audio Engine 2.0</span>
