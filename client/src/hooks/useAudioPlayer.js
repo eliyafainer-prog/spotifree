@@ -10,6 +10,7 @@ export function useAudioPlayer() {
   const activeEngineRef = useRef('audio');
   const fallbackTimerRef = useRef(null);
   const nextTrackRef = useRef(null);
+  const userPausedRef = useRef(false);
 
   const [currentTrack, setCurrentTrack] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -158,10 +159,18 @@ export function useAudioPlayer() {
               },
               onStateChange: (e) => {
                 if (e.data === 1) { // PLAYING
+                  userPausedRef.current = false;
                   setIsPlaying(true);
                   setIsLoading(false);
                 } else if (e.data === 2) { // PAUSED
-                  setIsPlaying(false);
+                  if (!userPausedRef.current) {
+                    // System/OS paused it (e.g. screen lock or tab hidden) - auto-resume!
+                    try {
+                      e.target.playVideo();
+                    } catch (err) {}
+                  } else {
+                    setIsPlaying(false);
+                  }
                 } else if (e.data === 0) { // ENDED
                   nextTrackRef.current?.();
                 } else if (e.data === 3) { // BUFFERING
@@ -192,10 +201,14 @@ export function useAudioPlayer() {
   const playViaYouTubePlayer = useCallback((track) => {
     if (!track || !track.id) return;
 
-    // Keep silent audio playing on HTML5 audio to keep mediaSession and background audio session active
+    userPausedRef.current = false;
+
+    // Keep continuous 5s silence audio playing on HTML5 audio to keep OS audio session active
     if (audioRef.current) {
       try {
-        audioRef.current.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+        if (!audioRef.current.src.endsWith('/silence.wav')) {
+          audioRef.current.src = '/silence.wav';
+        }
         audioRef.current.loop = true;
         audioRef.current.play().catch(() => {});
       } catch (e) {}
@@ -326,8 +339,12 @@ export function useAudioPlayer() {
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         if (isPlaying) {
+          userPausedRef.current = true;
           ytPlayerRef.current.pauseVideo();
+          if (audioRef.current) audioRef.current.pause();
         } else {
+          userPausedRef.current = false;
+          if (audioRef.current) audioRef.current.play().catch(() => {});
           ytPlayerRef.current.playVideo();
         }
       } catch (e) {}

@@ -11,6 +11,26 @@
     <meta name="description" content="Free, ad-free Spotify clone with headphone controls, playlist import & synced lyrics" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>SpotiFree — Ad-Free Music</title>
+    <script>
+      (function() {
+        try {
+          Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+          Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+          Object.defineProperty(document, 'webkitHidden', { get: () => false, configurable: true });
+          Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
+
+          const swallow = function(e) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+          };
+
+          window.addEventListener('visibilitychange', swallow, true);
+          document.addEventListener('visibilitychange', swallow, true);
+          window.addEventListener('webkitvisibilitychange', swallow, true);
+          document.addEventListener('webkitvisibilitychange', swallow, true);
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body class="bg-spotify-base text-white antialiased overflow-hidden select-none">
     <div id="root"></div>
