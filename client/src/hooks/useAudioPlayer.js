@@ -3,22 +3,26 @@ import { getPlayableAudioUrl, prefetchNextTracks, resolveTrack } from '../servic
 import { addRecentTrack, updateTrackInPlaylists } from '../services/storage';
 import { getOfflineTrack } from '../services/offlineStorage';
 
+// 1-second silent WAV base64 data URI to keep iOS/Android AudioSession active in background
+const SILENT_AUDIO_URI = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+
 /**
  * Intelligent Dual-Engine Audio Player for SpotiFree:
- * Engine 1 (Primary): Direct Native HTML5 Audio Stream for 100% background playback with screen locked.
- * Engine 2 (Fallback): Embedded YouTube Player for 100% cloud resilience when datacenter IPs are blocked.
+ * Engine 1 (Online): Client-side YouTube Player API — 100% resilient, 0 latency, immune to datacenter 429 IP blocks.
+ * Engine 2 (Offline): Native HTML5 Audio — 100% offline playback from IndexedDB storage without internet.
+ * Background Guardian: Plays silent audio loop on HTML5 Audio during online playback to maintain active AudioSession
+ * for lock-screen controls, smartwatch sync, and headphone buttons on iOS and Android.
  */
 export function useAudioPlayer() {
   const audioRef = useRef(null);
   const ytPlayerRef = useRef(null);
   const ytTimerRef = useRef(null);
-  const activeEngineRef = useRef('audio');
-  const fallbackTimerRef = useRef(null);
+  const activeEngineRef = useRef('yt');
   const nextTrackRef = useRef(null);
   const userPausedRef = useRef(false);
   const currentTrackRef = useRef(null);
-  const playViaYouTubePlayerRef = useRef(null);
 
+  const [activeEngine, setActiveEngine] = useState('yt');
   const [currentTrack, setCurrentTrack] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -35,7 +39,7 @@ export function useAudioPlayer() {
   const [queue, setQueue] = useState([]);
   const [queueIndex, setQueueIndex] = useState(-1);
 
-  // Initialize Native HTML5 Audio once
+  // Initialize Native HTML5 Audio instance once (for offline tracks & background audio guardian)
   useEffect(() => {
     const audio = new Audio();
     audio.preload = 'auto';
@@ -78,10 +82,8 @@ export function useAudioPlayer() {
     const handlePause = () => {
       if (activeEngineRef.current === 'audio') {
         if (!userPausedRef.current && currentTrackRef.current) {
-          // System / OS attempted to pause in background -> auto resume!
-          audio.play().catch(() => {
-            setIsPlaying(false);
-          });
+          // Auto resume if paused by system without user intent
+          audio.play().catch(() => setIsPlaying(false));
         } else {
           setIsPlaying(false);
         }
@@ -94,24 +96,6 @@ export function useAudioPlayer() {
       }
     };
 
-    const handleError = (e) => {
-      if (activeEngineRef.current === 'audio') {
-        console.warn('HTML5 Audio error, activating YouTube fallback:', e);
-        if (currentTrackRef.current && playViaYouTubePlayerRef.current) {
-          playViaYouTubePlayerRef.current(currentTrackRef.current);
-        }
-      }
-    };
-
-    const handleStalled = () => {
-      if (activeEngineRef.current === 'audio' && audio.currentTime === 0 && !userPausedRef.current) {
-        console.warn('HTML5 Audio stalled, activating YouTube fallback');
-        if (currentTrackRef.current && playViaYouTubePlayerRef.current) {
-          playViaYouTubePlayerRef.current(currentTrackRef.current);
-        }
-      }
-    };
-
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('durationchange', handleDurationChange);
     audio.addEventListener('loadedmetadata', handleDurationChange);
@@ -120,8 +104,6 @@ export function useAudioPlayer() {
     audio.addEventListener('play', handlePlay);
     audio.addEventListener('pause', handlePause);
     audio.addEventListener('ended', handleEnded);
-    audio.addEventListener('error', handleError);
-    audio.addEventListener('stalled', handleStalled);
 
     return () => {
       audio.pause();
@@ -133,15 +115,81 @@ export function useAudioPlayer() {
       audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('ended', handleEnded);
-      audio.removeEventListener('error', handleError);
-      audio.removeEventListener('stalled', handleStalled);
+    };
+  }, []);
+
+  // Initialize YouTube Iframe Player immediately on mount so it's ready for instant playback
+  useEffect(() => {
+    let checkTimer = null;
+
+    const initYT = () => {
+      if (!window.YT || !window.YT.Player) {
+        checkTimer = setTimeout(initYT, 150);
+        return;
+      }
+      const el = document.getElementById('spotifree-yt-player');
+      if (!el) {
+        checkTimer = setTimeout(initYT, 150);
+        return;
+      }
+      if (!ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current = new window.YT.Player('spotifree-yt-player', {
+            height: '200',
+            width: '200',
+            playerVars: {
+              autoplay: 0,
+              controls: 0,
+              disablekb: 1,
+              fs: 0,
+              playsinline: 1,
+              rel: 0,
+              origin: window.location.origin
+            },
+            events: {
+              onReady: (e) => {
+                try {
+                  e.target.setVolume(isMuted ? 0 : volume * 100);
+                } catch (err) {}
+              },
+              onStateChange: (e) => {
+                if (e.data === 1) { // PLAYING
+                  userPausedRef.current = false;
+                  setIsPlaying(true);
+                  setIsLoading(false);
+                } else if (e.data === 2) { // PAUSED
+                  setIsPlaying(false);
+                  if (!userPausedRef.current && currentTrackRef.current) {
+                    try { e.target.playVideo(); } catch (err) {}
+                  }
+                } else if (e.data === 0) { // ENDED
+                  nextTrackRef.current?.();
+                } else if (e.data === 3) { // BUFFERING
+                  setIsLoading(true);
+                }
+              },
+              onError: (err) => {
+                console.warn('YouTube playback error:', err);
+                setIsLoading(false);
+              }
+            }
+          });
+        } catch (e) {
+          console.error('Failed to init YT player:', e);
+        }
+      }
+    };
+
+    initYT();
+    return () => {
+      if (checkTimer) clearTimeout(checkTimer);
     };
   }, []);
 
   // Sync volume changes to both players
   useEffect(() => {
     const vol = isMuted ? 0 : volume;
-    if (audioRef.current) {
+    if (audioRef.current && activeEngineRef.current === 'audio') {
       audioRef.current.volume = vol;
     }
     if (ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === 'function') {
@@ -152,26 +200,35 @@ export function useAudioPlayer() {
     localStorage.setItem('spotifree_volume', volume.toString());
   }, [volume, isMuted]);
 
-  // Track timer polling when playing via YouTube
+  // High-precision scrubber timer (ticks every 200ms when playing)
   useEffect(() => {
-    if (isPlaying && activeEngineRef.current === 'yt') {
+    if (isPlaying) {
       ytTimerRef.current = setInterval(() => {
-        if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
-          try {
-            const cur = ytPlayerRef.current.getCurrentTime() || 0;
-            const dur = ytPlayerRef.current.getDuration() || 0;
+        if (activeEngineRef.current === 'yt') {
+          if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+            try {
+              const cur = ytPlayerRef.current.getCurrentTime() || 0;
+              const dur = ytPlayerRef.current.getDuration() || 0;
+              setCurrentTime(cur);
+              if (dur > 0) setDuration(dur);
+            } catch (e) {}
+          }
+        } else if (activeEngineRef.current === 'audio') {
+          if (audioRef.current) {
+            const cur = audioRef.current.currentTime || 0;
+            const dur = audioRef.current.duration || 0;
             setCurrentTime(cur);
-            if (dur > 0) setDuration(dur);
-          } catch (e) {}
+            if (dur > 0 && !isNaN(dur)) setDuration(dur);
+          }
         }
-      }, 250);
+      }, 200);
     } else {
       if (ytTimerRef.current) clearInterval(ytTimerRef.current);
     }
     return () => {
       if (ytTimerRef.current) clearInterval(ytTimerRef.current);
     };
-  }, [isPlaying]);
+  }, [isPlaying, activeEngine]);
 
   // Background Audio Guardian: keep playing through visibility changes, blur & app switching
   useEffect(() => {
@@ -198,114 +255,49 @@ export function useAudioPlayer() {
     };
   }, []);
 
-  // Initialize YouTube Player immediately on mount so it's warm and ready
-  useEffect(() => {
-    let checkTimer = null;
-    const initYT = () => {
-      if (!window.YT || !window.YT.Player) {
-        checkTimer = setTimeout(initYT, 200);
-        return;
-      }
-      const el = document.getElementById('spotifree-yt-player');
-      if (!el) {
-        checkTimer = setTimeout(initYT, 200);
-        return;
-      }
-      if (!ytPlayerRef.current) {
-        try {
-          ytPlayerRef.current = new window.YT.Player('spotifree-yt-player', {
-            height: '200',
-            width: '200',
-            playerVars: {
-              autoplay: 0,
-              controls: 0,
-              disablekb: 1,
-              fs: 0,
-              playsinline: 1,
-              rel: 0
-            },
-            events: {
-              onReady: (e) => {
-                try {
-                  e.target.setVolume(isMuted ? 0 : volume * 100);
-                } catch (err) {}
-              },
-              onStateChange: (e) => {
-                if (e.data === 1) { // PLAYING
-                  userPausedRef.current = false;
-                  setIsPlaying(true);
-                  setIsLoading(false);
-                } else if (e.data === 2) { // PAUSED
-                  setIsPlaying(false);
-                  if (!userPausedRef.current) {
-                    try { e.target.playVideo(); } catch (err) {}
-                  }
-                } else if (e.data === 0) { // ENDED
-                  nextTrackRef.current?.();
-                } else if (e.data === 3) { // BUFFERING
-                  setIsLoading(true);
-                }
-              },
-              onError: (err) => {
-                console.warn('YouTube playback error:', err);
-                setIsLoading(false);
-              }
-            }
-          });
-        } catch (e) {
-          console.error('Failed to init YT player on mount:', e);
-        }
-      }
-    };
-
-    initYT();
-    return () => {
-      if (checkTimer) clearTimeout(checkTimer);
-    };
-  }, []);
-
   /**
-   * Play track using client-side YouTube Player API (100% resilient fallback)
+   * Play track using client-side YouTube Player API (Instant, resilient, full fidelity)
    */
   const playViaYouTubePlayer = useCallback((track) => {
     if (!track || !track.id) return;
 
     userPausedRef.current = false;
-    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+    activeEngineRef.current = 'yt';
+    setActiveEngine('yt');
+    setIsLoading(true);
 
-    // Stop HTML5 audio so it doesn't conflict
+    // Keep silent audio loop playing for iOS/Android background audio guardian!
     if (audioRef.current) {
       try {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-        audioRef.current.removeAttribute('src');
+        if (!audioRef.current.src || !audioRef.current.src.startsWith('data:audio/wav')) {
+          audioRef.current.src = SILENT_AUDIO_URI;
+          audioRef.current.loop = true;
+        }
+        audioRef.current.play().catch(() => {});
       } catch (e) {}
     }
 
-    activeEngineRef.current = 'yt';
-    setIsLoading(true);
-
-    const onPlayerReady = (player) => {
+    const startPlayback = (player) => {
       try {
         player.setVolume(isMuted ? 0 : volume * 100);
         player.loadVideoById(track.id);
         player.playVideo();
       } catch (e) {
-        console.error('Error in YT play:', e);
+        console.error('Error starting YT video:', e);
         setIsLoading(false);
       }
     };
 
     if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
-      onPlayerReady(ytPlayerRef.current);
+      startPlayback(ytPlayerRef.current);
     } else {
       let attempts = 0;
       const retry = setInterval(() => {
         attempts++;
         if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
           clearInterval(retry);
-          onPlayerReady(ytPlayerRef.current);
-        } else if (attempts > 25) {
+          startPlayback(ytPlayerRef.current);
+        } else if (attempts > 30) {
           clearInterval(retry);
           setIsLoading(false);
         }
@@ -313,15 +305,11 @@ export function useAudioPlayer() {
     }
   }, [volume, isMuted]);
 
-  playViaYouTubePlayerRef.current = playViaYouTubePlayer;
-
   /**
    * Play specific track from queue or playlist
    */
   const playTrack = useCallback(async (track, newQueue = null, indexInQueue = -1) => {
     if (!track) return;
-    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-
     userPausedRef.current = false;
 
     const currentQ = newQueue || queue;
@@ -335,7 +323,7 @@ export function useAudioPlayer() {
     }
 
     let playableTrack = { ...track };
-    const isUnresolved = !playableTrack.streamableId && (!playableTrack.id || playableTrack.id.startsWith('sp_'));
+    const isUnresolved = !playableTrack.streamableId && (!playableTrack.id || String(playableTrack.id).startsWith('sp_'));
 
     setCurrentTrack(playableTrack);
     currentTrackRef.current = playableTrack;
@@ -343,14 +331,14 @@ export function useAudioPlayer() {
     setCurrentTime(0);
     setDuration(playableTrack.durationSeconds || 0);
 
-    // Resolve Spotify tracks to streamable ID if needed
+    // 1. Resolve Spotify tracks to streamable ID if needed
     if (isUnresolved) {
       try {
         const resolved = await resolveTrack(playableTrack);
-        if (resolved && resolved.streamableId) {
+        if (resolved && (resolved.streamableId || resolved.id)) {
           playableTrack.originalId = track.id;
-          playableTrack.streamableId = resolved.streamableId;
-          playableTrack.id = resolved.streamableId;
+          playableTrack.streamableId = resolved.streamableId || resolved.id;
+          playableTrack.id = resolved.streamableId || resolved.id;
           if (resolved.thumbnail) playableTrack.thumbnail = resolved.thumbnail;
           if (resolved.durationSeconds) {
             playableTrack.durationSeconds = resolved.durationSeconds;
@@ -369,64 +357,30 @@ export function useAudioPlayer() {
       playableTrack.id = playableTrack.streamableId;
     }
 
-    // 1. Check Offline Storage first (0ms instant playback without internet!)
+    // 2. Check Offline Storage first (0ms instant playback without internet!)
     try {
       const offlineRecord = await getOfflineTrack(playableTrack);
       if (offlineRecord && offlineRecord.audioBlob && audioRef.current) {
         activeEngineRef.current = 'audio';
+        setActiveEngine('audio');
         if (ytPlayerRef.current?.pauseVideo) {
           try { ytPlayerRef.current.pauseVideo(); } catch (e) {}
         }
         const localBlobUrl = URL.createObjectURL(offlineRecord.audioBlob);
+        audioRef.current.loop = false;
         audioRef.current.src = localBlobUrl;
         audioRef.current.currentTime = 0;
         await audioRef.current.play();
         setIsPlaying(true);
         setIsLoading(false);
         addRecentTrack(playableTrack);
-
-        if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
-          prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
-        }
         return;
       }
     } catch (e) {
       console.warn('Offline storage check skipped:', e);
     }
 
-    // 2. Play via direct audio stream on HTML5 Audio (Native background audio on iOS/Android!)
-    if (audioRef.current && playableTrack.id) {
-      try {
-        activeEngineRef.current = 'audio';
-        if (ytPlayerRef.current?.pauseVideo) {
-          try { ytPlayerRef.current.pauseVideo(); } catch (e) {}
-        }
-        const streamUrl = getPlayableAudioUrl(playableTrack);
-        audioRef.current.src = streamUrl;
-        audioRef.current.currentTime = 0;
-        await audioRef.current.play();
-        setIsPlaying(true);
-        setIsLoading(false);
-        addRecentTrack(playableTrack);
-
-        // Health monitor: if stream stalls at 0:00 for more than 3.5 seconds, fallback to YouTube
-        fallbackTimerRef.current = setTimeout(() => {
-          if (activeEngineRef.current === 'audio' && (!audioRef.current || audioRef.current.currentTime === 0) && !userPausedRef.current) {
-            console.warn('Audio stream stalled at 0:00, falling back to YouTube engine...');
-            playViaYouTubePlayer(playableTrack);
-          }
-        }, 3500);
-
-        if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
-          prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
-        }
-        return;
-      } catch (err) {
-        console.warn('Direct audio stream start failed, falling back to YouTube:', err);
-      }
-    }
-
-    // 3. Fallback: Play via native client YouTube Player
+    // 3. Play via YouTube Player (Primary online engine: 100% resilient, 0 latency, full quality)
     playViaYouTubePlayer(playableTrack);
     addRecentTrack(playableTrack);
 
@@ -443,17 +397,16 @@ export function useAudioPlayer() {
 
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
-        const state = typeof ytPlayerRef.current.getPlayerState === 'function'
-          ? ytPlayerRef.current.getPlayerState()
-          : (isPlaying ? 1 : 2);
-
+        const state = ytPlayerRef.current.getPlayerState ? ytPlayerRef.current.getPlayerState() : -1;
         if (state === 1) { // Currently PLAYING -> pause
           userPausedRef.current = true;
           ytPlayerRef.current.pauseVideo();
+          if (audioRef.current) audioRef.current.pause();
           setIsPlaying(false);
         } else { // Currently PAUSED -> play
           userPausedRef.current = false;
           ytPlayerRef.current.playVideo();
+          if (audioRef.current) audioRef.current.play().catch(() => {});
           setIsPlaying(true);
         }
       } catch (e) {
@@ -470,7 +423,7 @@ export function useAudioPlayer() {
         setIsPlaying(true);
       }
     }
-  }, [isPlaying, currentTrack]);
+  }, [currentTrack]);
 
   /**
    * Next track handler
@@ -538,15 +491,14 @@ export function useAudioPlayer() {
    * Seek to timestamp in seconds
    */
   const seek = useCallback((seconds) => {
+    setCurrentTime(seconds);
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         ytPlayerRef.current.seekTo(seconds, true);
-        setCurrentTime(seconds);
       } catch (e) {}
     } else if (audioRef.current) {
       try {
         audioRef.current.currentTime = seconds;
-        setCurrentTime(seconds);
       } catch (e) {}
     }
   }, []);

@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { spawn } = require('child_process');
 const yts = require('yt-search');
-const { cleanTitle } = require('./search');
+const { cleanTitle, searchTracks } = require('./search');
 
 /**
  * Extract Spotify ID and type from URL (supports intl-xx, queries, and URIs)
@@ -262,21 +262,21 @@ async function resolveTrackToStreamableId(track) {
     albumCover = dRes.data?.data?.[0]?.album?.cover_medium || null;
   } catch (e) {}
 
-  // 2. Search on YouTube for videoId and video thumbnail
+  // 2. Search on YouTube for videoId and video thumbnail using robust searchTracks
   let topVideo = null;
   try {
-    const results = await yts(query);
-    if (results && results.videos && results.videos.length > 0) {
-      topVideo = results.videos[0];
+    const results = await searchTracks(query, 5);
+    if (results && results.length > 0) {
+      topVideo = results[0];
     }
   } catch (e) {}
 
   // 3. Fallback search with title only
-  if (!topVideo) {
+  if (!topVideo && track.title) {
     try {
-      const fallbackResults = await yts(track.title);
-      if (fallbackResults && fallbackResults.videos && fallbackResults.videos.length > 0) {
-        topVideo = fallbackResults.videos[0];
+      const fallbackResults = await searchTracks(track.title, 5);
+      if (fallbackResults && fallbackResults.length > 0) {
+        topVideo = fallbackResults[0];
       }
     } catch (e) {}
   }
@@ -286,9 +286,9 @@ async function resolveTrackToStreamableId(track) {
   }
 
   return {
-    streamableId: topVideo.videoId,
-    thumbnail: albumCover || topVideo.image || topVideo.thumbnail || `https://i.ytimg.com/vi/${topVideo.videoId}/hqdefault.jpg`,
-    durationSeconds: topVideo.duration?.seconds || track.durationSeconds || 0
+    streamableId: topVideo.id || topVideo.videoId,
+    thumbnail: albumCover || topVideo.thumbnail || topVideo.image || `https://i.ytimg.com/vi/${topVideo.id}/hqdefault.jpg`,
+    durationSeconds: topVideo.durationSeconds || track.durationSeconds || 0
   };
 }
 

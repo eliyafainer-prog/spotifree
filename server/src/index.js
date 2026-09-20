@@ -1,3 +1,36 @@
+// Safe polyfills for third-party libraries (e.g. yt-search) when YouTube returns objects/runs instead of string primitives
+if (!Object.prototype.trim) {
+  Object.defineProperty(Object.prototype, 'trim', {
+    value: function() {
+      if (this.text) return String(this.text).trim();
+      if (Array.isArray(this.runs)) return this.runs.map(r => r.text || '').join('').trim();
+      return String(this).trim();
+    },
+    configurable: true,
+    writable: true
+  });
+}
+if (!Object.prototype.split) {
+  Object.defineProperty(Object.prototype, 'split', {
+    value: function(...args) {
+      const s = this.text || (Array.isArray(this.runs) ? this.runs.map(r => r.text || '').join('') : String(this));
+      return String(s).split(...args);
+    },
+    configurable: true,
+    writable: true
+  });
+}
+if (!Object.prototype.replace) {
+  Object.defineProperty(Object.prototype, 'replace', {
+    value: function(...args) {
+      const s = this.text || (Array.isArray(this.runs) ? this.runs.map(r => r.text || '').join('') : String(this));
+      return String(s).replace(...args);
+    },
+    configurable: true,
+    writable: true
+  });
+}
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');

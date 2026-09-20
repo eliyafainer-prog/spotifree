@@ -23,6 +23,8 @@ export function FullscreenPlayer({
 }) {
   if (!isOpen || !currentTrack) return null;
 
+  const [dragTime, setDragTime] = React.useState(null);
+
   const formatTime = (secs) => {
     if (!secs || isNaN(secs)) return '0:00';
     const m = Math.floor(secs / 60);
@@ -30,7 +32,8 @@ export function FullscreenPlayer({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+  const displayTime = dragTime !== null ? dragTime : currentTime;
+  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (displayTime / duration) * 100)) : 0;
 
   return (
     <div className="fixed inset-0 z-50 bg-gradient-to-b from-spotify-elevated via-spotify-dark to-black flex flex-col justify-between p-6 animate-slideUp select-none">
@@ -107,8 +110,13 @@ export function FullscreenPlayer({
             min="0"
             max={duration || 100}
             step="0.1"
-            value={currentTime}
-            onChange={(e) => onSeek(parseFloat(e.target.value))}
+            value={displayTime}
+            onInput={(e) => setDragTime(parseFloat(e.target.value))}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              setDragTime(null);
+              onSeek(val);
+            }}
             style={{
               background: `linear-gradient(to right, #1ed760 ${progressPercent}%, rgba(255, 255, 255, 0.25) ${progressPercent}%)`
             }}
@@ -116,7 +124,7 @@ export function FullscreenPlayer({
           />
         </div>
         <div className="flex justify-between text-[11px] text-spotify-subtext font-mono">
-          <span>{formatTime(currentTime)}</span>
+          <span>{formatTime(displayTime)}</span>
           <span>{formatTime(duration)}</span>
         </div>
       </div>

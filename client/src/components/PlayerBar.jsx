@@ -43,6 +43,8 @@ export function PlayerBar({
 }) {
   if (!currentTrack) return null;
 
+  const [dragTime, setDragTime] = React.useState(null);
+
   const formatTime = (secs) => {
     if (!secs || isNaN(secs)) return '0:00';
     const m = Math.floor(secs / 60);
@@ -50,7 +52,8 @@ export function PlayerBar({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+  const displayTime = dragTime !== null ? dragTime : currentTime;
+  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (displayTime / duration) * 100)) : 0;
   const currentVolume = isMuted ? 0 : volume;
   const volumePercent = Math.min(100, Math.max(0, currentVolume * 100));
 
@@ -213,15 +216,20 @@ export function PlayerBar({
           {/* Time Scrubber (Left to Right: 0:00 -> [======|......] -> 3:07) */}
           <div className="flex items-center gap-2.5 w-full group">
             <span className="text-[11px] text-spotify-subtext font-mono w-9 text-right select-none">
-              {formatTime(currentTime)}
+              {formatTime(displayTime)}
             </span>
             <input
               type="range"
               min="0"
               max={duration || 100}
               step="0.1"
-              value={currentTime}
-              onChange={(e) => onSeek(parseFloat(e.target.value))}
+              value={displayTime}
+              onInput={(e) => setDragTime(parseFloat(e.target.value))}
+              onChange={(e) => {
+                const val = parseFloat(e.target.value);
+                setDragTime(null);
+                onSeek(val);
+              }}
               style={{
                 background: `linear-gradient(to right, #1ed760 ${progressPercent}%, rgba(255, 255, 255, 0.25) ${progressPercent}%)`
               }}
