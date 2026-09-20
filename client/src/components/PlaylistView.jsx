@@ -13,7 +13,9 @@ export function PlaylistView({
   onDeletePlaylist,
   downloadedIds = new Set(),
   downloadingIds = new Set(),
-  onDownloadTrack
+  onDownloadTrack,
+  onOpenAddToPlaylist,
+  onRemoveTrackFromPlaylist
 }) {
   if (!playlist) return null;
 
@@ -111,6 +113,12 @@ export function PlaylistView({
               isDownloaded={downloadedIds?.has(track.id)}
               isDownloading={downloadingIds?.has(track.id)}
               onDownload={onDownloadTrack}
+              onOpenAddToPlaylist={onOpenAddToPlaylist}
+              onRemoveFromPlaylist={
+                playlist.id !== 'liked' && onRemoveTrackFromPlaylist
+                  ? () => onRemoveTrackFromPlaylist(playlist.id, track.id)
+                  : undefined
+              }
             />
           ))
         )}

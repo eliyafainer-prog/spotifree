@@ -121,3 +121,89 @@ export function updateTrackInPlaylists(resolvedTrack) {
   } catch (e) {}
 }
 
+export function isTrackInPlaylist(playlist, track) {
+  if (!playlist || !playlist.tracks || !track) return false;
+  return playlist.tracks.some(
+    t => t.id === track.id ||
+         (t.streamableId && t.streamableId === track.streamableId) ||
+         (t.title === track.title && t.artist === track.artist)
+  );
+}
+
+export function addTrackToPlaylist(playlistId, track) {
+  try {
+    const playlists = getPlaylists();
+    const index = playlists.findIndex(p => p.id === playlistId);
+    if (index === -1) return { updated: playlists, success: false, reason: 'Playlist not found' };
+
+    const playlist = { ...playlists[index] };
+    const existingTracks = playlist.tracks || [];
+
+    if (isTrackInPlaylist(playlist, track)) {
+      return { updated: playlists, success: false, alreadyExists: true };
+    }
+
+    const newTracks = [...existingTracks, track];
+    playlist.tracks = newTracks;
+    playlist.trackCount = newTracks.length;
+    if (!playlist.cover && track.thumbnail) {
+      playlist.cover = track.thumbnail;
+    }
+
+    const updated = [...playlists];
+    updated[index] = playlist;
+    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+    return { updated, success: true, playlist };
+  } catch (e) {
+    console.error('Failed to add track to playlist:', e);
+    return { updated: getPlaylists(), success: false };
+  }
+}
+
+export function removeTrackFromPlaylist(playlistId, trackId) {
+  try {
+    const playlists = getPlaylists();
+    const index = playlists.findIndex(p => p.id === playlistId);
+    if (index === -1) return playlists;
+
+    const playlist = { ...playlists[index] };
+    const filteredTracks = (playlist.tracks || []).filter(
+      t => t.id !== trackId && t.streamableId !== trackId
+    );
+
+    playlist.tracks = filteredTracks;
+    playlist.trackCount = filteredTracks.length;
+
+    const updated = [...playlists];
+    updated[index] = playlist;
+    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (e) {
+    console.error('Failed to remove track from playlist:', e);
+    return getPlaylists();
+  }
+}
+
+export function createCustomPlaylist(title, description = '') {
+  try {
+    const playlists = getPlaylists();
+    const newPlaylist = {
+      id: 'custom_' + Date.now(),
+      title: title.trim(),
+      description: description.trim(),
+      type: 'playlist',
+      cover: '',
+      tracks: [],
+      trackCount: 0,
+      createdAt: new Date().toISOString()
+    };
+
+    const updated = [newPlaylist, ...playlists];
+    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+    return { updated, playlist: newPlaylist };
+  } catch (e) {
+    console.error('Failed to create playlist:', e);
+    return { updated: getPlaylists(), playlist: null };
+  }
+}
+

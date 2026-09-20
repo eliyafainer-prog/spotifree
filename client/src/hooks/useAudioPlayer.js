@@ -1,7 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getPlayableAudioUrl, prefetchNextTracks, resolveTrack } from '../services/api';
+import { getPlayableAudioUrl, prefetchNextTracks, resolveTrack, searchTracks } from '../services/api';
 import { addRecentTrack, updateTrackInPlaylists } from '../services/storage';
 import { getOfflineTrack } from '../services/offlineStorage';
+
+// Fisher-Yates shuffle helper: produces a non-repeating permutation of indices
+function generateShuffledDeck(length, startingIndex = -1) {
+  if (length <= 1) return [0];
+  const indices = [];
+  for (let i = 0; i < length; i++) {
+    if (i !== startingIndex) indices.push(i);
+  }
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  return startingIndex >= 0 ? [startingIndex, ...indices] : indices;
+}
 
 export function useAudioPlayer() {
   const audioRef = useRef(null);
@@ -21,11 +35,32 @@ export function useAudioPlayer() {
     return saved !== null ? parseFloat(saved) : 0.8;
   });
   const [isMuted, setIsMuted] = useState(false);
-  const [isShuffle, setIsShuffle] = useState(false);
+
+  // 3-state Shuffle: 'off' | 'standard' | 'smart'
+  const [shuffleMode, setShuffleMode] = useState('off');
+  const isShuffle = shuffleMode !== 'off';
   const [repeatMode, setRepeatMode] = useState('off'); // 'off' | 'all' | 'one'
 
   const [queue, setQueue] = useState([]);
   const [queueIndex, setQueueIndex] = useState(-1);
+
+  // Smart Shuffle and history references
+  const shuffledIndicesRef = useRef([]);
+  const shufflePosRef = useRef(0);
+  const historyStackRef = useRef([]);
+  const isFetchingSmartRef = useRef(false);
+
+  const queueRef = useRef([]);
+  const queueIndexRef = useRef(-1);
+  const currentTrackRef = useRef(null);
+  const shuffleModeRef = useRef('off');
+  const repeatModeRef = useRef('off');
+
+  useEffect(() => { queueRef.current = queue; }, [queue]);
+  useEffect(() => { queueIndexRef.current = queueIndex; }, [queueIndex]);
+  useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
+  useEffect(() => { shuffleModeRef.current = shuffleMode; }, [shuffleMode]);
+  useEffect(() => { repeatModeRef.current = repeatMode; }, [repeatMode]);
 
   // Initialize HTML5 Audio instance once
   useEffect(() => {
@@ -239,14 +274,23 @@ export function useAudioPlayer() {
     if (!track) return;
     if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
 
-    const currentQ = newQueue || queue;
-    const targetIdx = indexInQueue >= 0 ? indexInQueue : currentQ.findIndex(t => t.id === track.id);
+    const currentQ = newQueue || queueRef.current;
+    const targetIdx = indexInQueue >= 0
+      ? indexInQueue
+      : currentQ.findIndex(t => t.id === track.id || (t.title === track.title && t.artist === track.artist));
 
     if (newQueue) {
       setQueue(newQueue);
+      queueRef.current = newQueue;
       setQueueIndex(targetIdx);
+      queueIndexRef.current = targetIdx;
+      if (shuffleModeRef.current !== 'off') {
+        shuffledIndicesRef.current = generateShuffledDeck(newQueue.length, targetIdx);
+        shufflePosRef.current = 0;
+      }
     } else if (indexInQueue >= 0) {
       setQueueIndex(indexInQueue);
+      queueIndexRef.current = indexInQueue;
     }
 
     let playableTrack = { ...track };
@@ -341,12 +385,50 @@ export function useAudioPlayer() {
   }, [isPlaying, currentTrack]);
 
   /**
-   * Next track handler
+   * Fetch similar tracks by artist for Smart Shuffle ✨
+   */
+  const fetchSmartRecommendations = useCallback(async (artistName) => {
+    if (isFetchingSmartRef.current || !artistName) return;
+    isFetchingSmartRef.current = true;
+    try {
+      const candidates = await searchTracks(artistName);
+      const existing = new Set(queueRef.current.map(t => (t.id || t.title).toLowerCase()));
+      const filtered = candidates
+        .filter(c => !existing.has((c.id || c.title).toLowerCase()))
+        .slice(0, 4)
+        .map(c => ({ ...c, isRecommendation: true }));
+
+      if (filtered.length > 0) {
+        setQueue(prev => {
+          const updated = [...prev, ...filtered];
+          queueRef.current = updated;
+          const newIndices = [];
+          for (let i = prev.length; i < updated.length; i++) {
+            newIndices.push(i);
+          }
+          for (let i = newIndices.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [newIndices[i], newIndices[j]] = [newIndices[j], newIndices[i]];
+          }
+          shuffledIndicesRef.current = [...shuffledIndicesRef.current, ...newIndices];
+          return updated;
+        });
+      }
+    } catch (e) {
+      console.warn('Smart shuffle recommendations failed:', e);
+    } finally {
+      isFetchingSmartRef.current = false;
+    }
+  }, []);
+
+  /**
+   * Next track handler (Supports Standard Non-Repeating Shuffle + Smart Shuffle ✨ Autoplay)
    */
   const nextTrack = useCallback(() => {
-    if (queue.length === 0) return;
+    const q = queueRef.current;
+    if (q.length === 0) return;
 
-    if (repeatMode === 'one') {
+    if (repeatModeRef.current === 'one') {
       if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
         try {
           ytPlayerRef.current.seekTo(0, true);
@@ -360,25 +442,65 @@ export function useAudioPlayer() {
       }
     }
 
-    let nextIdx = queueIndex + 1;
-    if (isShuffle) {
-      nextIdx = Math.floor(Math.random() * queue.length);
-    } else if (nextIdx >= queue.length) {
-      if (repeatMode === 'all') {
+    // Push played song to history stack for accurate previous navigation
+    if (currentTrackRef.current) {
+      historyStackRef.current.push({
+        track: currentTrackRef.current,
+        index: queueIndexRef.current
+      });
+      if (historyStackRef.current.length > 50) historyStackRef.current.shift();
+    }
+
+    // 1. SHUFFLE PLAYBACK (Standard non-repeating OR Smart ✨)
+    if (shuffleModeRef.current !== 'off') {
+      let nextPos = shufflePosRef.current + 1;
+
+      // Smart Shuffle: fetch recommendations when nearing end
+      if (shuffleModeRef.current === 'smart' && nextPos >= shuffledIndicesRef.current.length - 2) {
+        if (currentTrackRef.current?.artist) {
+          fetchSmartRecommendations(currentTrackRef.current.artist);
+        }
+      }
+
+      if (nextPos >= shuffledIndicesRef.current.length) {
+        if (shuffleModeRef.current === 'smart' || repeatModeRef.current === 'all') {
+          // Autoplay & loop: reshuffle and continue without silence!
+          shuffledIndicesRef.current = generateShuffledDeck(queueRef.current.length, -1);
+          nextPos = 0;
+        } else {
+          return; // End of queue in regular shuffle
+        }
+      }
+
+      shufflePosRef.current = nextPos;
+      const targetQueueIdx = shuffledIndicesRef.current[nextPos];
+      if (targetQueueIdx !== undefined && q[targetQueueIdx]) {
+        setQueueIndex(targetQueueIdx);
+        queueIndexRef.current = targetQueueIdx;
+        playTrack(q[targetQueueIdx]);
+      }
+      return;
+    }
+
+    // 2. SEQUENTIAL PLAYBACK
+    let nextIdx = queueIndexRef.current + 1;
+    if (nextIdx >= q.length) {
+      if (repeatModeRef.current === 'all') {
         nextIdx = 0;
       } else {
-        return; // End of queue
+        return; // End of playlist
       }
     }
 
     setQueueIndex(nextIdx);
-    playTrack(queue[nextIdx]);
-  }, [queue, queueIndex, isShuffle, repeatMode, playTrack]);
+    queueIndexRef.current = nextIdx;
+    playTrack(q[nextIdx]);
+  }, [playTrack, fetchSmartRecommendations]);
 
   nextTrackRef.current = nextTrack;
 
   /**
-   * Previous track handler
+   * Previous track handler (navigates backward in played history)
    */
   const prevTrack = useCallback(() => {
     if (currentTime > 3) {
@@ -391,16 +513,35 @@ export function useAudioPlayer() {
       return;
     }
 
-    if (queue.length === 0) return;
+    // Return to previous song in history
+    if (historyStackRef.current.length > 0) {
+      const prevItem = historyStackRef.current.pop();
+      if (prevItem && prevItem.track) {
+        if (shuffleModeRef.current !== 'off') {
+          shufflePosRef.current = Math.max(0, shufflePosRef.current - 1);
+        }
+        if (prevItem.index >= 0) {
+          setQueueIndex(prevItem.index);
+          queueIndexRef.current = prevItem.index;
+        }
+        playTrack(prevItem.track);
+        return;
+      }
+    }
 
-    let prevIdx = queueIndex - 1;
+    // Fallback: previous index in queue
+    const q = queueRef.current;
+    if (q.length === 0) return;
+
+    let prevIdx = queueIndexRef.current - 1;
     if (prevIdx < 0) {
-      prevIdx = repeatMode === 'all' ? queue.length - 1 : 0;
+      prevIdx = repeatModeRef.current === 'all' ? q.length - 1 : 0;
     }
 
     setQueueIndex(prevIdx);
-    playTrack(queue[prevIdx]);
-  }, [queue, queueIndex, repeatMode, playTrack, currentTime]);
+    queueIndexRef.current = prevIdx;
+    playTrack(q[prevIdx]);
+  }, [playTrack, currentTime]);
 
   /**
    * Seek to timestamp in seconds
@@ -436,11 +577,30 @@ export function useAudioPlayer() {
   }, []);
 
   /**
-   * Toggle shuffle
+   * Toggle shuffle mode (off -> standard -> smart -> off)
    */
   const toggleShuffle = useCallback(() => {
-    setIsShuffle(prev => !prev);
-  }, []);
+    setShuffleMode(prev => {
+      let next = 'off';
+      if (prev === 'off') next = 'standard';
+      else if (prev === 'standard') next = 'smart';
+      else next = 'off';
+
+      if (next !== 'off') {
+        const q = queueRef.current;
+        const curIdx = queueIndexRef.current >= 0 ? queueIndexRef.current : 0;
+        if (q.length > 0) {
+          shuffledIndicesRef.current = generateShuffledDeck(q.length, curIdx);
+          shufflePosRef.current = 0;
+        }
+        if (next === 'smart' && currentTrackRef.current?.artist) {
+          fetchSmartRecommendations(currentTrackRef.current.artist);
+        }
+      }
+
+      return next;
+    });
+  }, [fetchSmartRecommendations]);
 
   /**
    * Toggle repeat mode (off -> all -> one -> off)
@@ -469,6 +629,7 @@ export function useAudioPlayer() {
     volume,
     isMuted,
     isShuffle,
+    shuffleMode,
     repeatMode,
     queue,
     queueIndex,

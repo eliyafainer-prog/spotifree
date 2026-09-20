@@ -24,7 +24,10 @@ import {
   savePlaylist,
   deletePlaylist,
   getRecentTracks,
-  updateTrackInPlaylists
+  updateTrackInPlaylists,
+  addTrackToPlaylist,
+  removeTrackFromPlaylist,
+  createCustomPlaylist
 } from './services/storage';
 import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
 import { saveTrackOffline, getAllOfflineTracks } from './services/offlineStorage';
@@ -35,11 +38,11 @@ import { PlayerBar } from './components/PlayerBar';
 import { FullscreenPlayer } from './components/FullscreenPlayer';
 import { SyncedLyrics } from './components/SyncedLyrics';
 import { ImportModal } from './components/ImportModal';
+import { AddToPlaylistModal } from './components/AddToPlaylistModal';
 import { TrackRow } from './components/TrackRow';
 import { PlaylistView } from './components/PlaylistView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { OfflineView } from './components/OfflineView';
-import { HeadphoneModal } from './components/HeadphoneModal';
 
 export default function App() {
   // Navigation & Views
@@ -65,7 +68,7 @@ export default function App() {
   const [isFullscreenPlayerOpen, setIsFullscreenPlayerOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [lyricsData, setLyricsData] = useState({ synced: [], plain: [], hasSynced: false });
-  const [isHeadphoneModalOpen, setIsHeadphoneModalOpen] = useState(false);
+  const [trackForAddToPlaylist, setTrackForAddToPlaylist] = useState(null);
 
   // Offline Downloads state
   const [downloadedIds, setDownloadedIds] = useState(new Set());
@@ -247,6 +250,39 @@ export default function App() {
     }
   };
 
+  // Add/Remove/Create playlist track handlers
+  const handleOpenAddToPlaylist = (track) => {
+    setTrackForAddToPlaylist(track);
+  };
+
+  const handleCloseAddToPlaylist = () => {
+    setTrackForAddToPlaylist(null);
+  };
+
+  const handleAddToPlaylist = (playlistId, track) => {
+    const { updated } = addTrackToPlaylist(playlistId, track);
+    setPlaylists(updated);
+  };
+
+  const handleRemoveTrackFromPlaylist = (playlistId, trackId) => {
+    const updated = removeTrackFromPlaylist(playlistId, trackId);
+    setPlaylists(updated);
+  };
+
+  const handleCreatePlaylist = (title, trackToInsert = null) => {
+    const { updated, playlist } = createCustomPlaylist(title);
+    if (playlist && trackToInsert) {
+      const res = addTrackToPlaylist(playlist.id, trackToInsert);
+      setPlaylists(res.updated);
+    } else {
+      setPlaylists(updated);
+    }
+    if (playlist) {
+      setSelectedPlaylistId(playlist.id);
+      setCurrentView('playlist');
+    }
+  };
+
   // Play track helper (updates recent tracks, playlists and analytics)
   const handlePlayTrack = (track, queueList = null, index = -1) => {
     player.playTrack(track, queueList, index);
@@ -314,6 +350,7 @@ export default function App() {
           setCurrentView={setCurrentView}
           playlists={playlists}
           openImportModal={() => setIsImportModalOpen(true)}
+          onCreatePlaylist={() => handleCreatePlaylist(`הפלייליסט שלי #${playlists.length + 1}`)}
           selectedPlaylistId={selectedPlaylistId}
           setSelectedPlaylistId={setSelectedPlaylistId}
         />
@@ -493,6 +530,7 @@ export default function App() {
                         isDownloaded={downloadedIds?.has(track.id)}
                         isDownloading={downloadingIds?.has(track.id)}
                         onDownload={handleDownloadTrack}
+                        onOpenAddToPlaylist={handleOpenAddToPlaylist}
                       />
                     ))}
                   </div>
@@ -574,6 +612,7 @@ export default function App() {
                 downloadedIds={downloadedIds}
                 downloadingIds={downloadingIds}
                 onDownloadTrack={handleDownloadTrack}
+                onOpenAddToPlaylist={handleOpenAddToPlaylist}
               />
             )}
 
@@ -591,6 +630,8 @@ export default function App() {
                 downloadedIds={downloadedIds}
                 downloadingIds={downloadingIds}
                 onDownloadTrack={handleDownloadTrack}
+                onOpenAddToPlaylist={handleOpenAddToPlaylist}
+                onRemoveTrackFromPlaylist={handleRemoveTrackFromPlaylist}
               />
             )}
 
@@ -624,6 +665,7 @@ export default function App() {
         volume={player.volume}
         isMuted={player.isMuted}
         isShuffle={player.isShuffle}
+        shuffleMode={player.shuffleMode}
         repeatMode={player.repeatMode}
         onTogglePlay={player.togglePlay}
         onNext={player.nextTrack}
@@ -637,7 +679,6 @@ export default function App() {
         onToggleLike={handleToggleLike}
         onOpenLyrics={() => setIsLyricsOpen(true)}
         onOpenFullscreen={() => setIsFullscreenPlayerOpen(true)}
-        onOpenHeadphoneTest={() => setIsHeadphoneModalOpen(true)}
       />
 
       {/* Mobile Tab Bar */}
@@ -661,6 +702,7 @@ export default function App() {
         onPrev={player.prevTrack}
         onSeek={player.seek}
         isShuffle={player.isShuffle}
+        shuffleMode={player.shuffleMode}
         onToggleShuffle={player.toggleShuffle}
         repeatMode={player.repeatMode}
         onToggleRepeat={player.toggleRepeat}
@@ -669,10 +711,6 @@ export default function App() {
         onOpenLyrics={() => {
           setIsFullscreenPlayerOpen(false);
           setIsLyricsOpen(true);
-        }}
-        onOpenHeadphoneTest={() => {
-          setIsFullscreenPlayerOpen(false);
-          setIsHeadphoneModalOpen(true);
         }}
       />
 
@@ -694,10 +732,14 @@ export default function App() {
         onPlaylistImported={handlePlaylistImported}
       />
 
-      {/* Headphone Connection & Audio Diagnostic Modal */}
-      <HeadphoneModal
-        isOpen={isHeadphoneModalOpen}
-        onClose={() => setIsHeadphoneModalOpen(false)}
+      {/* Add Track To Playlist Modal */}
+      <AddToPlaylistModal
+        isOpen={!!trackForAddToPlaylist}
+        track={trackForAddToPlaylist}
+        onClose={handleCloseAddToPlaylist}
+        playlists={playlists}
+        onAddToPlaylist={handleAddToPlaylist}
+        onCreatePlaylist={handleCreatePlaylist}
       />
     </div>
   );

@@ -5,6 +5,7 @@ import {
   SkipBack,
   SkipForward,
   Shuffle,
+  Sparkles,
   Repeat,
   Repeat1,
   Volume2,
@@ -13,7 +14,6 @@ import {
   Mic2,
   Maximize2,
   Music,
-  Headphones,
   Loader2
 } from 'lucide-react';
 
@@ -26,6 +26,7 @@ export function PlayerBar({
   volume,
   isMuted,
   isShuffle,
+  shuffleMode = 'off',
   repeatMode,
   onTogglePlay,
   onNext,
@@ -38,8 +39,7 @@ export function PlayerBar({
   isLiked,
   onToggleLike,
   onOpenLyrics,
-  onOpenFullscreen,
-  onOpenHeadphoneTest
+  onOpenFullscreen
 }) {
   if (!currentTrack) return null;
 
@@ -87,14 +87,6 @@ export function PlayerBar({
           </div>
 
           <div className="flex items-center gap-2.5" onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={onOpenHeadphoneTest}
-              title="בדיקת חיבור אוזניות"
-              className="p-1 text-spotify-subtext hover:text-emerald-400 active:scale-95 transition-all"
-            >
-              <Headphones className="w-4 h-4" />
-            </button>
-
             <button
               onClick={() => onToggleLike(currentTrack)}
               className={`p-1.5 ${isLiked ? 'text-spotify-green' : 'text-spotify-subtext'}`}
@@ -158,12 +150,27 @@ export function PlayerBar({
             {/* Shuffle */}
             <button
               onClick={onToggleShuffle}
-              title="ערבוב (Shuffle)"
-              className={`p-1 transition-colors ${
-                isShuffle ? 'text-spotify-green' : 'text-spotify-subtext hover:text-white'
+              title={
+                shuffleMode === 'smart'
+                  ? 'ערבוב חכם פעיל (כולל המלצות ✨)'
+                  : shuffleMode === 'standard' || isShuffle
+                  ? 'ערבוב רגיל (ללא חזרות)'
+                  : 'ערבוב כבוי (לחץ להפעלה)'
+              }
+              className={`p-1 transition-all ${
+                shuffleMode === 'smart'
+                  ? 'text-spotify-green relative'
+                  : shuffleMode === 'standard' || isShuffle
+                  ? 'text-spotify-green'
+                  : 'text-spotify-subtext hover:text-white'
               }`}
             >
-              <Shuffle className="w-4 h-4" />
+              <div className="relative inline-flex items-center justify-center">
+                <Shuffle className="w-4 h-4" />
+                {shuffleMode === 'smart' && (
+                  <Sparkles className="w-2.5 h-2.5 text-emerald-300 absolute -top-1.5 -right-1.5 animate-pulse" />
+                )}
+              </div>
             </button>
 
             {/* Previous Track (points left) */}
@@ -233,16 +240,8 @@ export function PlayerBar({
           </div>
         </div>
 
-        {/* Left side (RTL): Extra Tools (Lyrics, Volume, Headphone Test, Fullscreen) - LTR for slider */}
+        {/* Left side (RTL): Extra Tools (Lyrics, Volume, Fullscreen) - LTR for slider */}
         <div className="flex items-center justify-end gap-3.5 w-[30%]" dir="ltr">
-          <button
-            onClick={onOpenHeadphoneTest}
-            title="בדיקת חיבור אוזניות ושמע"
-            className="p-1.5 text-spotify-subtext hover:text-emerald-400 hover:scale-110 transition-all"
-          >
-            <Headphones className="w-5 h-5" />
-          </button>
-
           <button
             onClick={onOpenLyrics}
             title="מילים מסונכרנות"

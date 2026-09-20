@@ -1,7 +1,7 @@
 import React from 'react';
-import { Home, Search, Library, Heart, PlusCircle, Music2, BarChart3, ArrowDownCircle } from 'lucide-react';
+import { Home, Search, Library, Heart, PlusCircle, Plus, Music2, BarChart3, ArrowDownCircle } from 'lucide-react';
 
-export function Sidebar({ currentView, setCurrentView, playlists, openImportModal, selectedPlaylistId, setSelectedPlaylistId }) {
+export function Sidebar({ currentView, setCurrentView, playlists, openImportModal, onCreatePlaylist, selectedPlaylistId, setSelectedPlaylistId }) {
   return (
     <aside className="hidden md:flex flex-col w-64 bg-black p-3 gap-2 select-none h-full">
       {/* Top Box: Brand & Primary Navigation */}
@@ -109,6 +109,18 @@ export function Sidebar({ currentView, setCurrentView, playlists, openImportModa
             </div>
             <span>שירים שהורדו (אופליין)</span>
           </button>
+
+          {onCreatePlaylist && (
+            <button
+              onClick={onCreatePlaylist}
+              className="flex items-center gap-3 p-2 rounded-md font-medium text-sm text-spotify-subtext hover:text-white hover:bg-spotify-highlight/40 transition-colors text-right"
+            >
+              <div className="w-8 h-8 rounded bg-white/10 flex items-center justify-center text-white border border-white/20 flex-shrink-0">
+                <Plus className="w-4 h-4" />
+              </div>
+              <span>צור פלייליסט חדש</span>
+            </button>
+          )}
 
           <button
             onClick={openImportModal}

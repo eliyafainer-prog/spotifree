@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Pause, Heart, Music, ArrowDownCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Play, Pause, Heart, Music, ArrowDownCircle, CheckCircle2, Loader2, ListPlus, Trash2 } from 'lucide-react';
 import { prefetchNextTracks } from '../services/api';
 
 export function TrackRow({
@@ -13,7 +13,9 @@ export function TrackRow({
   onToggleLike,
   isDownloaded = false,
   isDownloading = false,
-  onDownload
+  onDownload,
+  onOpenAddToPlaylist,
+  onRemoveFromPlaylist
 }) {
   const formatDuration = (seconds) => {
     if (!seconds) return track.duration || '0:00';
@@ -117,6 +119,34 @@ export function TrackRow({
         >
           <Heart className={`w-4 h-4 ${isLiked ? 'fill-spotify-green' : ''}`} />
         </button>
+
+        {/* Add to Playlist Button */}
+        {onOpenAddToPlaylist && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenAddToPlaylist(track);
+            }}
+            title="הוסף לפלייליסט"
+            className="p-1 transition-transform active:scale-125 text-spotify-subtext opacity-0 group-hover:opacity-100 hover:text-white"
+          >
+            <ListPlus className="w-4 h-4" />
+          </button>
+        )}
+
+        {/* Remove from Playlist Button (shown when viewing custom/user playlist) */}
+        {onRemoveFromPlaylist && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemoveFromPlaylist(track);
+            }}
+            title="הסר שיר זה מהפלייליסט"
+            className="p-1 transition-transform active:scale-125 text-spotify-subtext opacity-0 group-hover:opacity-100 hover:text-red-400"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
 
         {/* Duration */}
         <span className="text-xs text-spotify-subtext font-mono w-10 text-left">

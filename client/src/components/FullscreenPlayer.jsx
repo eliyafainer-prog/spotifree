@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Heart, Mic2, Music, Headphones } from 'lucide-react';
+import { ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Sparkles, Repeat, Repeat1, Heart, Mic2, Music } from 'lucide-react';
 
 export function FullscreenPlayer({
   isOpen,
@@ -13,13 +13,13 @@ export function FullscreenPlayer({
   onPrev,
   onSeek,
   isShuffle,
+  shuffleMode = 'off',
   onToggleShuffle,
   repeatMode,
   onToggleRepeat,
   isLiked,
   onToggleLike,
-  onOpenLyrics,
-  onOpenHeadphoneTest
+  onOpenLyrics
 }) {
   if (!isOpen || !currentTrack) return null;
 
@@ -125,11 +125,27 @@ export function FullscreenPlayer({
       <div className="flex items-center justify-between px-2 mb-6" dir="ltr">
         <button
           onClick={onToggleShuffle}
-          className={`p-2 transition-colors ${
-            isShuffle ? 'text-spotify-green' : 'text-spotify-subtext'
+          title={
+            shuffleMode === 'smart'
+              ? 'ערבוב חכם פעיל (Smart Shuffle ✨)'
+              : shuffleMode === 'standard' || isShuffle
+              ? 'ערבוב רגיל פעיל'
+              : 'ערבוב כבוי'
+          }
+          className={`p-2 transition-all active:scale-95 ${
+            shuffleMode === 'smart'
+              ? 'text-spotify-green'
+              : shuffleMode === 'standard' || isShuffle
+              ? 'text-spotify-green'
+              : 'text-spotify-subtext hover:text-white'
           }`}
         >
-          <Shuffle className="w-5 h-5" />
+          <div className="relative inline-flex items-center justify-center">
+            <Shuffle className="w-5 h-5" />
+            {shuffleMode === 'smart' && (
+              <Sparkles className="w-3 h-3 text-emerald-300 absolute -top-2 -right-2 animate-pulse" />
+            )}
+          </div>
         </button>
 
         <button
@@ -170,16 +186,8 @@ export function FullscreenPlayer({
       {/* Bottom Footer Actions */}
       <div className="flex items-center justify-center gap-3 pb-2">
         <button
-          onClick={onOpenHeadphoneTest}
-          className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold px-4 py-2 rounded-full backdrop-blur-md transition-colors"
-        >
-          <Headphones className="w-4 h-4 text-emerald-400" />
-          <span>בדיקת אוזניות</span>
-        </button>
-
-        <button
           onClick={onOpenLyrics}
-          className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold px-4 py-2 rounded-full backdrop-blur-md transition-colors"
+          className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold px-5 py-2.5 rounded-full backdrop-blur-md transition-colors"
         >
           <Mic2 className="w-4 h-4 text-spotify-green" />
           <span>הצג מילים מסונכרנות</span>
