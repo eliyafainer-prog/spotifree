@@ -4,7 +4,7 @@ node_modules/
 .pnp.js
 
 # Production build
-dist/
+# dist/ is tracked for client to guarantee immediate availability on zero-config cloud deployments
 build/
 
 # Logs

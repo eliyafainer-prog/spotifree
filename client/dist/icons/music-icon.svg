@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1ed760" />
+      <stop offset="100%" stop-color="#12a344" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="#121212"/>
+  <circle cx="256" cy="256" r="180" fill="url(#bgGrad)"/>
+  <!-- Sound waves / Spotify style arcs -->
+  <path d="M160 300 C210 280, 302 280, 352 305" stroke="#121212" stroke-width="26" stroke-linecap="round" fill="none"/>
+  <path d="M142 250 C202 225, 310 225, 370 255" stroke="#121212" stroke-width="32" stroke-linecap="round" fill="none"/>
+  <path d="M125 198 C195 170, 317 170, 387 205" stroke="#121212" stroke-width="38" stroke-linecap="round" fill="none"/>
+</svg>

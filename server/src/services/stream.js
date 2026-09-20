@@ -394,8 +394,29 @@ function pipeStream(videoId, req, res, fallbackQuery = null) {
     ? `https://www.youtube.com/watch?v=${videoId}`
     : (fallbackQuery ? `ytsearch1:${fallbackQuery}` : `https://www.youtube.com/watch?v=${videoId}`);
 
-  const args = [
-    '-m', 'yt_dlp',
+  const standaloneCandidates = [
+    path.join(__dirname, '../yt-dlp'),
+    path.join(process.cwd(), 'server/yt-dlp'),
+    '/tmp/yt-dlp'
+  ];
+  let standaloneBin = null;
+  for (const s of standaloneCandidates) {
+    if (fs.existsSync(s)) {
+      try {
+        fs.accessSync(s, fs.constants.X_OK);
+        standaloneBin = s;
+        break;
+      } catch (e) {
+        try {
+          fs.chmodSync(s, 0o755);
+          standaloneBin = s;
+          break;
+        } catch (e2) {}
+      }
+    }
+  }
+
+  const baseArgs = [
     '-f', '140/ba[ext=m4a]/ba/best',
     '-o', '-',
     '--no-playlist',
@@ -407,11 +428,14 @@ function pipeStream(videoId, req, res, fallbackQuery = null) {
   ];
 
   if (cookiePath) {
-    args.push('--cookies', cookiePath);
+    baseArgs.push('--cookies', cookiePath);
   }
-  args.push(target);
+  baseArgs.push(target);
 
-  const pyProcess = spawn(PYTHON_BIN, args);
+  const spawnBin = standaloneBin || PYTHON_BIN;
+  const spawnArgs = standaloneBin ? baseArgs : ['-m', 'yt_dlp', ...baseArgs];
+
+  const pyProcess = spawn(spawnBin, spawnArgs);
 
   res.setHeader('Content-Type', 'audio/mp4');
   res.setHeader('Cache-Control', 'public, max-age=14400');
