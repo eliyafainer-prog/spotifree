@@ -242,7 +242,103 @@ async function universalImport(inputUrl) {
 }
 
 /**
- * Resolve a track to a streamable audio ID (matches Spotify track to YouTube videoId and artwork)
+ * Score how well a YouTube candidate matches the original Spotify track
+ * Rewards: matching duration, official channel / topic, official audio, artist match.
+ * Penalizes: live stage recordings, audience videos, fan covers, parodies, extended bootlegs.
+ */
+function scoreCandidate(cand, track) {
+  let score = 0;
+  const candTitle = (cand.title || cand.originalTitle || '').toLowerCase();
+  const candAuthor = (cand.artist || cand.author?.name || '').toLowerCase();
+  const targetTitle = (track.title || track.originalTitle || '').toLowerCase();
+  const targetArtist = (track.artist || '').toLowerCase();
+  const targetAlbum = (track.album || '').toLowerCase();
+  const candSec = cand.durationSeconds || cand.seconds || 0;
+  const targetSec = track.durationSeconds || 0;
+
+  // 1. Duration matching (Extremely important for studio vs live/stage versions)
+  if (targetSec > 0 && candSec > 0) {
+    const diff = Math.abs(candSec - targetSec);
+    if (diff <= 3) score += 50;
+    else if (diff <= 7) score += 35;
+    else if (diff <= 15) score += 20;
+    else if (diff <= 30) score += 5;
+    else if (diff <= 60) score -= 30;
+    else if (diff <= 120) score -= 60;
+    else score -= 90; // Over 2 minutes difference is almost certainly a live concert or full show
+  }
+
+  // 2. Penalize Live / Stage / Crowd / Bootlegs (unless the track itself requested live)
+  const badWords = [
+    'מהבמה', 'במה', 'מהקהל', 'קהל', 'הופעה חיה', 'הופעה', 'לייב', 'live', 'concert',
+    'חזרות', 'מאחורי הקלעים', 'ריאקשן', 'reaction', 'קאבר', 'cover', 'קריוקי', 'karaoke',
+    'פרודיה', 'parody', 'אינסטרומנטלי', 'instrumental', 'ריאיון', 'ראיון'
+  ];
+  for (const w of badWords) {
+    if (candTitle.includes(w) && !targetTitle.includes(w) && !targetAlbum.includes(w)) {
+      score -= 60;
+    }
+  }
+
+  // 3. Official / Studio rewards
+  const goodWords = [
+    'official audio', 'אודיו רשמי', 'שיר רשמי', 'קליפ רשמי', 'official video',
+    'official music video', 'topic', 'vevo', 'הערוץ הרשמי', 'audio', 'אודיו'
+  ];
+  for (const w of goodWords) {
+    if (candTitle.includes(w) || candAuthor.includes(w)) {
+      score += 30;
+      break;
+    }
+  }
+
+  // 4. Topic channel reward (YouTube Music auto-generated official releases)
+  if (candAuthor.includes('topic')) {
+    score += 40;
+  }
+
+  // 5. Artist matching
+  if (targetArtist) {
+    const artistParts = targetArtist.split(/[,&]+/).map(a => a.trim().toLowerCase()).filter(Boolean);
+    for (const a of artistParts) {
+      if (a.length > 2 && (candAuthor.includes(a) || candTitle.includes(a))) {
+        score += 25;
+        break;
+      }
+    }
+  }
+
+  // 6. Title word matching (MANDATORY: must actually be the song requested!)
+  const titleWords = targetTitle
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .split(/\s+/)
+    .filter(w => w.length > 1);
+  let matchedWords = 0;
+  for (const w of titleWords) {
+    if (candTitle.includes(w)) matchedWords++;
+  }
+  const matchRatio = titleWords.length > 0 ? (matchedWords / titleWords.length) : 1;
+  if (matchRatio < 0.5) {
+    return -999; // Disqualify completely wrong songs
+  }
+  score += Math.round(matchRatio * 45);
+
+  // 7. Album matching (e.g. Festigal year / name)
+  if (targetAlbum && targetAlbum.length > 2) {
+    const albumWords = targetAlbum.replace(/[^\p{L}\p{N}\s]/gu, '').split(/\s+/).filter(w => w.length > 2);
+    for (const aw of albumWords) {
+      if (candTitle.includes(aw)) {
+        score += 15;
+        break;
+      }
+    }
+  }
+
+  return score;
+}
+
+/**
+ * Resolve a track to a streamable audio ID (matches Spotify track to exact YouTube studio version and artwork)
  */
 async function resolveTrackToStreamableId(track) {
   if (track.source === 'youtube' && track.id && !track.id.startsWith('sp_')) {
@@ -253,7 +349,7 @@ async function resolveTrackToStreamableId(track) {
     };
   }
 
-  const query = track.query || `${track.artist} ${track.title}`.trim();
+  const query = track.query || `${track.artist} - ${track.title}`.trim();
 
   // 1. Fetch individual studio cover from Deezer in parallel
   let albumCover = null;
@@ -262,33 +358,48 @@ async function resolveTrackToStreamableId(track) {
     albumCover = dRes.data?.data?.[0]?.album?.cover_medium || null;
   } catch (e) {}
 
-  // 2. Search on YouTube for videoId and video thumbnail using robust searchTracks
-  let topVideo = null;
-  try {
-    const results = await searchTracks(query, 5);
-    if (results && results.length > 0) {
-      topVideo = results[0];
-    }
-  } catch (e) {}
+  // 2. Multi-tier search: Target studio releases, official audio, and clean query
+  const candidatesMap = new Map();
 
-  // 3. Fallback search with title only
-  if (!topVideo && track.title) {
+  const searchQueries = [
+    `${track.artist} ${track.title} official audio`,
+    query,
+    `${track.title} ${track.album || ''}`.trim()
+  ].filter(Boolean);
+
+  for (const sq of searchQueries) {
     try {
-      const fallbackResults = await searchTracks(track.title, 5);
-      if (fallbackResults && fallbackResults.length > 0) {
-        topVideo = fallbackResults[0];
+      const results = await searchTracks(sq, 8);
+      if (Array.isArray(results)) {
+        for (const item of results) {
+          const vidId = item.id || item.videoId;
+          if (vidId && !candidatesMap.has(vidId)) {
+            candidatesMap.set(vidId, item);
+          }
+        }
       }
+      if (candidatesMap.size >= 12) break;
     } catch (e) {}
   }
 
-  if (!topVideo) {
+  const allCandidates = Array.from(candidatesMap.values());
+
+  if (allCandidates.length === 0) {
     throw new Error(`לא נמצא מקור שמע עבור: ${track.title}`);
   }
 
+  // 3. Score candidates and pick highest scoring official studio match
+  const scored = allCandidates.map(cand => ({
+    cand,
+    score: scoreCandidate(cand, track)
+  })).sort((a, b) => b.score - a.score);
+
+  const topMatch = scored[0].cand;
+
   return {
-    streamableId: topVideo.id || topVideo.videoId,
-    thumbnail: albumCover || topVideo.thumbnail || topVideo.image || `https://i.ytimg.com/vi/${topVideo.id}/hqdefault.jpg`,
-    durationSeconds: topVideo.durationSeconds || track.durationSeconds || 0
+    streamableId: topMatch.id || topMatch.videoId,
+    thumbnail: albumCover || topMatch.thumbnail || topMatch.image || `https://i.ytimg.com/vi/${topMatch.id}/hqdefault.jpg`,
+    durationSeconds: topMatch.durationSeconds || track.durationSeconds || 0
   };
 }
 
