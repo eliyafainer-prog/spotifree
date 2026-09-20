@@ -333,6 +333,16 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       } catch (e) {}
     }
 
+    // 4. Invidious fallback if worker failed or datacenter is 429-blocked
+    if (!streamUrl) {
+      const vid = (isVideoId ? videoId : null) || resolveCache.get((fallbackQuery || '').toLowerCase().trim());
+      if (vid) {
+        try {
+          streamUrl = await fetchFromInvidious(vid);
+        } catch (e) {}
+      }
+    }
+
     if (!streamUrl) {
       throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
     }
@@ -369,106 +379,134 @@ async function prefetchTracks(tracks) {
   }
 }
 
-/**
- * Direct Audio Stream Proxy: streams raw audio/mp4 chunks directly to client
- */
-function pipeStream(videoId, req, res, fallbackQuery = null) {
-  const cookieCandidates = [
-    process.env.COOKIE_FILE,
-    '/etc/secrets/cookies.txt',
-    path.join(__dirname, '../cookies.txt'),
-    path.join(__dirname, '../../cookies.txt'),
-    path.join(process.cwd(), 'cookies.txt'),
-    path.join(process.cwd(), 'server/cookies.txt')
-  ].filter(Boolean);
+const INVIDIOUS_INSTANCES = [
+  'https://invidious.f5.si',
+  'https://inv.nadeko.net',
+  'https://yt.chocolatemoo53.com',
+  'https://invidious.nerdvpn.de',
+  'https://invidious.tiekoetter.com'
+];
 
-  let cookiePath = null;
-  for (const c of cookieCandidates) {
-    if (fs.existsSync(c)) {
-      cookiePath = c;
-      break;
+/**
+ * Fetch direct Google CDN audio stream URL from public Invidious instances when datacenter IPs are 429-blocked
+ */
+async function fetchFromInvidious(videoId) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+  for (const inst of INVIDIOUS_INSTANCES) {
+    try {
+      const res = await axios.get(`${inst}/api/v1/videos/${videoId}`, {
+        timeout: 3500,
+        headers: { 'Accept': 'application/json' }
+      });
+      if (res.data && res.data.adaptiveFormats) {
+        const audio = res.data.adaptiveFormats.find(f => f.type && f.type.includes('audio/mp4')) ||
+                      res.data.adaptiveFormats.find(f => f.type && f.type.startsWith('audio/'));
+        if (audio && audio.url) {
+          return audio.url;
+        }
+      }
+    } catch (e) {
+      // Continue to next instance
     }
   }
+  return null;
+}
 
-  const target = videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)
-    ? `https://www.youtube.com/watch?v=${videoId}`
-    : (fallbackQuery ? `ytsearch1:${fallbackQuery}` : `https://www.youtube.com/watch?v=${videoId}`);
+/**
+ * Direct Audio Stream Proxy: forwards HTTP Range requests with Content-Range & Content-Length
+ * for 100% native scrubber timeline advancement, seek support, and mobile background playback.
+ */
+async function pipeStream(videoId, req, res, fallbackQuery = null) {
+  let upstreamStream = null;
 
-  const standaloneCandidates = [
-    path.join(__dirname, '../yt-dlp'),
-    path.join(process.cwd(), 'server/yt-dlp'),
-    '/tmp/yt-dlp'
-  ];
-  let standaloneBin = null;
-  for (const s of standaloneCandidates) {
-    if (fs.existsSync(s)) {
-      try {
-        fs.accessSync(s, fs.constants.X_OK);
-        standaloneBin = s;
-        break;
-      } catch (e) {
-        try {
-          fs.chmodSync(s, 0o755);
-          standaloneBin = s;
-          break;
-        } catch (e2) {}
+  req.on('close', () => {
+    if (upstreamStream && typeof upstreamStream.destroy === 'function') {
+      upstreamStream.destroy();
+    }
+  });
+
+  try {
+    let streamUrl = null;
+    try {
+      streamUrl = await getAudioStreamUrl(videoId, fallbackQuery);
+    } catch (e) {
+      // If worker extraction failed (e.g. 429 datacenter block), try Invidious directly
+      if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+        streamUrl = await fetchFromInvidious(videoId);
+      }
+    }
+
+    if (!streamUrl && videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      streamUrl = await fetchFromInvidious(videoId);
+    }
+
+    if (!streamUrl) {
+      throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
+    }
+
+    const range = req.headers.range;
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    };
+
+    if (range) {
+      headers['Range'] = range;
+    }
+
+    const response = await axios({
+      method: 'GET',
+      url: streamUrl,
+      responseType: 'stream',
+      headers: headers,
+      httpsAgent: httpsAgent,
+      decompress: false,
+      maxRedirects: 5,
+      validateStatus: () => true
+    });
+
+    if (response.status >= 200 && response.status < 400) {
+      upstreamStream = response.data;
+
+      if (typeof res.status === 'function') {
+        res.status(response.status);
+      } else {
+        res.statusCode = response.status;
+      }
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'public, max-age=14400');
+
+      for (const [key, value] of Object.entries(response.headers)) {
+        const lower = key.toLowerCase();
+        if (['content-type', 'content-length', 'content-range'].includes(lower)) {
+          res.setHeader(lower, value);
+        }
+      }
+
+      if (!res.getHeader('Content-Type')) {
+        res.setHeader('Content-Type', 'audio/mp4');
+      }
+
+      if (typeof res.flushHeaders === 'function') {
+        res.flushHeaders();
+      }
+
+      response.data.pipe(res);
+      return;
+    }
+
+    throw new Error(`Upstream CDN returned status ${response.status}`);
+  } catch (err) {
+    console.error(`pipeStream error for ${videoId}:`, err.message);
+    if (!res.headersSent) {
+      if (typeof res.status === 'function') {
+        res.status(500).json({ error: 'שגיאה בהזרמת השמע: ' + err.message });
+      } else {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'שגיאה בהזרמת השמע: ' + err.message }));
       }
     }
   }
-
-  const baseArgs = [
-    '-f', '140/ba[ext=m4a]/ba/best',
-    '-o', '-',
-    '--no-playlist',
-    '--no-warnings',
-    '--no-check-certificates',
-    '--no-config',
-    '--geo-bypass',
-    '--socket-timeout', '12'
-  ];
-
-  if (cookiePath) {
-    baseArgs.push('--cookies', cookiePath);
-  }
-  baseArgs.push(target);
-
-  const spawnBin = standaloneBin || PYTHON_BIN;
-  const spawnArgs = standaloneBin ? baseArgs : ['-m', 'yt_dlp', ...baseArgs];
-
-  const pyProcess = spawn(spawnBin, spawnArgs);
-
-  res.setHeader('Content-Type', 'audio/mp4');
-  res.setHeader('Cache-Control', 'public, max-age=14400');
-  res.setHeader('Accept-Ranges', 'none');
-
-  if (typeof res.flushHeaders === 'function') {
-    res.flushHeaders();
-  }
-
-  pyProcess.stdout.pipe(res);
-
-  let errorOutput = '';
-  pyProcess.stderr.on('data', (d) => {
-    errorOutput += d.toString();
-  });
-
-  req.on('close', () => {
-    try {
-      pyProcess.kill();
-    } catch (e) {}
-  });
-
-  pyProcess.on('error', (err) => {
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'שגיאה בהזרמת השמע: ' + err.message });
-    }
-  });
-
-  pyProcess.on('close', (code) => {
-    if (code !== 0 && !res.headersSent) {
-      res.status(500).json({ error: 'חילוץ השמע נכשל: ' + errorOutput });
-    }
-  });
 }
 
 module.exports = {

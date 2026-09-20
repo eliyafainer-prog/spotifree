@@ -38,11 +38,16 @@ export function useAudioPlayer() {
     audioRef.current = audio;
 
     const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
+      if (audio.currentTime !== undefined && !isNaN(audio.currentTime)) {
+        setCurrentTime(audio.currentTime);
+      }
+      if (audio.duration && !isNaN(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration);
+      }
     };
 
     const handleDurationChange = () => {
-      if (audio.duration && !isNaN(audio.duration)) {
+      if (audio.duration && !isNaN(audio.duration) && audio.duration > 0) {
         setDuration(audio.duration);
       }
     };
@@ -77,6 +82,7 @@ export function useAudioPlayer() {
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('durationchange', handleDurationChange);
+    audio.addEventListener('loadedmetadata', handleDurationChange);
     audio.addEventListener('waiting', handleWaiting);
     audio.addEventListener('canplay', handleCanPlay);
     audio.addEventListener('play', handlePlay);
@@ -88,6 +94,7 @@ export function useAudioPlayer() {
       audio.pause();
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('durationchange', handleDurationChange);
+      audio.removeEventListener('loadedmetadata', handleDurationChange);
       audio.removeEventListener('waiting', handleWaiting);
       audio.removeEventListener('canplay', handleCanPlay);
       audio.removeEventListener('play', handlePlay);
