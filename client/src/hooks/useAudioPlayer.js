@@ -103,6 +103,15 @@ export function useAudioPlayer() {
       }
     };
 
+    const handleStalled = () => {
+      if (activeEngineRef.current === 'audio' && audio.currentTime === 0 && !userPausedRef.current) {
+        console.warn('HTML5 Audio stalled, activating YouTube fallback');
+        if (currentTrackRef.current && playViaYouTubePlayerRef.current) {
+          playViaYouTubePlayerRef.current(currentTrackRef.current);
+        }
+      }
+    };
+
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('durationchange', handleDurationChange);
     audio.addEventListener('loadedmetadata', handleDurationChange);
@@ -112,6 +121,7 @@ export function useAudioPlayer() {
     audio.addEventListener('pause', handlePause);
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('error', handleError);
+    audio.addEventListener('stalled', handleStalled);
 
     return () => {
       audio.pause();
@@ -124,6 +134,7 @@ export function useAudioPlayer() {
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
+      audio.removeEventListener('stalled', handleStalled);
     };
   }, []);
 
@@ -398,13 +409,13 @@ export function useAudioPlayer() {
         setIsLoading(false);
         addRecentTrack(playableTrack);
 
-        // Health monitor: if stream stalls at 0:00 for more than 4 seconds, fallback to YouTube
+        // Health monitor: if stream stalls at 0:00 for more than 3.5 seconds, fallback to YouTube
         fallbackTimerRef.current = setTimeout(() => {
-          if (activeEngineRef.current === 'audio' && audioRef.current && audioRef.current.currentTime === 0 && !audioRef.current.paused) {
+          if (activeEngineRef.current === 'audio' && (!audioRef.current || audioRef.current.currentTime === 0) && !userPausedRef.current) {
             console.warn('Audio stream stalled at 0:00, falling back to YouTube engine...');
             playViaYouTubePlayer(playableTrack);
           }
-        }, 4000);
+        }, 3500);
 
         if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
           prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
