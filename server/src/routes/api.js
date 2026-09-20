@@ -80,6 +80,7 @@ router.get('/debug-extract', async (req, res) => {
       cookieFlag = `--cookies "${targetCp}"`;
     } catch (e) {
       cookieFlag = `--cookies "${foundCookie}"`;
+    }
   }
   const uaFlag = req.query.ua ? `--user-agent "${req.query.ua}"` : '';
   const extraFlags = req.query.extra ? req.query.extra : '';
