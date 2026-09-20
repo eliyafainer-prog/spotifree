@@ -370,63 +370,81 @@ async function prefetchTracks(tracks) {
 }
 
 /**
- * Proxy stream with zero-buffering and immediate header flushing for minimum audio latency
+ * Direct Audio Stream Proxy: streams raw audio/mp4 chunks directly to client
  */
-async function pipeStream(videoId, req, res, fallbackQuery = null) {
-  let upstreamStream = null;
+function pipeStream(videoId, req, res, fallbackQuery = null) {
+  const cookieCandidates = [
+    process.env.COOKIE_FILE,
+    '/etc/secrets/cookies.txt',
+    path.join(__dirname, '../cookies.txt'),
+    path.join(__dirname, '../../cookies.txt'),
+    path.join(process.cwd(), 'cookies.txt'),
+    path.join(process.cwd(), 'server/cookies.txt')
+  ].filter(Boolean);
 
-  // Destroy upstream stream if mobile client closes or aborts request
-  req.on('close', () => {
-    if (upstreamStream && typeof upstreamStream.destroy === 'function') {
-      upstreamStream.destroy();
+  let cookiePath = null;
+  for (const c of cookieCandidates) {
+    if (fs.existsSync(c)) {
+      cookiePath = c;
+      break;
     }
+  }
+
+  const target = videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)
+    ? `https://www.youtube.com/watch?v=${videoId}`
+    : (fallbackQuery ? `ytsearch1:${fallbackQuery}` : `https://www.youtube.com/watch?v=${videoId}`);
+
+  const args = [
+    '-m', 'yt_dlp',
+    '-f', '140/ba[ext=m4a]/ba/best',
+    '-o', '-',
+    '--no-playlist',
+    '--no-warnings',
+    '--no-check-certificates',
+    '--no-config',
+    '--geo-bypass',
+    '--socket-timeout', '12'
+  ];
+
+  if (cookiePath) {
+    args.push('--cookies', cookiePath);
+  }
+  args.push(target);
+
+  const pyProcess = spawn(PYTHON_BIN, args);
+
+  res.setHeader('Content-Type', 'audio/mp4');
+  res.setHeader('Cache-Control', 'public, max-age=14400');
+  res.setHeader('Accept-Ranges', 'none');
+
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+
+  pyProcess.stdout.pipe(res);
+
+  let errorOutput = '';
+  pyProcess.stderr.on('data', (d) => {
+    errorOutput += d.toString();
   });
 
-  try {
-    const streamUrl = await getAudioStreamUrl(videoId, fallbackQuery);
-    const range = req.headers.range;
+  req.on('close', () => {
+    try {
+      pyProcess.kill();
+    } catch (e) {}
+  });
 
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    };
-
-    if (range) {
-      headers['Range'] = range;
-    }
-
-    const response = await axios({
-      method: 'GET',
-      url: streamUrl,
-      responseType: 'stream',
-      headers: headers,
-      httpsAgent: httpsAgent,
-      decompress: false, // Prevents axios decompression latency
-      maxRedirects: 5,
-      validateStatus: () => true
-    });
-
-    upstreamStream = response.data;
-
-    res.status(response.status);
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'public, max-age=14400');
-
-    for (const [key, value] of Object.entries(response.headers)) {
-      if (['content-type', 'content-length', 'content-range'].includes(key.toLowerCase())) {
-        res.setHeader(key, value);
-      }
-    }
-
-    if (typeof res.flushHeaders === 'function') {
-      res.flushHeaders();
-    }
-
-    response.data.pipe(res);
-  } catch (err) {
+  pyProcess.on('error', (err) => {
     if (!res.headersSent) {
       res.status(500).json({ error: 'שגיאה בהזרמת השמע: ' + err.message });
     }
-  }
+  });
+
+  pyProcess.on('close', (code) => {
+    if (code !== 0 && !res.headersSent) {
+      res.status(500).json({ error: 'חילוץ השמע נכשל: ' + errorOutput });
+    }
+  });
 }
 
 module.exports = {
