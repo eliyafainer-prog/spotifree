@@ -11,19 +11,10 @@
     <meta name="description" content="Free, ad-free Spotify clone with headphone controls, playlist import & synced lyrics" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>SpotiFree — Ad-Free Music</title>
-    <script>
-      (function() {
-        try {
-          if ('audioSession' in navigator) {
-            navigator.audioSession.type = 'playback';
-          }
-        } catch (e) {}
-      })();
-    </script>
   </head>
   <body class="bg-spotify-base text-white antialiased overflow-hidden select-none">
     <div id="root"></div>
-    <div id="spotifree-yt-player-container" style="position:fixed;bottom:0;left:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:0;overflow:hidden">
+    <div id="spotifree-yt-player-container" style="position:fixed;bottom:0;left:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:0;overflow:hidden">
       <div id="spotifree-yt-player"></div>
     </div>
     <script src="https://www.youtube.com/iframe_api"></script>
