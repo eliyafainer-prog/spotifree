@@ -45,6 +45,9 @@ import { AnalyticsView } from './components/AnalyticsView';
 import { OfflineView } from './components/OfflineView';
 
 export default function App() {
+  // Audio Player Engine
+  const player = useAudioPlayer();
+
   // Navigation & Views
   const [currentView, setCurrentView] = useState('home'); // 'home' | 'search' | 'library' | 'liked' | 'playlist'
   const [selectedPlaylistId, setSelectedPlaylistId] = useState(null);
@@ -128,9 +131,6 @@ export default function App() {
       });
     }
   };
-
-  // Audio Player Engine
-  const player = useAudioPlayer();
 
   // Headphone & Lock Screen Integration (MediaSession API)
   useMediaSession({
