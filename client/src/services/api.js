@@ -1,4 +1,10 @@
-const API_BASE = '/api';
+const isNativeApp = typeof window !== 'undefined' && (
+  window.Capacitor?.isNativePlatform?.() ||
+  window.location.protocol === 'capacitor:' ||
+  (window.location.hostname === 'localhost' && !['3000', '5173'].includes(window.location.port))
+);
+
+const API_BASE = isNativeApp ? 'https://spotifree-h7s8.onrender.com/api' : '/api';
 
 /**
  * Search tracks

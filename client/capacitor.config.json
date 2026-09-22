@@ -1,0 +1,20 @@
+{
+  "appId": "com.spotifree.app",
+  "appName": "Spotifree",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true,
+    "allowNavigation": [
+      "spotifree-h7s8.onrender.com",
+      "*.googlevideo.com",
+      "*.youtube.com",
+      "*.ytimg.com"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  }
+}
