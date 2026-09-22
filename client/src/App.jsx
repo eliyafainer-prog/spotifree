@@ -69,6 +69,27 @@ export default function App() {
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [lyricsData, setLyricsData] = useState({ synced: [], plain: [], hasSynced: false });
   const [trackForAddToPlaylist, setTrackForAddToPlaylist] = useState(null);
+  const [toastMessage, setToastMessage] = useState(null);
+  const toastTimeoutRef = useRef(null);
+
+  const showToast = useCallback((msg) => {
+    setToastMessage(msg);
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 2800);
+  }, []);
+
+  const handleToggleShuffle = useCallback(() => {
+    const current = player.shuffleMode;
+    const nextMode = current === 'off' ? 'standard' : current === 'standard' ? 'smart' : 'off';
+    player.toggleShuffle();
+    if (nextMode === 'standard') {
+      showToast('🔀 השמעה אקראית: מופעלת (שירים מעורבבים ללא חזרות)');
+    } else if (nextMode === 'smart') {
+      showToast('✨ ערבוב חכם: מופעל (Smart Shuffle - כולל שירים דומים)');
+    } else {
+      showToast('➡️ השמעה אקראית: כבויה (ניגון לפי הסדר)');
+    }
+  }, [player, showToast]);
 
   // Offline Downloads state
   const [downloadedIds, setDownloadedIds] = useState(new Set());
@@ -613,6 +634,8 @@ export default function App() {
                 downloadingIds={downloadingIds}
                 onDownloadTrack={handleDownloadTrack}
                 onOpenAddToPlaylist={handleOpenAddToPlaylist}
+                shuffleMode={player.shuffleMode}
+                onToggleShuffle={handleToggleShuffle}
               />
             )}
 
@@ -632,6 +655,8 @@ export default function App() {
                 onDownloadTrack={handleDownloadTrack}
                 onOpenAddToPlaylist={handleOpenAddToPlaylist}
                 onRemoveTrackFromPlaylist={handleRemoveTrackFromPlaylist}
+                shuffleMode={player.shuffleMode}
+                onToggleShuffle={handleToggleShuffle}
               />
             )}
 
@@ -644,6 +669,8 @@ export default function App() {
                 likedSongs={likedSongs}
                 onToggleLike={handleToggleLike}
                 onTrackDeleted={refreshDownloads}
+                shuffleMode={player.shuffleMode}
+                onToggleShuffle={handleToggleShuffle}
               />
             )}
 
@@ -673,7 +700,7 @@ export default function App() {
         onSeek={player.seek}
         onSetVolume={player.setVolume}
         onToggleMute={player.toggleMute}
-        onToggleShuffle={player.toggleShuffle}
+        onToggleShuffle={handleToggleShuffle}
         onToggleRepeat={player.toggleRepeat}
         isLiked={likedSongs.some(s => s.id === player.currentTrack?.id || (s.title === player.currentTrack?.title && s.artist === player.currentTrack?.artist))}
         onToggleLike={handleToggleLike}
@@ -703,7 +730,7 @@ export default function App() {
         onSeek={player.seek}
         isShuffle={player.isShuffle}
         shuffleMode={player.shuffleMode}
-        onToggleShuffle={player.toggleShuffle}
+        onToggleShuffle={handleToggleShuffle}
         repeatMode={player.repeatMode}
         onToggleRepeat={player.toggleRepeat}
         isLiked={likedSongs.some(s => s.id === player.currentTrack?.id || (s.title === player.currentTrack?.title && s.artist === player.currentTrack?.artist))}
@@ -741,6 +768,13 @@ export default function App() {
         onAddToPlaylist={handleAddToPlaylist}
         onCreatePlaylist={handleCreatePlaylist}
       />
+
+      {/* Floating Status Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-full bg-spotify-elevated/95 text-white font-bold text-sm shadow-2xl border border-white/10 backdrop-blur-xl flex items-center gap-2.5 animate-fadeIn pointer-events-none">
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }

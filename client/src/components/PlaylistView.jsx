@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Trash2, Music, Clock } from 'lucide-react';
+import { Play, Shuffle, Sparkles, Trash2, Music, Clock } from 'lucide-react';
 import { TrackRow } from './TrackRow';
 
 export function PlaylistView({
@@ -15,7 +15,9 @@ export function PlaylistView({
   downloadingIds = new Set(),
   onDownloadTrack,
   onOpenAddToPlaylist,
-  onRemoveTrackFromPlaylist
+  onRemoveTrackFromPlaylist,
+  shuffleMode = 'off',
+  onToggleShuffle
 }) {
   if (!playlist) return null;
 
@@ -25,6 +27,15 @@ export function PlaylistView({
     if (tracks.length > 0) {
       onPlayTrack(tracks[0], tracks, 0);
     }
+  };
+
+  const handleShufflePlay = () => {
+    if (tracks.length === 0) return;
+    if (shuffleMode === 'off' && onToggleShuffle) {
+      onToggleShuffle();
+    }
+    const randomIdx = Math.floor(Math.random() * tracks.length);
+    onPlayTrack(tracks[randomIdx], tracks, randomIdx);
   };
 
   const isAlbum = playlist.type?.toLowerCase() === 'album';
@@ -58,15 +69,35 @@ export function PlaylistView({
         </div>
       </div>
 
-      {/* Action Bar (Big Play Button, Delete) */}
+      {/* Action Bar (Big Play Button, Shuffle Play Button, Delete) */}
       <div className="flex items-center justify-between px-4">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <button
             onClick={handlePlayAll}
             disabled={tracks.length === 0}
+            title="נגן את הפלייליסט לפי הסדר"
             className="w-14 h-14 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-xl shadow-spotify-green/25"
           >
             <Play className="w-6 h-6 fill-current translate-x-0.5" />
+          </button>
+
+          <button
+            onClick={handleShufflePlay}
+            disabled={tracks.length === 0}
+            title={shuffleMode !== 'off' ? 'השמעה אקראית מופעלת' : 'נגן את כל הפלייליסט בערבוב אקראי'}
+            className={`flex items-center gap-2 px-4 py-3 rounded-full font-bold text-sm transition-all shadow-lg hover:scale-105 active:scale-95 ${
+              shuffleMode !== 'off'
+                ? 'bg-spotify-green text-black shadow-spotify-green/20'
+                : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
+            }`}
+          >
+            <div className="relative inline-flex items-center justify-center">
+              <Shuffle className="w-5 h-5" />
+              {shuffleMode === 'smart' && (
+                <Sparkles className="w-2.5 h-2.5 text-emerald-300 absolute -top-1 -right-1.5 animate-pulse" />
+              )}
+            </div>
+            <span>{shuffleMode === 'smart' ? 'ערבוב חכם ✨' : shuffleMode === 'standard' ? 'באקראי 🔀' : 'השמעה אקראית'}</span>
           </button>
         </div>
 

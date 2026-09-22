@@ -1,9 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowDownCircle, Trash2, HardDrive, Music, Play, CheckCircle2 } from 'lucide-react';
+import { ArrowDownCircle, Trash2, HardDrive, Music, Play, Shuffle, CheckCircle2 } from 'lucide-react';
 import { getAllOfflineTracks, deleteOfflineTrack, getOfflineStorageUsage } from '../services/offlineStorage';
 import { TrackRow } from './TrackRow';
 
-export function OfflineView({ currentTrack, isPlaying, onPlayTrack, likedSongs, onToggleLike, onTrackDeleted }) {
+export function OfflineView({
+  currentTrack,
+  isPlaying,
+  onPlayTrack,
+  likedSongs,
+  onToggleLike,
+  onTrackDeleted,
+  shuffleMode = 'off',
+  onToggleShuffle
+}) {
   const [tracks, setTracks] = useState([]);
   const [usage, setUsage] = useState({ formatted: '0 MB', count: 0 });
   const [loading, setLoading] = useState(true);
@@ -41,6 +50,15 @@ export function OfflineView({ currentTrack, isPlaying, onPlayTrack, likedSongs, 
     }
   };
 
+  const handleShufflePlay = () => {
+    if (tracks.length === 0) return;
+    if (shuffleMode === 'off' && onToggleShuffle) {
+      onToggleShuffle();
+    }
+    const randomIdx = Math.floor(Math.random() * tracks.length);
+    onPlayTrack(tracks[randomIdx], tracks, randomIdx);
+  };
+
   return (
     <div className="flex flex-col gap-6 animate-fadeIn pb-16 select-none">
       {/* Header */}
@@ -68,13 +86,29 @@ export function OfflineView({ currentTrack, isPlaying, onPlayTrack, likedSongs, 
         </div>
 
         {tracks.length > 0 && (
-          <button
-            onClick={handlePlayAll}
-            className="bg-spotify-green hover:bg-spotify-green-hover text-black font-bold px-6 py-3 rounded-full text-sm flex items-center gap-2 shadow-lg shadow-spotify-green/20 hover:scale-105 active:scale-95 transition-all"
-          >
-            <Play className="w-5 h-5 fill-current translate-x-0.5" />
-            <span>נגן הכל אופליין</span>
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handlePlayAll}
+              title="נגן את כל השירים לפי הסדר"
+              className="bg-spotify-green hover:bg-spotify-green-hover text-black font-bold px-6 py-3 rounded-full text-sm flex items-center gap-2 shadow-lg shadow-spotify-green/20 hover:scale-105 active:scale-95 transition-all"
+            >
+              <Play className="w-5 h-5 fill-current translate-x-0.5" />
+              <span>נגן הכל</span>
+            </button>
+
+            <button
+              onClick={handleShufflePlay}
+              title="השמעה אקראית של השירים השמורים"
+              className={`font-bold px-5 py-3 rounded-full text-sm flex items-center gap-2 shadow-lg hover:scale-105 active:scale-95 transition-all ${
+                shuffleMode !== 'off'
+                  ? 'bg-spotify-green text-black shadow-spotify-green/20'
+                  : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
+              }`}
+            >
+              <Shuffle className="w-4 h-4" />
+              <span>השמעה אקראית</span>
+            </button>
+          </div>
         )}
       </div>
 

@@ -86,7 +86,22 @@ export function PlayerBar({
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={onToggleShuffle}
+              title={shuffleMode === 'smart' ? 'ערבוב חכם ✨' : shuffleMode === 'standard' || isShuffle ? 'ערבוב רגיל' : 'ערבוב כבוי'}
+              className={`p-1.5 transition-colors ${
+                shuffleMode !== 'off' || isShuffle ? 'text-spotify-green' : 'text-spotify-subtext'
+              }`}
+            >
+              <div className="relative inline-flex items-center justify-center">
+                <Shuffle className="w-4 h-4" />
+                {shuffleMode === 'smart' && (
+                  <Sparkles className="w-2.5 h-2.5 text-emerald-300 absolute -top-1.5 -right-1.5 animate-pulse" />
+                )}
+              </div>
+            </button>
+
             <button
               onClick={() => onToggleLike(currentTrack)}
               className={`p-1.5 ${isLiked ? 'text-spotify-green' : 'text-spotify-subtext'}`}
