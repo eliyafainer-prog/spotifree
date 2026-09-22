@@ -268,6 +268,34 @@ export function useAudioPlayer() {
   }, [volume, isMuted]);
 
   /**
+   * Play track using native HTML5 Audio Element for direct authorized audio sources
+   * (Enables full native lock-screen background playback on Android & iOS)
+   */
+  const playViaAudioElement = useCallback(async (track, audioUrl) => {
+    if (!audioRef.current || !audioUrl) return;
+
+    activeEngineRef.current = 'audio';
+
+    // Pause YouTube iframe if it was active
+    if (ytPlayerRef.current?.pauseVideo) {
+      try { ytPlayerRef.current.pauseVideo(); } catch (e) {}
+    }
+
+    try {
+      audioRef.current.loop = false;
+      audioRef.current.src = audioUrl;
+      audioRef.current.currentTime = 0;
+      await audioRef.current.play();
+      setIsPlaying(true);
+      setIsLoading(false);
+      addRecentTrack(track);
+    } catch (err) {
+      console.warn('Direct audio playback error, falling back to YouTube player:', err);
+      playViaYouTubePlayer(track);
+    }
+  }, [playViaYouTubePlayer]);
+
+  /**
    * Play specific track from a given playlist or queue
    */
   const playTrack = useCallback(async (track, newQueue = null, indexInQueue = -1) => {
@@ -331,17 +359,8 @@ export function useAudioPlayer() {
     try {
       const offlineRecord = await getOfflineTrack(playableTrack);
       if (offlineRecord && offlineRecord.audioBlob && audioRef.current) {
-        activeEngineRef.current = 'audio';
-        if (ytPlayerRef.current?.pauseVideo) {
-          try { ytPlayerRef.current.pauseVideo(); } catch (e) {}
-        }
         const localBlobUrl = URL.createObjectURL(offlineRecord.audioBlob);
-        audioRef.current.src = localBlobUrl;
-        audioRef.current.currentTime = 0;
-        await audioRef.current.play();
-        setIsPlaying(true);
-        setIsLoading(false);
-        addRecentTrack(playableTrack);
+        await playViaAudioElement(playableTrack, localBlobUrl);
 
         if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
           prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
@@ -352,14 +371,25 @@ export function useAudioPlayer() {
       console.warn('Offline storage check skipped:', e);
     }
 
-    // 2. Play immediately via native client YouTube Player
+    // 2. Direct Authorized Audio Engine (e.g. track.audioUrl, /api/audio/:id, or licensed audio file)
+    const directAudioSource = playableTrack.audioUrl || playableTrack.streamUrl;
+    if (directAudioSource) {
+      await playViaAudioElement(playableTrack, directAudioSource);
+
+      if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
+        prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
+      }
+      return;
+    }
+
+    // 3. YouTube IFrame Engine (Standard online playback for YouTube catalog)
     playViaYouTubePlayer(playableTrack);
     addRecentTrack(playableTrack);
 
     if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
       prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
     }
-  }, [queue, playViaYouTubePlayer]);
+  }, [queue, playViaYouTubePlayer, playViaAudioElement]);
 
   /**
    * Toggle play / pause

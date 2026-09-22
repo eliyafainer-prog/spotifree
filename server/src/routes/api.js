@@ -131,6 +131,28 @@ router.get('/stream/pipe/:id', (req, res) => {
 });
 
 /**
+ * Direct authorized audio stream endpoint (for direct audio files, licensed catalogs, or self-hosted audio)
+ * Serves direct audio with native HTTP Range request support to HTMLAudioElement
+ */
+router.get('/audio/:id', (req, res) => {
+  const { id } = req.params;
+  const audioDir = path.join(__dirname, '../../audio');
+  const extensions = ['.mp3', '.m4a', '.aac', '.ogg', '.wav'];
+
+  for (const ext of extensions) {
+    const candidate = path.join(audioDir, `${id}${ext}`);
+    if (fs.existsSync(candidate)) {
+      return res.sendFile(candidate);
+    }
+  }
+
+  res.status(404).json({
+    error: 'No direct audio source available for this track ID',
+    trackId: id
+  });
+});
+
+/**
  * Prefetch stream URLs in the background for instant playback of next tracks
  */
 router.post('/stream/prefetch', (req, res) => {
