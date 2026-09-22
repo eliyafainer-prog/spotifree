@@ -672,6 +672,13 @@ export function useAudioPlayer() {
     prefetchUpcomingTracks(chosenIdx, true);
   }, [playTrack, prefetchUpcomingTracks]);
 
+  /**
+   * Add track to end of queue
+   */
+  const addToQueue = useCallback((track) => {
+    setQueue(prev => [...prev, track]);
+  }, []);
+
   return {
     currentTrack,
     isPlaying,
