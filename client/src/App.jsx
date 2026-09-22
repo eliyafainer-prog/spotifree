@@ -95,6 +95,12 @@ export default function App() {
     }
   }, [player, showToast]);
 
+  const handlePlayShuffled = useCallback((trackList) => {
+    if (!trackList || trackList.length === 0) return;
+    player.playShuffled(trackList);
+    showToast('🔀 השמעה אקראית: מופעלת (שירים מעורבבים ללא חזרות)');
+  }, [player, showToast]);
+
   // Offline Downloads state
   const [downloadedIds, setDownloadedIds] = useState(new Set());
   const [downloadingIds, setDownloadingIds] = useState(new Set());
@@ -637,6 +643,7 @@ export default function App() {
                 onOpenAddToPlaylist={handleOpenAddToPlaylist}
                 shuffleMode={player.shuffleMode}
                 onToggleShuffle={handleToggleShuffle}
+                onPlayShuffled={handlePlayShuffled}
               />
             )}
 
@@ -658,6 +665,7 @@ export default function App() {
                 onRemoveTrackFromPlaylist={handleRemoveTrackFromPlaylist}
                 shuffleMode={player.shuffleMode}
                 onToggleShuffle={handleToggleShuffle}
+                onPlayShuffled={handlePlayShuffled}
               />
             )}
 
@@ -672,6 +680,7 @@ export default function App() {
                 onTrackDeleted={refreshDownloads}
                 shuffleMode={player.shuffleMode}
                 onToggleShuffle={handleToggleShuffle}
+                onPlayShuffled={handlePlayShuffled}
               />
             )}
 
@@ -747,7 +756,18 @@ export default function App() {
         <SyncedLyrics
           lyricsData={lyricsData}
           currentTime={player.currentTime}
+          duration={player.duration}
+          isPlaying={player.isPlaying}
+          isLoading={player.isLoading}
           onSeek={player.seek}
+          onTogglePlay={player.togglePlay}
+          onNext={player.nextTrack}
+          onPrev={player.prevTrack}
+          isShuffle={player.isShuffle}
+          shuffleMode={player.shuffleMode}
+          onToggleShuffle={handleToggleShuffle}
+          isLiked={likedSongs.some(s => s.id === player.currentTrack?.id || (s.title === player.currentTrack?.title && s.artist === player.currentTrack?.artist))}
+          onToggleLike={handleToggleLike}
           onClose={() => setIsLyricsOpen(false)}
           currentTrack={player.currentTrack}
         />

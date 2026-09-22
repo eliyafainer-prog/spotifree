@@ -11,7 +11,8 @@ export function OfflineView({
   onToggleLike,
   onTrackDeleted,
   shuffleMode = 'off',
-  onToggleShuffle
+  onToggleShuffle,
+  onPlayShuffled
 }) {
   const [tracks, setTracks] = useState([]);
   const [usage, setUsage] = useState({ formatted: '0 MB', count: 0 });
@@ -52,11 +53,15 @@ export function OfflineView({
 
   const handleShufflePlay = () => {
     if (tracks.length === 0) return;
-    if (shuffleMode === 'off' && onToggleShuffle) {
-      onToggleShuffle();
+    if (onPlayShuffled) {
+      onPlayShuffled(tracks);
+    } else {
+      if (shuffleMode === 'off' && onToggleShuffle) {
+        onToggleShuffle();
+      }
+      const randomIdx = Math.floor(Math.random() * tracks.length);
+      onPlayTrack(tracks[randomIdx], tracks, randomIdx);
     }
-    const randomIdx = Math.floor(Math.random() * tracks.length);
-    onPlayTrack(tracks[randomIdx], tracks, randomIdx);
   };
 
   return (

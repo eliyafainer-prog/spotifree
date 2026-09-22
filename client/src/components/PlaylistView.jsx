@@ -17,7 +17,8 @@ export function PlaylistView({
   onOpenAddToPlaylist,
   onRemoveTrackFromPlaylist,
   shuffleMode = 'off',
-  onToggleShuffle
+  onToggleShuffle,
+  onPlayShuffled
 }) {
   if (!playlist) return null;
 
@@ -31,11 +32,15 @@ export function PlaylistView({
 
   const handleShufflePlay = () => {
     if (tracks.length === 0) return;
-    if (shuffleMode === 'off' && onToggleShuffle) {
-      onToggleShuffle();
+    if (onPlayShuffled) {
+      onPlayShuffled(tracks);
+    } else {
+      if (shuffleMode === 'off' && onToggleShuffle) {
+        onToggleShuffle();
+      }
+      const randomIdx = Math.floor(Math.random() * tracks.length);
+      onPlayTrack(tracks[randomIdx], tracks, randomIdx);
     }
-    const randomIdx = Math.floor(Math.random() * tracks.length);
-    onPlayTrack(tracks[randomIdx], tracks, randomIdx);
   };
 
   const isAlbum = playlist.type?.toLowerCase() === 'album';

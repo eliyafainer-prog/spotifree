@@ -268,6 +268,45 @@ export function useAudioPlayer() {
   }, [volume, isMuted]);
 
   /**
+   * Proactively resolve & prefetch upcoming tracks for zero-latency instant playback
+   */
+  const prefetchUpcomingTracks = useCallback((currentIdx, isShuffle = false) => {
+    const q = queueRef.current;
+    if (!q || q.length === 0) return;
+
+    let targetTracks = [];
+    if (isShuffle && shuffledIndicesRef.current.length > 0) {
+      const curPos = shufflePosRef.current;
+      const upcomingIndices = shuffledIndicesRef.current.slice(curPos + 1, curPos + 4);
+      targetTracks = upcomingIndices.map(idx => q[idx]).filter(Boolean);
+    } else if (currentIdx >= 0) {
+      targetTracks = q.slice(currentIdx + 1, currentIdx + 4);
+    }
+
+    if (targetTracks.length === 0) return;
+
+    // 1. Proactively resolve upcoming tracks so their YouTube videoId is cached beforehand
+    targetTracks.forEach(t => {
+      const needsResolve = !t.streamableId && (!t.id || t.id.startsWith('sp_'));
+      if (needsResolve) {
+        resolveTrack(t).then(res => {
+          if (res && res.streamableId) {
+            t.originalId = t.id;
+            t.streamableId = res.streamableId;
+            t.id = res.streamableId;
+            if (res.thumbnail) t.thumbnail = res.thumbnail;
+            if (res.durationSeconds) t.durationSeconds = res.durationSeconds;
+            updateTrackInPlaylists(t);
+          }
+        }).catch(() => {});
+      }
+    });
+
+    // 2. Prefetch audio stream URLs on the backend
+    prefetchNextTracks(targetTracks);
+  }, []);
+
+  /**
    * Play specific track from a given playlist or queue
    */
   const playTrack = useCallback(async (track, newQueue = null, indexInQueue = -1) => {
@@ -343,9 +382,7 @@ export function useAudioPlayer() {
         setIsLoading(false);
         addRecentTrack(playableTrack);
 
-        if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
-          prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
-        }
+        prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
         return;
       }
     } catch (e) {
@@ -356,10 +393,8 @@ export function useAudioPlayer() {
     playViaYouTubePlayer(playableTrack);
     addRecentTrack(playableTrack);
 
-    if (targetIdx >= 0 && targetIdx + 1 < currentQ.length) {
-      prefetchNextTracks(currentQ.slice(targetIdx + 1, targetIdx + 3));
-    }
-  }, [queue, playViaYouTubePlayer]);
+    prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
+  }, [queue, playViaYouTubePlayer, prefetchUpcomingTracks]);
 
   /**
    * Toggle play / pause
@@ -463,13 +498,9 @@ export function useAudioPlayer() {
       }
 
       if (nextPos >= shuffledIndicesRef.current.length) {
-        if (shuffleModeRef.current === 'smart' || repeatModeRef.current === 'all') {
-          // Autoplay & loop: reshuffle and continue without silence!
-          shuffledIndicesRef.current = generateShuffledDeck(queueRef.current.length, -1);
-          nextPos = 0;
-        } else {
-          return; // End of queue in regular shuffle
-        }
+        // Continuous non-repeating loop: reshuffle smoothly so playback never abruptly dies
+        shuffledIndicesRef.current = generateShuffledDeck(queueRef.current.length, -1);
+        nextPos = 0;
       }
 
       shufflePosRef.current = nextPos;
@@ -478,6 +509,7 @@ export function useAudioPlayer() {
         setQueueIndex(targetQueueIdx);
         queueIndexRef.current = targetQueueIdx;
         playTrack(q[targetQueueIdx]);
+        prefetchUpcomingTracks(targetQueueIdx, true);
       }
       return;
     }
@@ -495,7 +527,8 @@ export function useAudioPlayer() {
     setQueueIndex(nextIdx);
     queueIndexRef.current = nextIdx;
     playTrack(q[nextIdx]);
-  }, [playTrack, fetchSmartRecommendations]);
+    prefetchUpcomingTracks(nextIdx, false);
+  }, [playTrack, fetchSmartRecommendations, prefetchUpcomingTracks]);
 
   nextTrackRef.current = nextTrack;
 
@@ -614,11 +647,30 @@ export function useAudioPlayer() {
   }, []);
 
   /**
-   * Add track to end of queue
+   * Dedicated instant non-repeating shuffle start with prefetching
    */
-  const addToQueue = useCallback((track) => {
-    setQueue(prev => [...prev, track]);
-  }, []);
+  const playShuffled = useCallback((trackList, startIdx = -1) => {
+    if (!trackList || trackList.length === 0) return;
+
+    const chosenIdx = startIdx >= 0 && startIdx < trackList.length
+      ? startIdx
+      : Math.floor(Math.random() * trackList.length);
+
+    setShuffleMode('standard');
+    shuffleModeRef.current = 'standard';
+
+    const deck = generateShuffledDeck(trackList.length, chosenIdx);
+    shuffledIndicesRef.current = deck;
+    shufflePosRef.current = 0;
+
+    setQueue(trackList);
+    queueRef.current = trackList;
+    setQueueIndex(chosenIdx);
+    queueIndexRef.current = chosenIdx;
+
+    playTrack(trackList[chosenIdx]);
+    prefetchUpcomingTracks(chosenIdx, true);
+  }, [playTrack, prefetchUpcomingTracks]);
 
   return {
     currentTrack,
@@ -634,6 +686,7 @@ export function useAudioPlayer() {
     queue,
     queueIndex,
     playTrack,
+    playShuffled,
     togglePlay,
     nextTrack,
     prevTrack,
