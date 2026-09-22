@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Search,
   PlusCircle,
@@ -8,6 +8,7 @@ import {
   Flame,
   Clock,
   Play,
+  Pause,
   Loader2,
   ExternalLink,
   Volume2,
