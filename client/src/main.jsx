@@ -28,6 +28,16 @@ class ErrorBoundary extends React.Component {
           <p className="text-spotify-subtext text-sm max-w-md mb-6">
             נראה שהדפדפן שמר גרסה ישנה במטמון או חלה שגיאה זמנית. רענון קצר יפתור את הבעיה.
           </p>
+
+          {this.state.error && (
+            <div className="mb-6 p-4 bg-red-950/40 border border-red-500/30 rounded-xl text-red-300 text-xs font-mono max-w-lg overflow-x-auto text-left select-text" dir="ltr">
+              <div className="font-bold text-red-400 mb-1">{this.state.error.name}: {this.state.error.message}</div>
+              {this.state.error.stack && (
+                <div className="text-[11px] opacity-70 whitespace-pre-wrap">{this.state.error.stack.slice(0, 300)}</div>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <button
               onClick={() => window.location.reload()}
