@@ -14,7 +14,10 @@
   </head>
   <body class="bg-spotify-base text-white antialiased overflow-hidden select-none">
     <div id="root"></div>
-    <!-- Audio playback is handled by HTML5 Audio element (no YouTube SDK needed) -->
+    <div id="spotifree-yt-player-container" style="position:fixed;bottom:0;left:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:0;overflow:hidden">
+      <div id="spotifree-yt-player"></div>
+    </div>
+    <script src="https://www.youtube.com/iframe_api"></script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
