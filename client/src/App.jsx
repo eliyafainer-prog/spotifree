@@ -145,8 +145,8 @@ export default function App() {
     isPlaying: player.isPlaying,
     duration: player.duration,
     currentTime: player.currentTime,
-    onPlay: player.togglePlay,
-    onPause: player.togglePlay,
+    onPlay: player.play,
+    onPause: player.pause,
     onNext: player.nextTrack,
     onPrev: player.prevTrack,
     onSeek: player.seek

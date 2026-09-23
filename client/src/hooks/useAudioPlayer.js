@@ -437,27 +437,50 @@ export function useAudioPlayer() {
   }, [queue, playViaYouTubePlayer, prefetchUpcomingTracks]);
 
   /**
+   * Explicit Play handler (crucial for MediaSession lock-screen controls)
+   */
+  const play = useCallback(() => {
+    if (audioRef.current) {
+      try {
+        audioRef.current.play().catch(() => {});
+      } catch (e) {}
+    }
+    if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
+      try {
+        ytPlayerRef.current.playVideo();
+      } catch (e) {}
+    } else if (audioRef.current) {
+      audioRef.current.play().catch(() => {});
+    }
+  }, []);
+
+  /**
+   * Explicit Pause handler
+   */
+  const pause = useCallback(() => {
+    if (audioRef.current) {
+      try {
+        audioRef.current.pause();
+      } catch (e) {}
+    }
+    if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
+      try {
+        ytPlayerRef.current.pauseVideo();
+      } catch (e) {}
+    }
+  }, []);
+
+  /**
    * Toggle play / pause
    */
   const togglePlay = useCallback(() => {
     if (!currentTrack) return;
-
-    if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
-      try {
-        if (isPlaying) {
-          ytPlayerRef.current.pauseVideo();
-        } else {
-          ytPlayerRef.current.playVideo();
-        }
-      } catch (e) {}
-    } else if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play().catch(e => console.error('Play failed:', e));
-      }
+    if (isPlaying) {
+      pause();
+    } else {
+      play();
     }
-  }, [isPlaying, currentTrack]);
+  }, [isPlaying, currentTrack, play, pause]);
 
   /**
    * Fetch similar tracks by artist for Smart Shuffle ✨
@@ -734,6 +757,8 @@ export function useAudioPlayer() {
     queueIndex,
     playTrack,
     playShuffled,
+    play,
+    pause,
     togglePlay,
     nextTrack,
     prevTrack,
