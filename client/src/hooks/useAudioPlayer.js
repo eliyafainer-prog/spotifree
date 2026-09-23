@@ -245,23 +245,8 @@ export function useAudioPlayer() {
                   } catch (err) {}
                   setIsPlaying(true);
                   setIsLoading(false);
-                  userPausedRef.current = false;
                 } else if (e.data === 2) { // PAUSED
-                  if (!userPausedRef.current) {
-                    // This was triggered by Android minimizing to bubble or screen lock!
-                    setTimeout(() => {
-                      if (!userPausedRef.current && ytPlayerRef.current?.playVideo) {
-                        try {
-                          if (typeof ytPlayerRef.current.unMute === 'function') {
-                            ytPlayerRef.current.unMute();
-                          }
-                          ytPlayerRef.current.playVideo();
-                        } catch (err) {}
-                      }
-                    }, 80);
-                  } else {
-                    setIsPlaying(false);
-                  }
+                  setIsPlaying(false);
                 } else if (e.data === 0) { // ENDED
                   nextTrackRef.current?.();
                 } else if (e.data === 3) { // BUFFERING
@@ -468,14 +453,11 @@ export function useAudioPlayer() {
    * Explicit Play handler (crucial for MediaSession lock-screen controls)
    */
   const play = useCallback(() => {
-    userPausedRef.current = false;
-    if (audioRef.current) {
-      try {
-        audioRef.current.play().catch(() => {});
-      } catch (e) {}
-    }
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
+        if (typeof ytPlayerRef.current.unMute === 'function') {
+          ytPlayerRef.current.unMute();
+        }
         ytPlayerRef.current.playVideo();
       } catch (e) {}
     } else if (audioRef.current) {
@@ -487,16 +469,12 @@ export function useAudioPlayer() {
    * Explicit Pause handler
    */
   const pause = useCallback(() => {
-    userPausedRef.current = true;
-    if (audioRef.current) {
-      try {
-        audioRef.current.pause();
-      } catch (e) {}
-    }
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         ytPlayerRef.current.pauseVideo();
       } catch (e) {}
+    } else if (audioRef.current) {
+      audioRef.current.pause();
     }
   }, []);
 
