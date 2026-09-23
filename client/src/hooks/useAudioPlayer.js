@@ -19,11 +19,8 @@ function generateShuffledDeck(length, startingIndex = -1) {
 
 export function useAudioPlayer() {
   const audioRef = useRef(null);
-  const ytPlayerRef = useRef(null);
-  const ytTimerRef = useRef(null);
-  const activeEngineRef = useRef('audio');
-  const fallbackTimerRef = useRef(null);
   const nextTrackRef = useRef(null);
+  const fallbackTimerRef = useRef(null);
 
   const [currentTrack, setCurrentTrack] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -67,45 +64,57 @@ export function useAudioPlayer() {
     const audio = new Audio();
     audio.preload = 'auto';
     audio.playsInline = true;
+    audio.crossOrigin = 'anonymous';
     audio.volume = isMuted ? 0 : volume;
     audioRef.current = audio;
 
     const handleTimeUpdate = () => {
-      if (activeEngineRef.current === 'audio') {
-        setCurrentTime(audio.currentTime);
-      }
+      setCurrentTime(audio.currentTime);
     };
 
     const handleDurationChange = () => {
-      if (activeEngineRef.current === 'audio' && audio.duration && !isNaN(audio.duration)) {
+      if (audio.duration && !isNaN(audio.duration)) {
         setDuration(audio.duration);
       }
     };
 
     const handleWaiting = () => {
-      if (activeEngineRef.current === 'audio') setIsLoading(true);
+      setIsLoading(true);
     };
 
     const handleCanPlay = () => {
-      if (activeEngineRef.current === 'audio') setIsLoading(false);
+      setIsLoading(false);
     };
 
     const handlePlay = () => {
-      if (activeEngineRef.current === 'audio') {
-        setIsPlaying(true);
-        setIsLoading(false);
-      }
+      setIsPlaying(true);
+      setIsLoading(false);
     };
 
     const handlePause = () => {
-      if (activeEngineRef.current === 'audio') {
-        setIsPlaying(false);
-      }
+      setIsPlaying(false);
     };
 
     const handleEnded = () => {
-      if (activeEngineRef.current === 'audio') {
-        nextTrackRef.current?.();
+      nextTrackRef.current?.();
+    };
+
+    // Auto-retry once on stream error (CDN URL may have expired)
+    let retried = false;
+    const handleError = () => {
+      if (!retried && audio.src && !audio.src.startsWith('data:') && !audio.src.startsWith('blob:')) {
+        retried = true;
+        console.warn('[Audio] Stream error, retrying once...');
+        const currentSrc = audio.src;
+        // Add cache-busting param to force fresh URL resolution on the server
+        const retrySrc = currentSrc.includes('?')
+          ? `${currentSrc}&_retry=${Date.now()}`
+          : `${currentSrc}?_retry=${Date.now()}`;
+        audio.src = retrySrc;
+        audio.load();
+        audio.play().catch(() => {});
+      } else {
+        setIsLoading(false);
       }
     };
 
@@ -116,6 +125,7 @@ export function useAudioPlayer() {
     audio.addEventListener('play', handlePlay);
     audio.addEventListener('pause', handlePause);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
 
     return () => {
       audio.pause();
@@ -126,146 +136,47 @@ export function useAudioPlayer() {
       audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
     };
   }, []);
 
-  // Sync volume changes to both players
+  // Sync volume changes to audio element
   useEffect(() => {
     const vol = isMuted ? 0 : volume;
     if (audioRef.current) {
       audioRef.current.volume = vol;
     }
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === 'function') {
-      try {
-        ytPlayerRef.current.setVolume(vol * 100);
-      } catch (e) {}
-    }
     localStorage.setItem('spotifree_volume', volume.toString());
   }, [volume, isMuted]);
 
-  // Track timer polling when playing via YouTube
-  useEffect(() => {
-    if (isPlaying && activeEngineRef.current === 'yt') {
-      ytTimerRef.current = setInterval(() => {
-        if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
-          try {
-            const cur = ytPlayerRef.current.getCurrentTime() || 0;
-            const dur = ytPlayerRef.current.getDuration() || 0;
-            setCurrentTime(cur);
-            if (dur > 0) setDuration(dur);
-          } catch (e) {}
-        }
-      }, 250);
-    } else {
-      if (ytTimerRef.current) clearInterval(ytTimerRef.current);
-    }
-    return () => {
-      if (ytTimerRef.current) clearInterval(ytTimerRef.current);
-    };
-  }, [isPlaying]);
-
-  // Initialize YouTube Player immediately on mount so it's warm and ready for instant playback
-  useEffect(() => {
-    let checkTimer = null;
-    const initYT = () => {
-      if (!window.YT || !window.YT.Player) {
-        checkTimer = setTimeout(initYT, 200);
-        return;
-      }
-      if (!ytPlayerRef.current) {
-        try {
-          ytPlayerRef.current = new window.YT.Player('spotifree-yt-player', {
-            height: '100',
-            width: '100',
-            playerVars: {
-              autoplay: 0,
-              controls: 0,
-              disablekb: 1,
-              fs: 0,
-              playsinline: 1,
-              rel: 0
-            },
-            events: {
-              onReady: (e) => {
-                try {
-                  e.target.setVolume(isMuted ? 0 : volume * 100);
-                } catch (err) {}
-              },
-              onStateChange: (e) => {
-                if (e.data === 1) { // PLAYING
-                  setIsPlaying(true);
-                  setIsLoading(false);
-                } else if (e.data === 2) { // PAUSED
-                  setIsPlaying(false);
-                } else if (e.data === 0) { // ENDED
-                  nextTrackRef.current?.();
-                } else if (e.data === 3) { // BUFFERING
-                  setIsLoading(true);
-                }
-              },
-              onError: (err) => {
-                console.warn('YouTube playback error:', err);
-                setIsLoading(false);
-              }
-            }
-          });
-        } catch (e) {
-          console.error('Failed to init YT player on mount:', e);
-        }
-      }
-    };
-
-    initYT();
-    return () => {
-      if (checkTimer) clearTimeout(checkTimer);
-    };
-  }, []);
-
   /**
-   * Play track using client-side YouTube Player API (100% immune to cloud datacenter IP blocks!)
+   * Play track via HTML5 <audio> element streaming from our server proxy.
+   * The server's /api/stream/pipe/:id endpoint handles yt-dlp extraction,
+   * HTTP Range Requests, and serves audio/mp4 — enabling mobile background playback.
    */
-  const playViaYouTubePlayer = useCallback((track) => {
+  const playViaAudioElement = useCallback((track) => {
     if (!track || !track.id) return;
 
-    // Keep silent audio playing on HTML5 audio to keep mediaSession and background audio session active
-    if (audioRef.current) {
-      try {
-        audioRef.current.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-        audioRef.current.loop = true;
-        audioRef.current.play().catch(() => {});
-      } catch (e) {}
-    }
+    const audio = audioRef.current;
+    if (!audio) return;
 
-    activeEngineRef.current = 'yt';
     setIsLoading(true);
 
-    const onPlayerReady = (player) => {
-      try {
-        player.setVolume(isMuted ? 0 : volume * 100);
-        player.loadVideoById(track.id);
-        player.playVideo();
-      } catch (e) {
-        console.error('Error in YT play:', e);
-        setIsLoading(false);
-      }
-    };
+    // Build stream URL through our server proxy
+    const audioUrl = getPlayableAudioUrl(track);
 
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
-      onPlayerReady(ytPlayerRef.current);
-    } else {
-      let attempts = 0;
-      const retry = setInterval(() => {
-        attempts++;
-        if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
-          clearInterval(retry);
-          onPlayerReady(ytPlayerRef.current);
-        } else if (attempts > 25) {
-          clearInterval(retry);
-          setIsLoading(false);
-        }
-      }, 100);
-    }
-  }, [volume, isMuted]);
+    // Stop current playback cleanly
+    audio.pause();
+    audio.currentTime = 0;
+
+    // Set new source and play
+    audio.src = audioUrl;
+    audio.load();
+    audio.play().catch(e => {
+      console.error('Audio play failed:', e);
+      setIsLoading(false);
+    });
+  }, []);
 
   /**
    * Proactively resolve & prefetch upcoming tracks for zero-latency instant playback
@@ -370,11 +281,8 @@ export function useAudioPlayer() {
     try {
       const offlineRecord = await getOfflineTrack(playableTrack);
       if (offlineRecord && offlineRecord.audioBlob && audioRef.current) {
-        activeEngineRef.current = 'audio';
-        if (ytPlayerRef.current?.pauseVideo) {
-          try { ytPlayerRef.current.pauseVideo(); } catch (e) {}
-        }
         const localBlobUrl = URL.createObjectURL(offlineRecord.audioBlob);
+        audioRef.current.pause();
         audioRef.current.src = localBlobUrl;
         audioRef.current.currentTime = 0;
         await audioRef.current.play();
@@ -389,12 +297,12 @@ export function useAudioPlayer() {
       console.warn('Offline storage check skipped:', e);
     }
 
-    // 2. Play immediately via native client YouTube Player
-    playViaYouTubePlayer(playableTrack);
+    // 2. Play via HTML5 Audio element streaming from our server
+    playViaAudioElement(playableTrack);
     addRecentTrack(playableTrack);
 
     prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
-  }, [queue, playViaYouTubePlayer, prefetchUpcomingTracks]);
+  }, [queue, playViaAudioElement, prefetchUpcomingTracks]);
 
   /**
    * Toggle play / pause
@@ -402,15 +310,7 @@ export function useAudioPlayer() {
   const togglePlay = useCallback(() => {
     if (!currentTrack) return;
 
-    if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
-      try {
-        if (isPlaying) {
-          ytPlayerRef.current.pauseVideo();
-        } else {
-          ytPlayerRef.current.playVideo();
-        }
-      } catch (e) {}
-    } else if (audioRef.current) {
+    if (audioRef.current) {
       if (isPlaying) {
         audioRef.current.pause();
       } else {
@@ -464,13 +364,7 @@ export function useAudioPlayer() {
     if (q.length === 0) return;
 
     if (repeatModeRef.current === 'one') {
-      if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
-        try {
-          ytPlayerRef.current.seekTo(0, true);
-          ytPlayerRef.current.playVideo();
-          return;
-        } catch (e) {}
-      } else if (audioRef.current) {
+      if (audioRef.current) {
         audioRef.current.currentTime = 0;
         audioRef.current.play();
         return;
@@ -537,9 +431,7 @@ export function useAudioPlayer() {
    */
   const prevTrack = useCallback(() => {
     if (currentTime > 3) {
-      if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
-        try { ytPlayerRef.current.seekTo(0, true); } catch (e) {}
-      } else if (audioRef.current) {
+      if (audioRef.current) {
         audioRef.current.currentTime = 0;
       }
       setCurrentTime(0);
@@ -580,12 +472,7 @@ export function useAudioPlayer() {
    * Seek to timestamp in seconds
    */
   const seek = useCallback((seconds) => {
-    if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
-      try {
-        ytPlayerRef.current.seekTo(seconds, true);
-        setCurrentTime(seconds);
-      } catch (e) {}
-    } else if (audioRef.current) {
+    if (audioRef.current) {
       audioRef.current.currentTime = seconds;
       setCurrentTime(seconds);
     }

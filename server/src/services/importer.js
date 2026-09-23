@@ -337,6 +337,9 @@ function scoreCandidate(cand, track) {
   return score;
 }
 
+const resolveMemCache = new Map();
+const MAX_RESOLVE_CACHE = 1000;
+
 /**
  * Resolve a track to a streamable audio ID (matches Spotify track to exact YouTube studio version and artwork)
  */
@@ -349,40 +352,30 @@ async function resolveTrackToStreamableId(track) {
     };
   }
 
-  const query = track.query || `${track.artist} - ${track.title}`.trim();
-
-  // 1. Fetch individual studio cover from Deezer in parallel
-  let albumCover = null;
-  try {
-    const dRes = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`, { timeout: 2500 });
-    albumCover = dRes.data?.data?.[0]?.album?.cover_medium || null;
-  } catch (e) {}
-
-  // 2. Multi-tier search: Target studio releases, official audio, and clean query
-  const candidatesMap = new Map();
-
-  const searchQueries = [
-    `${track.artist} ${track.title} official audio`,
-    query,
-    `${track.title} ${track.album || ''}`.trim()
-  ].filter(Boolean);
-
-  for (const sq of searchQueries) {
-    try {
-      const results = await searchTracks(sq, 8);
-      if (Array.isArray(results)) {
-        for (const item of results) {
-          const vidId = item.id || item.videoId;
-          if (vidId && !candidatesMap.has(vidId)) {
-            candidatesMap.set(vidId, item);
-          }
-        }
-      }
-      if (candidatesMap.size >= 12) break;
-    } catch (e) {}
+  const cacheKey = `${track.artist || ''}:::${track.title || ''}`.trim().toLowerCase();
+  if (resolveMemCache.has(cacheKey)) {
+    return resolveMemCache.get(cacheKey);
   }
 
-  const allCandidates = Array.from(candidatesMap.values());
+  const query = track.query || `${track.artist} - ${track.title}`.trim();
+
+  // 1. Fetch individual studio cover in parallel with audio resolution (non-blocking, fast 1000ms timeout)
+  const coverPromise = (track.thumbnail && !track.thumbnail.includes('default') && !track.thumbnail.includes('spotifree'))
+    ? Promise.resolve(track.thumbnail)
+    : axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`, { timeout: 1200 })
+        .then(dRes => dRes.data?.data?.[0]?.album?.cover_medium || null)
+        .catch(() => null);
+
+  // 2. High-accuracy single search (with instant fallback if empty)
+  const searchPromise = (async () => {
+    let results = await searchTracks(query, 12);
+    if (!results || results.length === 0) {
+      results = await searchTracks(`${track.title} ${track.artist}`.trim(), 10);
+    }
+    return results || [];
+  })();
+
+  const [albumCover, allCandidates] = await Promise.all([coverPromise, searchPromise]);
 
   if (allCandidates.length === 0) {
     throw new Error(`לא נמצא מקור שמע עבור: ${track.title}`);
@@ -396,11 +389,19 @@ async function resolveTrackToStreamableId(track) {
 
   const topMatch = scored[0].cand;
 
-  return {
+  const resolutionResult = {
     streamableId: topMatch.id || topMatch.videoId,
     thumbnail: albumCover || topMatch.thumbnail || topMatch.image || `https://i.ytimg.com/vi/${topMatch.id}/hqdefault.jpg`,
     durationSeconds: topMatch.durationSeconds || track.durationSeconds || 0
   };
+
+  if (resolveMemCache.size >= MAX_RESOLVE_CACHE) {
+    const oldestKey = resolveMemCache.keys().next().value;
+    resolveMemCache.delete(oldestKey);
+  }
+  resolveMemCache.set(cacheKey, resolutionResult);
+
+  return resolutionResult;
 }
 
 module.exports = {

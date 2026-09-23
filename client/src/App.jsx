@@ -235,14 +235,41 @@ export default function App() {
     return () => { isMounted = false; };
   }, [player.currentTrack]);
 
-  // Handle Search input and proactively prefetch top results
+  // Live debounced search as the user types (320ms)
+  useEffect(() => {
+    if (currentView !== 'search') return;
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setIsSearching(true);
+      searchTracks(trimmed)
+        .then(results => {
+          setSearchResults(results);
+          if (results && results.length > 0) {
+            prefetchNextTracks(results.slice(0, 4));
+          }
+        })
+        .catch(err => console.error('Live search error:', err))
+        .finally(() => setIsSearching(false));
+    }, 320);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, currentView]);
+
+  // Handle immediate Search submit on Enter
   const handleSearchSubmit = async (e) => {
     e?.preventDefault();
-    if (!searchQuery.trim()) return;
+    const trimmed = searchQuery.trim();
+    if (!trimmed) return;
 
     setIsSearching(true);
     try {
-      const results = await searchTracks(searchQuery.trim());
+      const results = await searchTracks(trimmed);
       setSearchResults(results);
       if (results && results.length > 0) {
         prefetchNextTracks(results.slice(0, 4));

@@ -1,14 +1,32 @@
 const API_BASE = '/api';
 
+// In-Memory Client Caches for 0ms repeat searches and resolutions
+const clientSearchCache = new Map();
+const clientResolveCache = new Map();
+
 /**
- * Search tracks
+ * Search tracks with client-side caching
  */
 export async function searchTracks(query) {
   if (!query || !query.trim()) return [];
-  const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+  const key = query.trim().toLowerCase();
+
+  if (clientSearchCache.has(key)) {
+    return clientSearchCache.get(key);
+  }
+
+  const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query.trim())}`);
   if (!res.ok) throw new Error('Search failed');
   const data = await res.json();
-  return data.tracks || [];
+  const tracks = data.tracks || [];
+
+  if (clientSearchCache.size > 200) {
+    const oldest = clientSearchCache.keys().next().value;
+    clientSearchCache.delete(oldest);
+  }
+  clientSearchCache.set(key, tracks);
+
+  return tracks;
 }
 
 /**
@@ -113,12 +131,24 @@ export async function resolveTrack(track) {
     return { streamableId: track.id, thumbnail: track.thumbnail };
   }
 
+  const key = `${track.artist || ''}:::${track.title || ''}`.trim().toLowerCase();
+  if (clientResolveCache.has(key)) {
+    return clientResolveCache.get(key);
+  }
+
   const res = await fetch(`${API_BASE}/resolve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ track })
   });
   if (!res.ok) throw new Error('Failed to resolve track to streamable source');
-  return await res.json();
-}
+  const data = await res.json();
 
+  if (clientResolveCache.size > 500) {
+    const oldest = clientResolveCache.keys().next().value;
+    clientResolveCache.delete(oldest);
+  }
+  clientResolveCache.set(key, data);
+
+  return data;
+}
