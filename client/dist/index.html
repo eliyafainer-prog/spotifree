@@ -10,9 +10,20 @@
     <meta name="apple-mobile-web-app-title" content="SpotiFree" />
     <meta name="description" content="Free, ad-free Spotify clone with headphone controls, playlist import & synced lyrics" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <script>
+      // Background Play Shield: Overrides visibility and blur so YouTube iframe never auto-pauses
+      try {
+        Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+        Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+        Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
+      } catch (e) {}
+      window.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
+      window.addEventListener('webkitvisibilitychange', (e) => e.stopImmediatePropagation(), true);
+      window.addEventListener('blur', (e) => e.stopImmediatePropagation(), true);
+    </script>
     <title>SpotiFree — Ad-Free Music</title>
-    <script type="module" crossorigin src="/assets/index-BRr1Lv6w.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-n_QOCKM-.css">
+    <script type="module" crossorigin src="/assets/index-Cgp89ClN.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DV13iKJ-.css">
   </head>
   <body class="bg-spotify-base text-white antialiased overflow-hidden select-none">
     <div id="root"></div>

@@ -24,6 +24,7 @@ export function useAudioPlayer() {
   const activeEngineRef = useRef('audio');
   const fallbackTimerRef = useRef(null);
   const nextTrackRef = useRef(null);
+  const userPausedRef = useRef(false);
 
   const [currentTrack, setCurrentTrack] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -235,8 +236,18 @@ export function useAudioPlayer() {
                 if (e.data === 1) { // PLAYING
                   setIsPlaying(true);
                   setIsLoading(false);
+                  userPausedRef.current = false;
                 } else if (e.data === 2) { // PAUSED
-                  setIsPlaying(false);
+                  if (!userPausedRef.current) {
+                    // This was triggered by Android minimizing to bubble or screen lock!
+                    setTimeout(() => {
+                      if (!userPausedRef.current && ytPlayerRef.current?.playVideo) {
+                        try { ytPlayerRef.current.playVideo(); } catch (err) {}
+                      }
+                    }, 80);
+                  } else {
+                    setIsPlaying(false);
+                  }
                 } else if (e.data === 0) { // ENDED
                   nextTrackRef.current?.();
                 } else if (e.data === 3) { // BUFFERING
@@ -351,6 +362,7 @@ export function useAudioPlayer() {
    */
   const playTrack = useCallback(async (track, newQueue = null, indexInQueue = -1) => {
     if (!track) return;
+    userPausedRef.current = false;
     if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
 
     const currentQ = newQueue || queueRef.current;
@@ -440,6 +452,7 @@ export function useAudioPlayer() {
    * Explicit Play handler (crucial for MediaSession lock-screen controls)
    */
   const play = useCallback(() => {
+    userPausedRef.current = false;
     if (audioRef.current) {
       try {
         audioRef.current.play().catch(() => {});
@@ -458,6 +471,7 @@ export function useAudioPlayer() {
    * Explicit Pause handler
    */
   const pause = useCallback(() => {
+    userPausedRef.current = true;
     if (audioRef.current) {
       try {
         audioRef.current.pause();
