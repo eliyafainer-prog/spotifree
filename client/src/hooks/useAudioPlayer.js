@@ -216,10 +216,10 @@ export function useAudioPlayer() {
       if (!ytPlayerRef.current) {
         try {
           ytPlayerRef.current = new window.YT.Player('spotifree-yt-player', {
-            height: '100',
-            width: '100',
+            height: '300',
+            width: '300',
             playerVars: {
-              autoplay: 0,
+              autoplay: 1,
               controls: 0,
               disablekb: 1,
               fs: 0,
@@ -229,11 +229,20 @@ export function useAudioPlayer() {
             events: {
               onReady: (e) => {
                 try {
+                  if (typeof e.target.unMute === 'function') {
+                    e.target.unMute();
+                  }
                   e.target.setVolume(isMuted ? 0 : volume * 100);
                 } catch (err) {}
               },
               onStateChange: (e) => {
                 if (e.data === 1) { // PLAYING
+                  try {
+                    if (typeof e.target.unMute === 'function') {
+                      e.target.unMute();
+                    }
+                    e.target.setVolume(isMuted ? 0 : volume * 100);
+                  } catch (err) {}
                   setIsPlaying(true);
                   setIsLoading(false);
                   userPausedRef.current = false;
@@ -242,7 +251,12 @@ export function useAudioPlayer() {
                     // This was triggered by Android minimizing to bubble or screen lock!
                     setTimeout(() => {
                       if (!userPausedRef.current && ytPlayerRef.current?.playVideo) {
-                        try { ytPlayerRef.current.playVideo(); } catch (err) {}
+                        try {
+                          if (typeof ytPlayerRef.current.unMute === 'function') {
+                            ytPlayerRef.current.unMute();
+                          }
+                          ytPlayerRef.current.playVideo();
+                        } catch (err) {}
                       }
                     }, 80);
                   } else {
@@ -278,12 +292,11 @@ export function useAudioPlayer() {
   const playViaYouTubePlayer = useCallback((track) => {
     if (!track || !track.id) return;
 
-    // Keep silent audio playing on HTML5 audio to keep mediaSession and background audio session active
+    // Pause audioRef so it doesn't steal audio focus from YouTube player
     if (audioRef.current) {
       try {
-        audioRef.current.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-        audioRef.current.loop = true;
-        audioRef.current.play().catch(() => {});
+        audioRef.current.pause();
+        audioRef.current.src = '';
       } catch (e) {}
     }
 
@@ -292,6 +305,9 @@ export function useAudioPlayer() {
 
     const onPlayerReady = (player) => {
       try {
+        if (typeof player.unMute === 'function') {
+          player.unMute();
+        }
         player.setVolume(isMuted ? 0 : volume * 100);
         player.loadVideoById(track.id);
         player.playVideo();
