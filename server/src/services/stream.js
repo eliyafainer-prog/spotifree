@@ -142,7 +142,7 @@ function extractWithWorker(target, isPriority = true) {
         pendingRequests.delete(id);
         extractStreamWithYtDlp(target).then(resolve).catch(reject);
       }
-    }, 7000);
+    }, 25000);
 
     pendingRequests.set(id, {
       resolve: (url) => {
