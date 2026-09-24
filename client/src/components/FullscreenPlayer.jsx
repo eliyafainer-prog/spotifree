@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Sparkles, Repeat, Repeat1, Heart, Mic2, Music } from 'lucide-react';
+import { ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Sparkles, Repeat, Repeat1, Heart, Mic2, Music, Lock } from 'lucide-react';
 
 export function FullscreenPlayer({
   isOpen,
@@ -19,7 +19,8 @@ export function FullscreenPlayer({
   onToggleRepeat,
   isLiked,
   onToggleLike,
-  onOpenLyrics
+  onOpenLyrics,
+  onOpenPocketMode
 }) {
   if (!isOpen || !currentTrack) return null;
 
@@ -52,13 +53,22 @@ export function FullscreenPlayer({
           </p>
         </div>
 
-        <button
-          onClick={onOpenLyrics}
-          title="מילים לשיר"
-          className="p-2 text-spotify-subtext hover:text-spotify-green transition-colors"
-        >
-          <Mic2 className="w-6 h-6" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onOpenPocketMode}
+            title="מצב כיס / נעילת מגע (OLED חסכוני) 🔒"
+            className="p-2 text-spotify-subtext hover:text-white transition-colors"
+          >
+            <Lock className="w-5 h-5" />
+          </button>
+          <button
+            onClick={onOpenLyrics}
+            title="מילים לשיר"
+            className="p-2 text-spotify-subtext hover:text-spotify-green transition-colors"
+          >
+            <Mic2 className="w-6 h-6" />
+          </button>
+        </div>
       </div>
 
       {/* Album Artwork with Ambient Shadow */}

@@ -45,6 +45,7 @@ import { SyncedLyrics } from './components/SyncedLyrics';
 import { ImportModal } from './components/ImportModal';
 import { AddToPlaylistModal } from './components/AddToPlaylistModal';
 import { BackgroundAudioModal } from './components/BackgroundAudioModal';
+import { PocketModeOverlay } from './components/PocketModeOverlay';
 import { TrackRow } from './components/TrackRow';
 import { PlaylistView } from './components/PlaylistView';
 import { AnalyticsView } from './components/AnalyticsView';
@@ -75,6 +76,7 @@ export default function App() {
   // Modals & Panels
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState(false);
+  const [isPocketModeOpen, setIsPocketModeOpen] = useState(false);
   const [isFullscreenPlayerOpen, setIsFullscreenPlayerOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [lyricsData, setLyricsData] = useState({ synced: [], plain: [], hasSynced: false });
@@ -778,6 +780,7 @@ export default function App() {
         onToggleLike={handleToggleLike}
         onOpenLyrics={() => setIsLyricsOpen(true)}
         onOpenFullscreen={() => setIsFullscreenPlayerOpen(true)}
+        onOpenPocketMode={() => setIsPocketModeOpen(true)}
       />
 
       {/* Mobile Tab Bar */}
@@ -810,6 +813,10 @@ export default function App() {
         onOpenLyrics={() => {
           setIsFullscreenPlayerOpen(false);
           setIsLyricsOpen(true);
+        }}
+        onOpenPocketMode={() => {
+          setIsFullscreenPlayerOpen(false);
+          setIsPocketModeOpen(true);
         }}
       />
 
@@ -846,6 +853,17 @@ export default function App() {
       <BackgroundAudioModal
         isOpen={isBackgroundModalOpen}
         onClose={() => setIsBackgroundModalOpen(false)}
+      />
+
+      {/* Pocket Mode / AMOLED Black Screen Overlay */}
+      <PocketModeOverlay
+        isOpen={isPocketModeOpen}
+        onClose={() => setIsPocketModeOpen(false)}
+        currentTrack={player.currentTrack}
+        isPlaying={player.isPlaying}
+        onTogglePlay={player.togglePlay}
+        onNext={player.nextTrack}
+        onPrev={player.prevTrack}
       />
 
       {/* Add Track To Playlist Modal */}
