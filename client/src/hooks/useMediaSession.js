@@ -45,12 +45,12 @@ export function useMediaSession({
       artist: currentTrack.artist || 'Unknown Artist',
       album: currentTrack.album || 'SpotiFree',
       artwork: [
-        { src: artworkUrl, sizes: '96x96', type: 'image/jpeg' },
-        { src: artworkUrl, sizes: '128x128', type: 'image/jpeg' },
-        { src: artworkUrl, sizes: '192x192', type: 'image/jpeg' },
-        { src: artworkUrl, sizes: '256x256', type: 'image/jpeg' },
-        { src: artworkUrl, sizes: '384x384', type: 'image/jpeg' },
-        { src: artworkUrl, sizes: '512x512', type: 'image/jpeg' }
+        { src: artworkUrl, sizes: '96x96' },
+        { src: artworkUrl, sizes: '128x128' },
+        { src: artworkUrl, sizes: '192x192' },
+        { src: artworkUrl, sizes: '256x256' },
+        { src: artworkUrl, sizes: '384x384' },
+        { src: artworkUrl, sizes: '512x512' }
       ]
     });
   }, [currentTrack]);

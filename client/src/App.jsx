@@ -12,7 +12,8 @@ import {
   Loader2,
   ExternalLink,
   Volume2,
-  ArrowDownCircle
+  ArrowDownCircle,
+  Headphones
 } from 'lucide-react';
 
 import { useAudioPlayer } from './hooks/useAudioPlayer';
@@ -43,6 +44,7 @@ import { FullscreenPlayer } from './components/FullscreenPlayer';
 import { SyncedLyrics } from './components/SyncedLyrics';
 import { ImportModal } from './components/ImportModal';
 import { AddToPlaylistModal } from './components/AddToPlaylistModal';
+import { BackgroundAudioModal } from './components/BackgroundAudioModal';
 import { TrackRow } from './components/TrackRow';
 import { PlaylistView } from './components/PlaylistView';
 import { AnalyticsView } from './components/AnalyticsView';
@@ -72,6 +74,7 @@ export default function App() {
 
   // Modals & Panels
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState(false);
   const [isFullscreenPlayerOpen, setIsFullscreenPlayerOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [lyricsData, setLyricsData] = useState({ synced: [], plain: [], hasSynced: false });
@@ -458,6 +461,16 @@ export default function App() {
               </div>
             )}
 
+            {/* Quick action: Background Audio & Headphones Guide */}
+            <button
+              onClick={() => setIsBackgroundModalOpen(true)}
+              title="מדריך ניגון ברקע ושליטה מאוזניות"
+              className="flex items-center gap-1.5 bg-spotify-elevated hover:bg-spotify-highlight text-white text-xs font-semibold px-3 py-2 rounded-full border border-spotify-border transition-colors"
+            >
+              <Headphones className="w-4 h-4 text-emerald-400" />
+              <span className="hidden sm:inline">ניגון ברקע</span>
+            </button>
+
             {/* Quick action: Import button */}
             <button
               onClick={() => setIsImportModalOpen(true)}
@@ -827,6 +840,12 @@ export default function App() {
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         onPlaylistImported={handlePlaylistImported}
+      />
+
+      {/* Background Audio & Headphones Guide Modal */}
+      <BackgroundAudioModal
+        isOpen={isBackgroundModalOpen}
+        onClose={() => setIsBackgroundModalOpen(false)}
       />
 
       {/* Add Track To Playlist Modal */}

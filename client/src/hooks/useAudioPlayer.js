@@ -25,6 +25,7 @@ export function useAudioPlayer() {
   const fallbackTimerRef = useRef(null);
   const nextTrackRef = useRef(null);
   const userPausedRef = useRef(false);
+  const playViaYouTubePlayerRef = useRef(null);
 
   const [currentTrack, setCurrentTrack] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -111,6 +112,16 @@ export function useAudioPlayer() {
       }
     };
 
+    const handleError = () => {
+      if (activeEngineRef.current === 'audio') {
+        console.warn('Native HTML5 Audio encountered an error, falling back to YouTube engine...');
+        setIsLoading(false);
+        if (currentTrackRef.current && !userPausedRef.current) {
+          playViaYouTubePlayerRef.current?.(currentTrackRef.current);
+        }
+      }
+    };
+
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('durationchange', handleDurationChange);
     audio.addEventListener('waiting', handleWaiting);
@@ -118,6 +129,7 @@ export function useAudioPlayer() {
     audio.addEventListener('play', handlePlay);
     audio.addEventListener('pause', handlePause);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
 
     return () => {
       audio.pause();
@@ -128,6 +140,7 @@ export function useAudioPlayer() {
       audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
     };
   }, []);
 
@@ -329,6 +342,59 @@ export function useAudioPlayer() {
     }
   }, [volume, isMuted]);
 
+  playViaYouTubePlayerRef.current = playViaYouTubePlayer;
+
+  /**
+   * Play track via native HTML5 Audio element streaming from our server proxy.
+   * Enables true background playback, lock-screen controls,
+   * headphone buttons support, and continuous background playlist advancing.
+   */
+  const playViaAudioElement = useCallback((track) => {
+    if (!track || !track.id) return;
+
+    isTransitioningRef.current = true;
+    setCurrentTime(0);
+
+    // Stop and pause YouTube player so it doesn't conflict or duplicate sound
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.pauseVideo === 'function') {
+      try { ytPlayerRef.current.pauseVideo(); } catch (e) {}
+    }
+
+    activeEngineRef.current = 'audio';
+    setIsLoading(true);
+
+    const audio = audioRef.current;
+    if (!audio) {
+      playViaYouTubePlayer(track);
+      return;
+    }
+
+    try {
+      audio.pause();
+      const streamUrl = getPlayableAudioUrl(track);
+      audio.src = streamUrl;
+      audio.volume = isMuted ? 0 : volume;
+
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            isTransitioningRef.current = false;
+            setIsPlaying(true);
+            setIsLoading(false);
+          })
+          .catch((err) => {
+            console.warn('Native audio play failed, falling back to YouTube engine:', err.message);
+            isTransitioningRef.current = false;
+            playViaYouTubePlayer(track);
+          });
+      }
+    } catch (err) {
+      console.warn('Native audio exception, fallback to YT:', err);
+      playViaYouTubePlayer(track);
+    }
+  }, [volume, isMuted, playViaYouTubePlayer]);
+
   /**
    * Proactively resolve & prefetch upcoming tracks for zero-latency instant playback
    */
@@ -359,6 +425,7 @@ export function useAudioPlayer() {
             if (res.thumbnail) t.thumbnail = res.thumbnail;
             if (res.durationSeconds) t.durationSeconds = res.durationSeconds;
             updateTrackInPlaylists(t);
+            prefetchNextTracks([t]);
           }
         }).catch(() => {});
       }
@@ -452,17 +519,18 @@ export function useAudioPlayer() {
       console.warn('Offline storage check skipped:', e);
     }
 
-    // 2. Play immediately via native client YouTube Player
-    playViaYouTubePlayer(playableTrack);
+    // 2. Play via native HTML5 Audio element (Background & Lock-Screen First)
+    playViaAudioElement(playableTrack);
     addRecentTrack(playableTrack);
 
     prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
-  }, [queue, playViaYouTubePlayer, prefetchUpcomingTracks]);
+  }, [queue, playViaAudioElement, prefetchUpcomingTracks]);
 
   /**
    * Explicit Play handler (crucial for MediaSession lock-screen controls)
    */
   const play = useCallback(() => {
+    userPausedRef.current = false;
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         if (typeof ytPlayerRef.current.unMute === 'function') {
@@ -479,6 +547,7 @@ export function useAudioPlayer() {
    * Explicit Pause handler
    */
   const pause = useCallback(() => {
+    userPausedRef.current = true;
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         ytPlayerRef.current.pauseVideo();

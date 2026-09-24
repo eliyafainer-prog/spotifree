@@ -365,11 +365,18 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
 }
 
 /**
- * Background pre-fetching (disabled heavy yt-dlp extraction to prevent Render 512MB OOM crash)
+ * Background pre-fetching using persistent worker thread pool to eliminate buffering latency
  */
 async function prefetchTracks(tracks) {
-  // Client playback uses YouTube Player API directly; no heavy server worker extraction needed here.
-  return;
+  if (!Array.isArray(tracks)) return;
+  for (const track of tracks.slice(0, 2)) {
+    const vid = track.streamableId || track.id;
+    if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+      if (!urlCache.has(vid) && !inFlightRequests.has(vid)) {
+        getAudioStreamUrl(vid, null, false).catch(() => {});
+      }
+    }
+  }
 }
 
 const INVIDIOUS_INSTANCES = [
