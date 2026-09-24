@@ -14,8 +14,7 @@ import {
   Mic2,
   Maximize2,
   Music,
-  Loader2,
-  Lock
+  Loader2
 } from 'lucide-react';
 
 export function PlayerBar({
@@ -40,8 +39,7 @@ export function PlayerBar({
   isLiked,
   onToggleLike,
   onOpenLyrics,
-  onOpenFullscreen,
-  onOpenPocketMode
+  onOpenFullscreen
 }) {
   if (!currentTrack) return null;
 
@@ -109,14 +107,6 @@ export function PlayerBar({
               className={`p-1.5 ${isLiked ? 'text-spotify-green' : 'text-spotify-subtext'}`}
             >
               <Heart className={`w-5 h-5 ${isLiked ? 'fill-spotify-green' : ''}`} />
-            </button>
-
-            <button
-              onClick={onOpenPocketMode}
-              title="מצב כיס (נעילת מגע ומסך שחור חסכוני) 🔒"
-              className="p-1.5 text-spotify-subtext hover:text-white transition-colors"
-            >
-              <Lock className="w-4 h-4" />
             </button>
 
             <button
