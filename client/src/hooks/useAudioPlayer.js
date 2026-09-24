@@ -50,6 +50,7 @@ export function useAudioPlayer() {
   const shufflePosRef = useRef(0);
   const historyStackRef = useRef([]);
   const isFetchingSmartRef = useRef(false);
+  const isTransitioningRef = useRef(false);
 
   const queueRef = useRef([]);
   const queueIndexRef = useRef(-1);
@@ -148,6 +149,7 @@ export function useAudioPlayer() {
   useEffect(() => {
     if (isPlaying && activeEngineRef.current === 'yt') {
       ytTimerRef.current = setInterval(() => {
+        if (isTransitioningRef.current) return;
         if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
           try {
             const cur = ytPlayerRef.current.getCurrentTime() || 0;
@@ -237,6 +239,7 @@ export function useAudioPlayer() {
               },
               onStateChange: (e) => {
                 if (e.data === 1) { // PLAYING
+                  isTransitioningRef.current = false;
                   try {
                     if (typeof e.target.unMute === 'function') {
                       e.target.unMute();
@@ -277,6 +280,9 @@ export function useAudioPlayer() {
   const playViaYouTubePlayer = useCallback((track) => {
     if (!track || !track.id) return;
 
+    isTransitioningRef.current = true;
+    setCurrentTime(0);
+
     // Pause audioRef so it doesn't steal audio focus from YouTube player
     if (audioRef.current) {
       try {
@@ -294,7 +300,11 @@ export function useAudioPlayer() {
           player.unMute();
         }
         player.setVolume(isMuted ? 0 : volume * 100);
-        player.loadVideoById(track.id);
+        player.loadVideoById({
+          videoId: track.id,
+          startSeconds: 0,
+          suggestedQuality: 'small'
+        });
         player.playVideo();
       } catch (e) {
         console.error('Error in YT play:', e);

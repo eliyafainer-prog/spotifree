@@ -120,6 +120,25 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
   return blob;
 }
 
+// Persistent resolved tracks cache in localStorage for 0ms repeat playback
+const RESOLVED_CACHE_KEY = 'spotifree_resolved_v1';
+let persistedResolveCache = {};
+try {
+  const stored = localStorage.getItem(RESOLVED_CACHE_KEY);
+  if (stored) persistedResolveCache = JSON.parse(stored);
+} catch (e) {}
+
+function saveToResolvedCache(key, data) {
+  try {
+    persistedResolveCache[key] = data;
+    const keys = Object.keys(persistedResolveCache);
+    if (keys.length > 500) {
+      delete persistedResolveCache[keys[0]];
+    }
+    localStorage.setItem(RESOLVED_CACHE_KEY, JSON.stringify(persistedResolveCache));
+  } catch (e) {}
+}
+
 /**
  * Resolve track (e.g. Spotify imported track) to streamable YouTube videoId and individual artwork
  */
@@ -135,6 +154,10 @@ export async function resolveTrack(track) {
   if (clientResolveCache.has(key)) {
     return clientResolveCache.get(key);
   }
+  if (persistedResolveCache[key]) {
+    clientResolveCache.set(key, persistedResolveCache[key]);
+    return persistedResolveCache[key];
+  }
 
   const res = await fetch(`${API_BASE}/resolve`, {
     method: 'POST',
@@ -149,6 +172,7 @@ export async function resolveTrack(track) {
     clientResolveCache.delete(oldest);
   }
   clientResolveCache.set(key, data);
+  saveToResolvedCache(key, data);
 
   return data;
 }
