@@ -7,6 +7,7 @@ import yt_dlp
 
 ydl_opts = {
     'format': '140/ba[ext=m4a]/ba/b[height<=480]/best',
+    'remote_components': ['ejs:github'],
     'quiet': True,
     'no_warnings': True,
     'no_color': True,

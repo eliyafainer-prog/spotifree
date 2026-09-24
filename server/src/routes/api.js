@@ -98,7 +98,7 @@ router.get('/debug-extract', async (req, res) => {
   const uaFlag = req.query.ua ? `--user-agent "${req.query.ua}"` : '';
   const extraFlags = req.query.extra ? req.query.extra : '';
   exec(`${PYTHON_BIN} -m yt_dlp --version`, (err1, vOut) => {
-    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba ${cookieFlag} ${extraFlags} ${uaFlag} https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
+    exec(`${PYTHON_BIN} -m yt_dlp --get-url -f 140/ba --remote-components ejs:github ${cookieFlag} ${extraFlags} ${uaFlag} https://www.youtube.com/watch?v=${targetId}`, (err2, stdout, stderr) => {
       let cookiePreview = null;
       if (foundCookie) {
         try {

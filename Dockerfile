@@ -29,6 +29,9 @@ ENV PATH="$DENO_INSTALL/bin:$PATH"
 # Install latest yt-dlp
 RUN pip3 install --no-cache-dir --break-system-packages yt-dlp || pip3 install --no-cache-dir yt-dlp
 
+# Pre-fetch and cache yt-dlp EJS challenge solver
+RUN python3 -m yt_dlp --remote-components ejs:github --version || true
+
 # Install server dependencies
 WORKDIR /app/server
 COPY server/package*.json ./

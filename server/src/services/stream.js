@@ -220,6 +220,7 @@ function extractStreamWithYtDlp(target) {
       '-m', 'yt_dlp',
       '-f', '140/ba[ext=m4a]/ba/best',
       '--get-url',
+      '--remote-components', 'ejs:github',
       '--no-playlist',
       '--no-warnings',
       '--no-check-certificates',
