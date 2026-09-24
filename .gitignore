@@ -34,5 +34,9 @@ yarn-error.log*
 Thumbs.db
 *.exe
 server/cache/
+*.apk
+client/android/app/build/
+client/android/.gradle/
+client/android/local.properties
 
 

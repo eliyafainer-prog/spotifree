@@ -1,0 +1,13 @@
+{
+  "appId": "com.spotifree.app",
+  "appName": "SpotiFree",
+  "webDir": "dist",
+  "server": {
+    "cleartext": true,
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "webContentsDebuggingEnabled": true
+  }
+}

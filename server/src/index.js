@@ -59,6 +59,16 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', app: 'SpotiFree Server', version: '1.0.0' });
 });
 
+// Direct APK download route for mobile installation
+const apkPath = path.join(__dirname, '../../client/android/app/build/outputs/apk/debug/app-debug.apk');
+app.get('/spotifree.apk', (req, res) => {
+  if (fs.existsSync(apkPath)) {
+    res.download(apkPath, 'SpotiFree.apk');
+  } else {
+    res.status(404).send('APK not found. Please build the Android app first.');
+  }
+});
+
 // Serve production client build directly without dev proxy overhead
 const distPath = path.join(__dirname, '../../client/dist');
 if (fs.existsSync(distPath)) {

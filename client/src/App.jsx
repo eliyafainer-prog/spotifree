@@ -12,7 +12,8 @@ import {
   Loader2,
   ExternalLink,
   Volume2,
-  ArrowDownCircle
+  ArrowDownCircle,
+  Server
 } from 'lucide-react';
 
 import { useAudioPlayer } from './hooks/useAudioPlayer';
@@ -47,6 +48,7 @@ import { TrackRow } from './components/TrackRow';
 import { PlaylistView } from './components/PlaylistView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { OfflineView } from './components/OfflineView';
+import { ServerSettingsModal } from './components/ServerSettingsModal';
 
 export default function App() {
   // Audio Player Engine
@@ -72,6 +74,7 @@ export default function App() {
 
   // Modals & Panels
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [isFullscreenPlayerOpen, setIsFullscreenPlayerOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [lyricsData, setLyricsData] = useState({ synced: [], plain: [], hasSynced: false });
@@ -458,14 +461,25 @@ export default function App() {
               </div>
             )}
 
-            {/* Quick action: Import button */}
-            <button
-              onClick={() => setIsImportModalOpen(true)}
-              className="flex items-center gap-2 bg-spotify-elevated hover:bg-spotify-highlight text-white text-xs font-semibold px-3 py-2 rounded-full border border-spotify-border transition-colors"
-            >
-              <PlusCircle className="w-4 h-4 text-spotify-green" />
-              <span className="hidden sm:inline">ייבוא פלייליסט</span>
-            </button>
+            {/* Quick actions: Server & Import buttons */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsServerModalOpen(true)}
+                className="flex items-center gap-1.5 bg-spotify-elevated hover:bg-spotify-highlight text-zinc-300 hover:text-white text-xs font-semibold px-3 py-2 rounded-full border border-spotify-border transition-colors shadow-sm"
+                title="הגדרות שרת וחיבור"
+              >
+                <Server className="w-3.5 h-3.5 text-green-400" />
+                <span>שרת</span>
+              </button>
+
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="flex items-center gap-2 bg-spotify-elevated hover:bg-spotify-highlight text-white text-xs font-semibold px-3 py-2 rounded-full border border-spotify-border transition-colors"
+              >
+                <PlusCircle className="w-4 h-4 text-spotify-green" />
+                <span className="hidden sm:inline">ייבוא פלייליסט</span>
+              </button>
+            </div>
           </div>
 
           {/* View Content Area */}
@@ -837,6 +851,13 @@ export default function App() {
         playlists={playlists}
         onAddToPlaylist={handleAddToPlaylist}
         onCreatePlaylist={handleCreatePlaylist}
+      />
+
+      {/* Server Settings Modal */}
+      <ServerSettingsModal
+        isOpen={isServerModalOpen}
+        onClose={() => setIsServerModalOpen(false)}
+        showToast={showToast}
       />
 
       {/* Floating Status Toast Notification */}

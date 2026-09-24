@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
+import { updateNativePlayback, registerNativeMediaListener, isNativeApp } from '../services/nativeAudio';
 
 /**
  * Custom hook to bind HTML5 Audio to native MediaSession API
  * Supports headphone buttons (single click, double click, triple click),
- * lock-screen controls, smartwatch sync, and disconnect detection.
+ * lock-screen controls, smartwatch sync, and native Android Foreground Service.
  */
 export function useMediaSession({
   currentTrack,
@@ -29,7 +30,44 @@ export function useMediaSession({
     isPlaying
   };
 
-  // Update track metadata and artwork (absolute URLs for mobile OS lock screens)
+  // Sync to native Android Foreground Service & Notification
+  useEffect(() => {
+    if (!currentTrack) return;
+    updateNativePlayback({
+      title: currentTrack.title || 'Unknown Title',
+      artist: currentTrack.artist || 'Unknown Artist',
+      thumbnail: currentTrack.thumbnail || '',
+      isPlaying: Boolean(isPlaying)
+    });
+  }, [currentTrack, isPlaying]);
+
+  // Register listener for native Android media button events (headphone buttons, lockscreen)
+  useEffect(() => {
+    if (!isNativeApp) return;
+
+    const unregister = registerNativeMediaListener((action) => {
+      if (action === 'play') {
+        handlersRef.current.onPlay?.();
+      } else if (action === 'pause') {
+        handlersRef.current.onPause?.();
+      } else if (action === 'next') {
+        handlersRef.current.onNext?.();
+      } else if (action === 'prev') {
+        handlersRef.current.onPrev?.();
+      } else if (action.startsWith('seek:')) {
+        const sec = parseFloat(action.split(':')[1]);
+        if (!isNaN(sec)) {
+          handlersRef.current.onSeek?.(sec);
+        }
+      }
+    });
+
+    return () => {
+      unregister();
+    };
+  }, []);
+
+  // Update Web MediaSession track metadata and artwork
   useEffect(() => {
     if (!('mediaSession' in navigator) || !currentTrack) return;
 
@@ -101,6 +139,7 @@ export function useMediaSession({
       ['seekbackward', (details) => {
         const offset = details.seekOffset || 10;
         const cur = handlersRef.current.currentTime || 0;
+        const dur = handlersRef.current.duration || 0;
         handlersRef.current.onSeek?.(Math.max(cur - offset, 0));
       }]
     ];

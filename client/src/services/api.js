@@ -1,4 +1,37 @@
-const API_BASE = '/api';
+import { isNativeApp } from './nativeAudio';
+
+// Server URLs
+export const DEFAULT_SERVERS = {
+  local: 'http://10.100.102.16:5050',
+  tailscale: 'http://100.99.113.87:5050',
+  cloud: 'https://spotifree.onrender.com'
+};
+
+export function getActiveServerUrl() {
+  const custom = localStorage.getItem('spotifree_server_url');
+  if (custom) return custom.replace(/\/+$/, '');
+
+  if (isNativeApp) {
+    // In native Android app, default to Local LAN (PC)
+    return DEFAULT_SERVERS.local;
+  }
+
+  // In web browser, use relative path ('' -> '/api')
+  return '';
+}
+
+export function setActiveServerUrl(url) {
+  if (!url) {
+    localStorage.removeItem('spotifree_server_url');
+  } else {
+    localStorage.setItem('spotifree_server_url', url.replace(/\/+$/, ''));
+  }
+}
+
+export function getApiBase() {
+  const base = getActiveServerUrl();
+  return base ? `${base}/api` : '/api';
+}
 
 // In-Memory Client Caches for 0ms repeat searches and resolutions
 const clientSearchCache = new Map();
@@ -15,7 +48,7 @@ export async function searchTracks(query) {
     return clientSearchCache.get(key);
   }
 
-  const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query.trim())}`);
+  const res = await fetch(`${getApiBase()}/search?q=${encodeURIComponent(query.trim())}`);
   if (!res.ok) throw new Error('Search failed');
   const data = await res.json();
   const tracks = data.tracks || [];
@@ -33,7 +66,7 @@ export async function searchTracks(query) {
  * Get trending tracks
  */
 export async function getTrendingTracks() {
-  const res = await fetch(`${API_BASE}/trending`);
+  const res = await fetch(`${getApiBase()}/trending`);
   if (!res.ok) throw new Error('Failed to fetch trending');
   const data = await res.json();
   return data.tracks || [];
@@ -43,7 +76,7 @@ export async function getTrendingTracks() {
  * Import playlist from Spotify or YouTube URL
  */
 export async function importPlaylist(url) {
-  const res = await fetch(`${API_BASE}/import`, {
+  const res = await fetch(`${getApiBase()}/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url })
@@ -73,7 +106,7 @@ export async function getLyrics(track, artist, duration) {
       artist,
       ...(duration ? { duration } : {})
     });
-    const res = await fetch(`${API_BASE}/lyrics?${params.toString()}`);
+    const res = await fetch(`${getApiBase()}/lyrics?${params.toString()}`);
     if (!res.ok) return { synced: [], plain: [], hasSynced: false };
     return await res.json();
   } catch (e) {
@@ -87,7 +120,7 @@ export async function getLyrics(track, artist, duration) {
 export function getPlayableAudioUrl(track) {
   const fallbackQuery = encodeURIComponent(`${track.title || ''} ${track.artist || ''}`.trim());
   const streamableId = encodeURIComponent(track.id || '');
-  return `${API_BASE}/stream/pipe/${streamableId}?q=${fallbackQuery}`;
+  return `${getApiBase()}/stream/pipe/${streamableId}?q=${fallbackQuery}`;
 }
 
 /**
@@ -96,7 +129,7 @@ export function getPlayableAudioUrl(track) {
 export async function prefetchNextTracks(tracks) {
   if (!tracks || tracks.length === 0) return;
   try {
-    fetch(`${API_BASE}/stream/prefetch`, {
+    fetch(`${getApiBase()}/stream/prefetch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tracks: tracks.slice(0, 3) })
@@ -159,7 +192,7 @@ export async function resolveTrack(track) {
     return persistedResolveCache[key];
   }
 
-  const res = await fetch(`${API_BASE}/resolve`, {
+  const res = await fetch(`${getApiBase()}/resolve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ track })
