@@ -28,7 +28,10 @@ import {
   updateTrackInPlaylists,
   addTrackToPlaylist,
   removeTrackFromPlaylist,
-  createCustomPlaylist
+  createCustomPlaylist,
+  reorderPlaylistTracks,
+  reorderLikedSongs,
+  renamePlaylist
 } from './services/storage';
 import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
 import { saveTrackOffline, getAllOfflineTracks } from './services/offlineStorage';
@@ -336,6 +339,22 @@ export default function App() {
       setSelectedPlaylistId(playlist.id);
       setCurrentView('playlist');
     }
+  };
+
+  const handleReorderPlaylist = (playlistId, newTracks) => {
+    const updated = reorderPlaylistTracks(playlistId, newTracks);
+    setPlaylists(updated);
+  };
+
+  const handleReorderLiked = (newTracks) => {
+    const updated = reorderLikedSongs(newTracks);
+    setLikedSongs(updated);
+  };
+
+  const handleRenamePlaylist = (playlistId, newTitle) => {
+    const updated = renamePlaylist(playlistId, newTitle);
+    setPlaylists(updated);
+    showToast(`✏️ שם הפלייליסט עודכן ל-"${newTitle}"`);
   };
 
   // Play track helper (updates recent tracks, playlists and analytics)
@@ -671,6 +690,7 @@ export default function App() {
                 shuffleMode={player.shuffleMode}
                 onToggleShuffle={handleToggleShuffle}
                 onPlayShuffled={handlePlayShuffled}
+                onReorderTracks={handleReorderLiked}
               />
             )}
 
@@ -693,6 +713,8 @@ export default function App() {
                 shuffleMode={player.shuffleMode}
                 onToggleShuffle={handleToggleShuffle}
                 onPlayShuffled={handlePlayShuffled}
+                onReorderTracks={(newTracks) => handleReorderPlaylist(activePlaylist.id, newTracks)}
+                onRenamePlaylist={(newTitle) => handleRenamePlaylist(activePlaylist.id, newTitle)}
               />
             )}
 

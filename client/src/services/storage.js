@@ -207,3 +207,56 @@ export function createCustomPlaylist(title, description = '') {
   }
 }
 
+/**
+ * Reorder tracks in a custom playlist and save to storage
+ */
+export function reorderPlaylistTracks(playlistId, newTracks) {
+  try {
+    const playlists = getPlaylists();
+    const index = playlists.findIndex(p => p.id === playlistId);
+    if (index === -1) return playlists;
+
+    const playlist = { ...playlists[index], tracks: newTracks, trackCount: newTracks.length };
+    const updated = [...playlists];
+    updated[index] = playlist;
+    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (e) {
+    console.error('Failed to reorder playlist tracks:', e);
+    return getPlaylists();
+  }
+}
+
+/**
+ * Reorder tracks in liked songs and save to storage
+ */
+export function reorderLikedSongs(newTracks) {
+  try {
+    saveLikedSongs(newTracks);
+    return newTracks;
+  } catch (e) {
+    console.error('Failed to reorder liked songs:', e);
+    return getLikedSongs();
+  }
+}
+
+/**
+ * Rename a custom playlist
+ */
+export function renamePlaylist(playlistId, newTitle) {
+  try {
+    const playlists = getPlaylists();
+    const index = playlists.findIndex(p => p.id === playlistId);
+    if (index === -1) return playlists;
+
+    const playlist = { ...playlists[index], title: newTitle.trim() };
+    const updated = [...playlists];
+    updated[index] = playlist;
+    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (e) {
+    console.error('Failed to rename playlist:', e);
+    return getPlaylists();
+  }
+}
+
