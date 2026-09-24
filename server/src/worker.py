@@ -17,13 +17,13 @@ ydl_opts = {
     'skip_download': True
 }
 
-# Auto-detect cookiefile (Render Secret File, local file, or env var)
+# Auto-detect cookiefile (repo cookies, Render Secret File, local file, or env var)
 cookie_candidates = [
-    os.environ.get('COOKIE_FILE', ''),
-    '/etc/secrets/cookies.txt',
     os.path.join(os.path.dirname(__file__), '../cookies.txt'),
+    os.path.join(os.getcwd(), 'server/cookies.txt'),
     os.path.join(os.getcwd(), 'cookies.txt'),
-    os.path.join(os.getcwd(), 'server/cookies.txt')
+    os.environ.get('COOKIE_FILE', ''),
+    '/etc/secrets/cookies.txt'
 ]
 def normalize_cookies(src_path, dst_path):
     with open(src_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -46,18 +46,29 @@ def normalize_cookies(src_path, dst_path):
     with open(dst_path, 'w', encoding='utf-8') as f:
         f.writelines(clean_lines)
 
+existing_cookies = []
 for cp in cookie_candidates:
     if cp and os.path.exists(cp):
         try:
-            target_cp = '/tmp/cookies.txt' if os.name != 'nt' else os.path.join(os.environ.get('TEMP', '.'), 'cookies.txt')
-            normalize_cookies(cp, target_cp)
-            ydl_opts['cookiefile'] = target_cp
-            sys.stderr.write(f"[Worker] Successfully normalized and loaded cookies from: {target_cp}\n")
-        except Exception as e:
-            ydl_opts['cookiefile'] = cp
-            sys.stderr.write(f"[Worker] Failed to normalize cookies, fallback: {e}\n")
-        sys.stderr.flush()
-        break
+            sz = os.path.getsize(cp)
+            if sz > 50:
+                existing_cookies.append((os.path.getmtime(cp), cp, sz))
+        except Exception:
+            pass
+
+if existing_cookies:
+    # Sort by mtime descending: newest modified file takes precedence
+    existing_cookies.sort(key=lambda x: x[0], reverse=True)
+    best_cookie = existing_cookies[0][1]
+    try:
+        target_cp = '/tmp/cookies.txt' if os.name != 'nt' else os.path.join(os.environ.get('TEMP', '.'), 'cookies.txt')
+        normalize_cookies(best_cookie, target_cp)
+        ydl_opts['cookiefile'] = target_cp
+        sys.stderr.write(f"[Worker] Successfully normalized and loaded cookies from: {best_cookie} -> {target_cp} (size {os.path.getsize(target_cp)} bytes)\n")
+    except Exception as e:
+        ydl_opts['cookiefile'] = best_cookie
+        sys.stderr.write(f"[Worker] Failed to normalize cookies, fallback: {e}\n")
+    sys.stderr.flush()
 
 ydl = yt_dlp.YoutubeDL(ydl_opts)
 lock = threading.Lock()

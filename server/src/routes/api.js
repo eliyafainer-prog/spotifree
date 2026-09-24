@@ -43,22 +43,29 @@ router.get('/debug-extract', async (req, res) => {
   const targetId = req.query.id || 'kJQP7kiw5Fk';
   
   const cookieCandidates = [
-    process.env.COOKIE_FILE,
-    '/etc/secrets/cookies.txt',
     path.join(__dirname, '../../cookies.txt'),
+    path.join(process.cwd(), 'server/cookies.txt'),
     path.join(process.cwd(), 'cookies.txt'),
-    path.join(process.cwd(), 'server/cookies.txt')
+    path.join(__dirname, '../cookies.txt'),
+    process.env.COOKIE_FILE,
+    '/etc/secrets/cookies.txt'
   ].filter(Boolean);
 
-  let foundCookie = null;
-  let cookieSize = 0;
+  let existingCookies = [];
   for (const c of cookieCandidates) {
     if (fs.existsSync(c)) {
-      foundCookie = c;
-      cookieSize = fs.statSync(c).size;
-      break;
+      try {
+        const stat = fs.statSync(c);
+        if (stat.size > 50) {
+          existingCookies.push({ path: c, size: stat.size, mtime: stat.mtimeMs });
+        }
+      } catch (e) {}
     }
   }
+  existingCookies.sort((a, b) => b.mtime - a.mtime);
+
+  const foundCookie = existingCookies.length > 0 ? existingCookies[0].path : null;
+  const cookieSize = existingCookies.length > 0 ? existingCookies[0].size : 0;
 
   let cookieFlag = '';
   if (foundCookie && !req.query.no_cookie) {

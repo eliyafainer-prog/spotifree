@@ -170,37 +170,48 @@ function extractWithWorker(target, isPriority = true) {
 function extractStreamWithYtDlp(target) {
   return new Promise((resolve, reject) => {
     const cookieCandidates = [
-      process.env.COOKIE_FILE,
-      '/etc/secrets/cookies.txt',
-      path.join(__dirname, '../cookies.txt'),
       path.join(__dirname, '../../cookies.txt'),
+      path.join(process.cwd(), 'server/cookies.txt'),
       path.join(process.cwd(), 'cookies.txt'),
-      path.join(process.cwd(), 'server/cookies.txt')
+      path.join(__dirname, '../cookies.txt'),
+      process.env.COOKIE_FILE,
+      '/etc/secrets/cookies.txt'
     ].filter(Boolean);
 
-    let cookiePath = null;
+    const existingCookies = [];
     for (const c of cookieCandidates) {
       if (fs.existsSync(c)) {
         try {
-          const tmpCp = process.platform === 'win32' ? path.join(process.env.TEMP || '.', 'cookies.txt') : '/tmp/cookies.txt';
-          const raw = fs.readFileSync(c, 'utf8');
-          const lines = raw.split('\n');
-          const clean = ['# Netscape HTTP Cookie File\n'];
-          for (const line of lines) {
-            const stripped = line.trim();
-            if (!stripped || stripped.startsWith('#')) continue;
-            const parts = stripped.split(/\s+/);
-            if (parts.length >= 7) {
-              const val = parts.slice(6).join(' ');
-              clean.push(`${parts[0]}\t${parts[1]}\t${parts[2]}\t${parts[3]}\t${parts[4]}\t${parts[5]}\t${val}\n`);
-            }
+          const stat = fs.statSync(c);
+          if (stat.size > 50) {
+            existingCookies.push({ path: c, size: stat.size, mtime: stat.mtimeMs });
           }
-          fs.writeFileSync(tmpCp, clean.join(''), 'utf8');
-          cookiePath = tmpCp;
-        } catch (e) {
-          cookiePath = c;
+        } catch (e) {}
+      }
+    }
+    existingCookies.sort((a, b) => b.mtime - a.mtime);
+
+    let cookiePath = null;
+    if (existingCookies.length > 0) {
+      const best = existingCookies[0].path;
+      try {
+        const tmpCp = process.platform === 'win32' ? path.join(process.env.TEMP || '.', 'cookies.txt') : '/tmp/cookies.txt';
+        const raw = fs.readFileSync(best, 'utf8');
+        const lines = raw.split('\n');
+        const clean = ['# Netscape HTTP Cookie File\n'];
+        for (const line of lines) {
+          const stripped = line.trim();
+          if (!stripped || stripped.startsWith('#')) continue;
+          const parts = stripped.split(/\s+/);
+          if (parts.length >= 7) {
+            const val = parts.slice(6).join(' ');
+            clean.push(`${parts[0]}\t${parts[1]}\t${parts[2]}\t${parts[3]}\t${parts[4]}\t${parts[5]}\t${val}\n`);
+          }
         }
-        break;
+        fs.writeFileSync(tmpCp, clean.join(''), 'utf8');
+        cookiePath = tmpCp;
+      } catch (e) {
+        cookiePath = best;
       }
     }
 
