@@ -62,10 +62,16 @@ router.get('/debug-extract', async (req, res) => {
       } catch (e) {}
     }
   }
-  existingCookies.sort((a, b) => b.mtime - a.mtime);
 
-  const foundCookie = existingCookies.length > 0 ? existingCookies[0].path : null;
-  const cookieSize = existingCookies.length > 0 ? existingCookies[0].size : 0;
+  // Priority order: Repo cookies always come first over old /etc/secrets!
+  // If the query specifies ?force_repo=1 or ?file=..., use that.
+  let selected = existingCookies.find(c => !c.path.includes('/etc/secrets')) || existingCookies[0] || null;
+  if (req.query.file && fs.existsSync(req.query.file)) {
+    selected = { path: req.query.file, size: fs.statSync(req.query.file).size };
+  }
+
+  const foundCookie = selected ? selected.path : null;
+  const cookieSize = selected ? selected.size : 0;
 
   let cookieFlag = '';
   if (foundCookie && !req.query.no_cookie) {
@@ -102,9 +108,11 @@ router.get('/debug-extract', async (req, res) => {
         }
       }
       res.json({
+        deployVersion: 'cookie-fix-v2',
         pythonBin: PYTHON_BIN,
         foundCookie,
         cookieSize,
+        allCandidates: existingCookies,
         cookiePreview,
         version: vOut ? vOut.trim() : (err1?.message || 'failed'),
         stdout: stdout ? stdout.trim() : null,

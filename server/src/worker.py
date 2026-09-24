@@ -57,9 +57,9 @@ for cp in cookie_candidates:
             pass
 
 if existing_cookies:
-    # Sort by mtime descending: newest modified file takes precedence
-    existing_cookies.sort(key=lambda x: x[0], reverse=True)
-    best_cookie = existing_cookies[0][1]
+    # Priority order: Repo cookies always come first over old /etc/secrets!
+    repo_cookies = [c for c in existing_cookies if '/etc/secrets' not in c[1]]
+    best_cookie = repo_cookies[0][1] if repo_cookies else existing_cookies[0][1]
     try:
         target_cp = '/tmp/cookies.txt' if os.name != 'nt' else os.path.join(os.environ.get('TEMP', '.'), 'cookies.txt')
         normalize_cookies(best_cookie, target_cp)

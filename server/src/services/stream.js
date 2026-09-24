@@ -189,11 +189,12 @@ function extractStreamWithYtDlp(target) {
         } catch (e) {}
       }
     }
-    existingCookies.sort((a, b) => b.mtime - a.mtime);
+    // Priority order: Repo cookies always come first over old /etc/secrets!
+    const selected = existingCookies.find(c => !c.path.includes('/etc/secrets')) || existingCookies[0] || null;
 
     let cookiePath = null;
-    if (existingCookies.length > 0) {
-      const best = existingCookies[0].path;
+    if (selected) {
+      const best = selected.path;
       try {
         const tmpCp = process.platform === 'win32' ? path.join(process.env.TEMP || '.', 'cookies.txt') : '/tmp/cookies.txt';
         const raw = fs.readFileSync(best, 'utf8');
