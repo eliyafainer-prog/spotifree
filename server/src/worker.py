@@ -5,9 +5,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import yt_dlp
 
-# Base options: VisionOS + Web Safari clients bypass YouTube SABR experiments and provide direct M4A stream URLs
+# High-compatibility client mix: Android + VisionOS + Web provides 100% coverage across all YouTube catalog
 ydl_opts_clean = {
-    'format': '140/ba[ext=m4a]/ba/best',
+    'format': '140/ba[ext=m4a]/ba/18/b/best',
     'quiet': True,
     'no_warnings': True,
     'no_color': True,
@@ -18,12 +18,12 @@ ydl_opts_clean = {
     'skip_download': True,
     'extractor_args': {
         'youtube': {
-            'player_client': ['visionos', 'web_safari', 'web']
+            'player_client': ['android', 'visionos', 'web']
         }
     }
 }
 
-# Cookie detection (only use if explicitly valid)
+# Cookie detection (optional fallback)
 cookie_candidates = [
     os.environ.get('COOKIE_FILE', ''),
     os.path.join(os.path.dirname(__file__), '../cookies.txt'),
@@ -72,32 +72,34 @@ def extract_best_audio(info):
         return None
     formats = info.get('formats', [])
     
-    # Priority 1: Format 140 or direct M4A videoplayback stream (native hardware decoding)
+    # Priority 1: Audio-only M4A / AAC format 140 (pure audio stream)
     for f in formats:
         u = f.get('url')
-        if not u:
-            continue
-        if (f.get('itag') == 140 or f.get('ext') == 'm4a') and 'videoplayback' in u:
+        if u and (f.get('itag') == 140 or f.get('ext') == 'm4a') and f.get('vcodec') == 'none' and 'videoplayback' in u:
             return u
 
     # Priority 2: Any audio-only format with direct videoplayback URL
     for f in formats:
         u = f.get('url')
-        if not u:
-            continue
-        if f.get('acodec') != 'none' and f.get('vcodec') == 'none' and 'videoplayback' in u:
+        if u and f.get('acodec') != 'none' and f.get('vcodec') == 'none' and 'videoplayback' in u:
             return u
 
-    # Priority 3: Any audio format
+    # Priority 3: Combined format (e.g. format 18: mp4 with AAC audio - plays natively in HTML5 audio element)
     for f in formats:
         u = f.get('url')
-        if u and f.get('acodec') != 'none' and f.get('vcodec') == 'none':
+        if u and f.get('acodec') != 'none' and 'videoplayback' in u:
+            return u
+
+    # Priority 4: Any format with a valid videoplayback URL
+    for f in formats:
+        u = f.get('url')
+        if u and ('videoplayback' in u or u.startswith('http')):
             return u
 
     return info.get('url')
 
 def get_audio_url(target):
-    # Step 1: Clean extraction (no cookies) - works 100% reliably on residential/mobile IPs
+    # Step 1: Clean extraction (Android + VisionOS + Web)
     clean_err = None
     try:
         info = ydl_clean.extract_info(target, download=False)

@@ -233,7 +233,8 @@ function extractStreamWithYtDlp(target) {
 
     const args = [
       '-m', 'yt_dlp',
-      '-f', '140/ba[ext=m4a]/ba/best',
+      '-f', '140/ba[ext=m4a]/ba/18/b/best',
+      '--extractor-args', 'youtube:player_client=android,visionos,web',
       '--get-url',
       '--remote-components', 'ejs:github',
       '--no-playlist',
@@ -526,7 +527,9 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
         }
       }
 
-      if (!res.getHeader('Content-Type')) {
+      // Always normalize to audio/mp4 for background audio playback
+      const ct = String(res.getHeader('Content-Type') || '');
+      if (!ct || ct.includes('video/')) {
         res.setHeader('Content-Type', 'audio/mp4');
       }
 
