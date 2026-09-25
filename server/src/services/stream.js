@@ -489,6 +489,34 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
       throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
     }
 
+    const isVideo = streamUrl.includes('mime=video') || streamUrl.includes('itag=18');
+    if (isVideo) {
+      const ffmpeg = spawn('ffmpeg', [
+        '-loglevel', 'error',
+        '-i', streamUrl,
+        '-vn',
+        '-c:a', 'copy',
+        '-f', 'mp4',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        'pipe:1'
+      ]);
+      upstreamStream = ffmpeg;
+
+      req.on('close', () => {
+        try { ffmpeg.kill(); } catch (e) {}
+      });
+
+      res.setHeader('Content-Type', 'audio/mp4');
+      res.setHeader('Cache-Control', 'public, max-age=14400');
+      if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+      ffmpeg.stdout.pipe(res);
+      ffmpeg.on('error', (err) => {
+        console.error('FFmpeg pipe error:', err.message);
+      });
+      return;
+    }
+
     const range = req.headers.range;
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'

@@ -412,17 +412,6 @@ export function useAudioPlayer() {
             }
           });
       }
-
-      // Proactively fetch direct stream URL for 0ms ultra-fast streaming
-      fetchDirectStreamUrl(track).then((directUrl) => {
-        if (directUrl && audioRef.current && activeEngineRef.current === 'audio' && !userPausedRef.current) {
-          if (audioRef.current.currentTime < 1 && audioRef.current.paused) {
-            console.log('Upgrading audio element to direct Google CDN stream...');
-            audioRef.current.src = directUrl;
-            audioRef.current.play().catch(() => {});
-          }
-        }
-      }).catch(() => {});
     } catch (err) {
       console.warn('Native audio exception:', err);
       setIsLoading(false);

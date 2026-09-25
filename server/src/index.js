@@ -51,6 +51,15 @@ app.use(cors({
 
 app.use(express.json());
 
+// Request logger
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    console.log(`[HTTP] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - t0}ms)`);
+  });
+  next();
+});
+
 // Routes
 app.use('/api', apiRoutes);
 
