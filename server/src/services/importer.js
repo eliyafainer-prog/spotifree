@@ -134,23 +134,7 @@ async function importSpotify(url) {
     };
   });
 
-  // Parallel batch enrich album covers from Deezer (batches of 10 for blazing fast import)
-  const chunkSize = 10;
-  for (let i = 0; i < tracks.length; i += chunkSize) {
-    const chunk = tracks.slice(i, i + chunkSize);
-    await Promise.all(
-      chunk.map(async (t) => {
-        try {
-          const q = `${t.artist} ${t.title}`.trim();
-          const dRes = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(q)}`, { timeout: 2500 });
-          const cover = dRes.data?.data?.[0]?.album?.cover_medium;
-          if (cover) {
-            t.thumbnail = cover;
-          }
-        } catch (e) {}
-      })
-    );
-  }
+  // Return immediately with playlist cover - 0ms delay!
 
   return {
     title: playlistTitle,

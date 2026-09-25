@@ -90,7 +90,7 @@ export function useAudioPlayer() {
     };
 
     const handleDurationChange = () => {
-      if (activeEngineRef.current === 'audio' && audio.duration && !isNaN(audio.duration)) {
+      if (activeEngineRef.current === 'audio' && audio.duration && isFinite(audio.duration) && audio.duration > 0) {
         setDuration(audio.duration);
       }
     };
