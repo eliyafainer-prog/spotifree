@@ -5,75 +5,59 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import yt_dlp
 
-ydl_opts = {
-    'format': '140/ba[ext=m4a]/ba/b[height<=480]/best',
-    'remote_components': ['ejs:github'],
+# Base options: VisionOS + Web Safari clients bypass YouTube SABR experiments and provide direct M4A stream URLs
+ydl_opts_clean = {
+    'format': '140/ba[ext=m4a]/ba/best',
     'quiet': True,
     'no_warnings': True,
     'no_color': True,
     'no_check_certificates': True,
-    'socket_timeout': 8,
+    'socket_timeout': 10,
     'noplaylist': True,
     'extract_flat': False,
-    'skip_download': True
+    'skip_download': True,
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['visionos', 'web_safari', 'web']
+        }
+    }
 }
 
-# Auto-detect cookiefile (repo cookies, Render Secret File, local file, or env var)
+# Cookie detection (only use if explicitly valid)
 cookie_candidates = [
+    os.environ.get('COOKIE_FILE', ''),
     os.path.join(os.path.dirname(__file__), '../cookies.txt'),
     os.path.join(os.getcwd(), 'server/cookies.txt'),
     os.path.join(os.getcwd(), 'cookies.txt'),
-    os.environ.get('COOKIE_FILE', ''),
     '/etc/secrets/cookies.txt'
 ]
-def normalize_cookies(src_path, dst_path):
-    with open(src_path, 'r', encoding='utf-8', errors='ignore') as f:
-        lines = f.readlines()
-    clean_lines = ['# Netscape HTTP Cookie File\n']
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith('#'):
-            continue
-        parts = stripped.split()
-        if len(parts) >= 7:
-            domain = parts[0]
-            flag = parts[1]
-            path = parts[2]
-            secure = parts[3]
-            expiration = parts[4]
-            name = parts[5]
-            value = ' '.join(parts[6:])
-            clean_lines.append(f"{domain}\t{flag}\t{path}\t{secure}\t{expiration}\t{name}\t{value}\n")
-    with open(dst_path, 'w', encoding='utf-8') as f:
-        f.writelines(clean_lines)
 
-existing_cookies = []
+ydl_clean = yt_dlp.YoutubeDL(ydl_opts_clean)
+ydl_cookie = None
+
+best_cookie = None
 for cp in cookie_candidates:
     if cp and os.path.exists(cp):
         try:
             sz = os.path.getsize(cp)
-            if sz > 50:
-                existing_cookies.append((os.path.getmtime(cp), cp, sz))
+            if sz > 100:
+                best_cookie = cp
+                break
         except Exception:
             pass
 
-if existing_cookies:
-    # Priority order: Repo cookies always come first over old /etc/secrets!
-    repo_cookies = [c for c in existing_cookies if '/etc/secrets' not in c[1]]
-    best_cookie = repo_cookies[0][1] if repo_cookies else existing_cookies[0][1]
+if best_cookie:
     try:
-        target_cp = '/tmp/cookies.txt' if os.name != 'nt' else os.path.join(os.environ.get('TEMP', '.'), 'cookies.txt')
-        normalize_cookies(best_cookie, target_cp)
-        ydl_opts['cookiefile'] = target_cp
-        sys.stderr.write(f"[Worker] Successfully normalized and loaded cookies from: {best_cookie} -> {target_cp} (size {os.path.getsize(target_cp)} bytes)\n")
+        ydl_opts_cookie = dict(ydl_opts_clean)
+        ydl_opts_cookie['cookiefile'] = best_cookie
+        ydl_cookie = yt_dlp.YoutubeDL(ydl_opts_cookie)
+        sys.stderr.write(f"[Worker] Loaded optional cookie file: {best_cookie}\n")
     except Exception as e:
-        ydl_opts['cookiefile'] = best_cookie
-        sys.stderr.write(f"[Worker] Failed to normalize cookies, fallback: {e}\n")
+        sys.stderr.write(f"[Worker] Failed to initialize cookie YDL: {e}\n")
     sys.stderr.flush()
 
-ydl = yt_dlp.YoutubeDL(ydl_opts)
 lock = threading.Lock()
-executor = ThreadPoolExecutor(max_workers=4)
+executor = ThreadPoolExecutor(max_workers=6)
 
 def safe_write(data):
     with lock:
@@ -83,21 +67,58 @@ def safe_write(data):
         except Exception:
             pass
 
-def get_audio_url(target):
-    info = ydl.extract_info(target, download=False)
+def extract_best_audio(info):
+    if not info:
+        return None
     formats = info.get('formats', [])
     
-    # 1. Priority 1: M4A / AAC (format 140) - ultra-fast native hardware decoding on iOS & Android
+    # Priority 1: Format 140 or direct M4A videoplayback stream (native hardware decoding)
     for f in formats:
-        if (f.get('ext') == 'm4a' or f.get('itag') == 140 or 'mp4a' in f.get('acodec', '')) and f.get('url'):
-            return f['url']
-            
-    # 2. Priority 2: Any audio-only format
+        u = f.get('url')
+        if not u:
+            continue
+        if (f.get('itag') == 140 or f.get('ext') == 'm4a') and 'videoplayback' in u:
+            return u
+
+    # Priority 2: Any audio-only format with direct videoplayback URL
     for f in formats:
-        if f.get('acodec') != 'none' and f.get('vcodec') == 'none' and f.get('url'):
-            return f['url']
-            
+        u = f.get('url')
+        if not u:
+            continue
+        if f.get('acodec') != 'none' and f.get('vcodec') == 'none' and 'videoplayback' in u:
+            return u
+
+    # Priority 3: Any audio format
+    for f in formats:
+        u = f.get('url')
+        if u and f.get('acodec') != 'none' and f.get('vcodec') == 'none':
+            return u
+
     return info.get('url')
+
+def get_audio_url(target):
+    # Step 1: Clean extraction (no cookies) - works 100% reliably on residential/mobile IPs
+    clean_err = None
+    try:
+        info = ydl_clean.extract_info(target, download=False)
+        url = extract_best_audio(info)
+        if url:
+            return url
+    except Exception as e:
+        clean_err = str(e)
+        sys.stderr.write(f"[Worker] Clean extract for {target}: {clean_err}\n")
+
+    # Step 2: Fallback to cookie extractor only if clean failed and cookie instance is ready
+    if ydl_cookie:
+        try:
+            info = ydl_cookie.extract_info(target, download=False)
+            url = extract_best_audio(info)
+            if url:
+                return url
+        except Exception as e:
+            sys.stderr.write(f"[Worker] Cookie fallback for {target}: {e}\n")
+
+    raise RuntimeError(clean_err or "No playable audio stream found")
 
 def process_job(req_id, target):
     try:
@@ -121,5 +142,5 @@ for line in sys.stdin:
         req_id = data.get("id")
         target = data.get("target")
         executor.submit(process_job, req_id, target)
-    except Exception as e:
+    except Exception:
         pass

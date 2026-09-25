@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getPlayableAudioUrl, prefetchNextTracks, resolveTrack, searchTracks } from '../services/api';
+import { getPlayableAudioUrl, fetchDirectStreamUrl, DEFAULT_SERVERS, prefetchNextTracks, resolveTrack, searchTracks } from '../services/api';
 import { addRecentTrack, updateTrackInPlaylists } from '../services/storage';
 import { getOfflineTrack } from '../services/offlineStorage';
 
@@ -52,6 +52,7 @@ export function useAudioPlayer() {
   const historyStackRef = useRef([]);
   const isFetchingSmartRef = useRef(false);
   const isTransitioningRef = useRef(false);
+  const retryCountRef = useRef(0);
 
   const queueRef = useRef([]);
   const queueIndexRef = useRef(-1);
@@ -127,15 +128,19 @@ export function useAudioPlayer() {
         const err = audio.error;
         console.warn('Native HTML5 Audio error:', err ? `code=${err.code} msg=${err.message}` : 'unknown error');
         setIsLoading(false);
-        // Do NOT fall back to YouTube video player on mobile background playback!
-        // Instead, if network error occurred, retry streaming once
-        if (err && err.code === 2 && currentTrackRef.current && !userPausedRef.current) {
+        // Cascading retry on alternative server if current server failed
+        if (currentTrackRef.current && !userPausedRef.current && retryCountRef.current < 2) {
+          retryCountRef.current++;
           setTimeout(() => {
-            if (audioRef.current && activeEngineRef.current === 'audio' && !userPausedRef.current) {
+            if (audioRef.current && activeEngineRef.current === 'audio' && !userPausedRef.current && currentTrackRef.current) {
+              const fallbackServer = retryCountRef.current === 1 ? DEFAULT_SERVERS.tunnel : DEFAULT_SERVERS.local;
+              console.log(`Retrying audio with fallback server (${fallbackServer})...`);
+              const fallbackUrl = getPlayableAudioUrl(currentTrackRef.current, fallbackServer);
+              audioRef.current.src = fallbackUrl;
               audioRef.current.load();
               audioRef.current.play().catch(() => {});
             }
-          }, 1500);
+          }, 1000);
         }
       }
     };
@@ -368,6 +373,7 @@ export function useAudioPlayer() {
   const playViaAudioElement = useCallback((track) => {
     if (!track || !track.id) return;
 
+    retryCountRef.current = 0;
     isTransitioningRef.current = true;
     setCurrentTime(0);
 
@@ -406,6 +412,17 @@ export function useAudioPlayer() {
             }
           });
       }
+
+      // Proactively fetch direct stream URL for 0ms ultra-fast streaming
+      fetchDirectStreamUrl(track).then((directUrl) => {
+        if (directUrl && audioRef.current && activeEngineRef.current === 'audio' && !userPausedRef.current) {
+          if (audioRef.current.currentTime < 1 && audioRef.current.paused) {
+            console.log('Upgrading audio element to direct Google CDN stream...');
+            audioRef.current.src = directUrl;
+            audioRef.current.play().catch(() => {});
+          }
+        }
+      }).catch(() => {});
     } catch (err) {
       console.warn('Native audio exception:', err);
       setIsLoading(false);

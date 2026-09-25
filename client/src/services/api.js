@@ -2,8 +2,9 @@ import { isNativeApp } from './nativeAudio';
 
 // Server URLs
 export const DEFAULT_SERVERS = {
-  cloud: 'https://spotifree-h7s8.onrender.com',
+  tunnel: 'https://compilation-benjamin-gnome-pockets.trycloudflare.com',
   local: 'http://10.100.102.16:5050',
+  cloud: 'https://spotifree-h7s8.onrender.com',
   tailscale: 'http://100.99.113.87:5050'
 };
 
@@ -12,8 +13,8 @@ export function getActiveServerUrl() {
   if (custom) return custom.replace(/\/+$/, '');
 
   if (isNativeApp) {
-    // In native Android app, default to Cloud so it works everywhere (Wi-Fi, 4G, 5G)
-    return DEFAULT_SERVERS.cloud;
+    // In native Android app, default to Tunnel (unblocked everywhere, residential IP speed)
+    return DEFAULT_SERVERS.tunnel;
   }
 
   // In web browser, use relative path ('' -> '/api')
@@ -34,33 +35,45 @@ export function getApiBase() {
 }
 
 /**
- * Robust fetch with automatic failover to Cloud if local PC is unreachable
+ * Robust fetch with automatic cascading failover (Tunnel -> Local -> Cloud)
  */
 async function fetchWithFailover(apiPath, options = {}) {
   const base = getActiveServerUrl();
-  const primaryUrl = base ? `${base}${apiPath}` : apiPath;
+  const serverCandidates = [
+    base,
+    DEFAULT_SERVERS.tunnel,
+    DEFAULT_SERVERS.local,
+    DEFAULT_SERVERS.cloud
+  ].filter(Boolean);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 6500);
-  const combinedSignal = options.signal || controller.signal;
+  const uniqueServers = [...new Set(serverCandidates)];
+  let lastError = null;
 
-  try {
-    const res = await fetch(primaryUrl, { ...options, signal: combinedSignal });
-    clearTimeout(timeoutId);
-    if (!res.ok && res.status >= 500 && base && base !== DEFAULT_SERVERS.cloud) {
-      throw new Error(`Server returned ${res.status}`);
+  for (const srv of uniqueServers) {
+    const fullUrl = srv ? `${srv}${apiPath}` : apiPath;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const combinedSignal = options.signal || controller.signal;
+
+    try {
+      const res = await fetch(fullUrl, { ...options, signal: combinedSignal });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        return res;
+      }
+      if (res.status < 500) {
+        // 4xx errors (client errors) shouldn't cycle through servers
+        return res;
+      }
+      throw new Error(`Server ${srv} returned ${res.status}`);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      lastError = err;
+      console.warn(`Server ${srv} failed for ${apiPath}:`, err.message);
     }
-    return res;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    // Automatic failover: if primary local/custom server timed out or failed, try cloud!
-    if (base && base !== DEFAULT_SERVERS.cloud) {
-      console.warn(`Primary server (${base}) failed, failing over to cloud:`, err.message);
-      const fallbackUrl = `${DEFAULT_SERVERS.cloud}${apiPath}`;
-      return await fetch(fallbackUrl, options);
-    }
-    throw err;
   }
+
+  throw lastError || new Error('All servers unreachable');
 }
 
 // In-Memory Client Caches for 0ms repeat searches and resolutions
@@ -145,12 +158,32 @@ export async function getLyrics(track, artist, duration) {
 }
 
 /**
- * Generate playable audio URL immediately without network round-trips
+ * Fetch direct audio stream URL with 0ms buffering from nearest CDN edge
  */
-export function getPlayableAudioUrl(track) {
-  const base = getActiveServerUrl() || DEFAULT_SERVERS.cloud;
+export async function fetchDirectStreamUrl(track) {
+  if (!track) return null;
+  const vid = track.streamableId || track.id;
+  if (!vid || vid.startsWith('sp_')) return null;
+
+  try {
+    const res = await fetchWithFailover(`/api/stream/${encodeURIComponent(vid)}`);
+    if (res && res.ok) {
+      const data = await res.json();
+      return data.streamUrl || null;
+    }
+  } catch (e) {
+    console.warn('fetchDirectStreamUrl error:', e.message);
+  }
+  return null;
+}
+
+/**
+ * Generate playable audio URL with fallback server support
+ */
+export function getPlayableAudioUrl(track, serverOverride = null) {
+  const base = serverOverride || getActiveServerUrl() || DEFAULT_SERVERS.tunnel || DEFAULT_SERVERS.cloud;
   const fallbackQuery = encodeURIComponent(`${track.title || ''} ${track.artist || ''}`.trim());
-  const streamableId = encodeURIComponent(track.id || '');
+  const streamableId = encodeURIComponent(track.streamableId || track.id || '');
   return `${base}/api/stream/pipe/${streamableId}?q=${fallbackQuery}`;
 }
 

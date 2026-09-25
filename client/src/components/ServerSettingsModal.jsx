@@ -63,6 +63,29 @@ export function ServerSettingsModal({ isOpen, onClose, showToast }) {
             בחר את שרת המקור עבור חיפוש והזרמת שמע. שרת ה-PC המקומי מאפשר איכות מקסימלית ועקיפה מלאה של חסימות.
           </p>
 
+          {/* Option 0: Cloudflare Tunnel */}
+          <button
+            onClick={() => handleSelect(DEFAULT_SERVERS.tunnel)}
+            className={`w-full flex items-center justify-between p-3 rounded-xl border text-right transition-all ${
+              currentUrl === DEFAULT_SERVERS.tunnel
+                ? 'bg-green-500/10 border-green-500/50 text-white'
+                : 'bg-zinc-900 border-white/5 text-zinc-300 hover:border-white/20'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {currentUrl === DEFAULT_SERVERS.tunnel && <Check className="w-4 h-4 text-green-500" />}
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <div className="font-semibold text-sm flex items-center gap-1.5 justify-end">
+                  <span>Cloudflare Tunnel (מומלץ - 4G/5G ו-Wi-Fi)</span>
+                  <Globe className="w-4 h-4 text-purple-400" />
+                </div>
+                <div className="text-xs text-zinc-400 truncate max-w-[240px]">{DEFAULT_SERVERS.tunnel}</div>
+              </div>
+            </div>
+          </button>
+
           {/* Option 1: Local PC */}
           <button
             onClick={() => handleSelect(DEFAULT_SERVERS.local)}

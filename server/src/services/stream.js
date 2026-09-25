@@ -21,7 +21,22 @@ const RESOLVE_CACHE_FILE = path.join(CACHE_DIR, 'resolutions.json');
 const urlCache = new Map();
 const resolveCache = new Map();
 const inFlightRequests = new Map();
-const failedVideoIds = new Set();
+const failedVideoIds = new Map(); // id -> timestamp
+
+function isFailed(id) {
+  if (!id) return false;
+  const t = failedVideoIds.get(id);
+  if (!t) return false;
+  if (Date.now() - t > 15000) {
+    failedVideoIds.delete(id);
+    return false;
+  }
+  return true;
+}
+
+function markFailed(id) {
+  if (id) failedVideoIds.set(id, Date.now());
+}
 
 // Load disk caches on boot (filtering out old WebM streams)
 try {
@@ -275,7 +290,7 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
 
     // 1. Direct video ID (11 chars YouTube ID)
     const isVideoId = videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId);
-    if (isVideoId && !failedVideoIds.has(videoId)) {
+    if (isVideoId && !isFailed(videoId)) {
       try {
         streamUrl = await extractWithWorker(`https://www.youtube.com/watch?v=${videoId}`, isPriority);
         if (streamUrl) {
@@ -287,7 +302,7 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
         }
       } catch (err) {
         console.warn(`Direct stream for ${videoId} failed (${err.message}). Trying query resolution...`);
-        failedVideoIds.add(videoId);
+        markFailed(videoId);
       }
     }
 
@@ -296,7 +311,7 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       const cleanKey = fallbackQuery.toLowerCase().trim();
       let targetVideoId = resolveCache.get(cleanKey);
 
-      if (targetVideoId && failedVideoIds.has(targetVideoId)) {
+      if (targetVideoId && isFailed(targetVideoId)) {
         targetVideoId = null;
       }
 
@@ -305,7 +320,7 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
           const ytsRes = await yts(fallbackQuery);
           if (ytsRes && ytsRes.videos && ytsRes.videos.length > 0) {
             // Find first video that is NOT blacklisted and under 10 minutes (avoids multi-hour mix files)
-            const candidate = ytsRes.videos.find(v => !failedVideoIds.has(v.videoId) && (!v.seconds || v.seconds < 600));
+            const candidate = ytsRes.videos.find(v => !isFailed(v.videoId) && (!v.seconds || v.seconds < 600));
             if (candidate) {
               targetVideoId = candidate.videoId;
               resolveCache.set(cleanKey, targetVideoId);
@@ -316,7 +331,7 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
         }
       }
 
-      if (targetVideoId && !failedVideoIds.has(targetVideoId)) {
+      if (targetVideoId && !isFailed(targetVideoId)) {
         // Check if videoId itself was already cached
         const cachedVideo = urlCache.get(targetVideoId);
         if (cachedVideo && cachedVideo.expiresAt > Date.now() && cachedVideo.url && !cachedVideo.url.includes('mime=audio%2Fwebm')) {
@@ -334,7 +349,7 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
           }
         } catch (e) {
           console.error('extractWithWorker failed for targetVideoId:', e.message);
-          failedVideoIds.add(targetVideoId);
+          markFailed(targetVideoId);
         }
       }
     }
@@ -353,6 +368,22 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
         try {
           streamUrl = await fetchFromInvidious(vid);
         } catch (e) {}
+      }
+    }
+
+    // 5. Cloudflare Tunnel fallback for datacenter cloud environments (Render)
+    if (!streamUrl) {
+      const vid = (isVideoId ? videoId : null) || resolveCache.get((fallbackQuery || '').toLowerCase().trim());
+      const tunnelBase = process.env.TUNNEL_FALLBACK_URL || 'https://compilation-benjamin-gnome-pockets.trycloudflare.com';
+      if (vid && tunnelBase) {
+        try {
+          const tunnelRes = await axios.get(`${tunnelBase}/api/stream/${vid}`, { timeout: 8000 });
+          if (tunnelRes.data && tunnelRes.data.streamUrl) {
+            streamUrl = tunnelRes.data.streamUrl;
+          }
+        } catch (e) {
+          console.warn('Tunnel fallback failed:', e.message);
+        }
       }
     }
 
@@ -505,6 +536,11 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
 
       response.data.pipe(res);
       return;
+    }
+
+    if (response.status === 403 || response.status >= 400) {
+      urlCache.delete(videoId);
+      if (fallbackQuery) urlCache.delete(fallbackQuery.toLowerCase().trim());
     }
 
     throw new Error(`Upstream CDN returned status ${response.status}`);
