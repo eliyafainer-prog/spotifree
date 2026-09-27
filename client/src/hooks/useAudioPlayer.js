@@ -128,28 +128,9 @@ export function useAudioPlayer() {
         const err = audio.error;
         console.warn('Native HTML5 Audio error:', err ? `code=${err.code} msg=${err.message}` : 'unknown error');
         setIsLoading(false);
-        // Cascading retry on alternative server if current server failed
-        if (currentTrackRef.current && !userPausedRef.current && retryCountRef.current < 2) {
+        if (currentTrackRef.current && !userPausedRef.current && retryCountRef.current === 0) {
           retryCountRef.current++;
-          setTimeout(() => {
-            if (audioRef.current && activeEngineRef.current === 'audio' && !userPausedRef.current && currentTrackRef.current) {
-              const currentSrc = audioRef.current?.src || '';
-              const fallbackCandidates = [
-                DEFAULT_SERVERS.tunnel,
-                DEFAULT_SERVERS.cloud,
-                DEFAULT_SERVERS.local
-              ].filter(s => s && !currentSrc.includes(s));
-              const fallbackServer = fallbackCandidates[retryCountRef.current - 1] || DEFAULT_SERVERS.cloud;
-              console.log(`Retrying audio with fallback server (${fallbackServer})...`);
-              const fallbackUrl = getPlayableAudioUrl(currentTrackRef.current, fallbackServer);
-              audioRef.current.src = fallbackUrl;
-              audioRef.current.load();
-              audioRef.current.play().catch(() => {});
-            }
-          }, 800);
-        } else if (retryCountRef.current === 2 && currentTrackRef.current && !userPausedRef.current) {
-          retryCountRef.current++;
-          console.warn('Native proxy failed on all servers, attempting direct client-side extraction...');
+          console.warn('Native proxy failed, attempting direct client-side extraction...');
           fetchDirectStreamUrl(currentTrackRef.current).then(directUrl => {
             if (directUrl && audioRef.current && activeEngineRef.current === 'audio' && !userPausedRef.current) {
               audioRef.current.src = directUrl;
@@ -325,7 +306,14 @@ export function useAudioPlayer() {
                   setIsPlaying(true);
                   setIsLoading(false);
                 } else if (e.data === 2) { // PAUSED
-                  setIsPlaying(false);
+                  if (!userPausedRef.current) {
+                    console.log('System auto-paused YT player (background), forcing resume...');
+                    setTimeout(() => {
+                      if (!userPausedRef.current) e.target.playVideo();
+                    }, 100);
+                  } else {
+                    setIsPlaying(false);
+                  }
                 } else if (e.data === 0) { // ENDED
                   nextTrackRef.current?.();
                 } else if (e.data === 3) { // BUFFERING

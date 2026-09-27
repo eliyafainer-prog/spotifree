@@ -33,6 +33,7 @@ public class MainActivity extends BridgeActivity {
         WebView webView = getBridge() != null ? getBridge().getWebView() : null;
         if (webView != null) {
             webView.resumeTimers();
+            webView.onResume(); // Force WebView to think it's still in the foreground!
         }
     }
 }

@@ -166,10 +166,12 @@ async function fetchWithFailover(apiPath, options = {}) {
         }
         return res;
       }
-      if (res.status < 500) {
+      if (res.status >= 500) {
+        // Server is ALIVE but failed the operation (e.g. 500 internal error). 
+        // Break the loop and return immediately to fail-fast.
         return res;
       }
-      throw new Error(`Server ${srv} returned ${res.status}`);
+      return res;
     } catch (err) {
       clearTimeout(timeoutId);
       lastError = err;
@@ -290,21 +292,34 @@ export async function fetchDirectStreamUrl(track) {
     'https://pipedapi.smnz.de'
   ];
   
-  for (const inst of PIPED_INSTANCES) {
-    try {
-      const res = await fetch(`${inst}/streams/${vid}`);
-      if (res.ok) {
-        const data = await res.json();
-        const audioStreams = data.audioStreams;
-        if (audioStreams && audioStreams.length > 0) {
-          const m4a = audioStreams.find(s => s.format === 'M4A' || (s.mimeType && s.mimeType.includes('mp4')));
-          if (m4a && m4a.url) return m4a.url;
-          return audioStreams[0].url;
-        }
-      }
-    } catch (err) {
-      // try next instance
-    }
+  try {
+    const promises = PIPED_INSTANCES.map(inst => {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 2000); // 2 second max wait per instance
+      
+      return fetch(`${inst}/streams/${vid}`, { signal: controller.signal })
+        .then(async res => {
+          clearTimeout(id);
+          if (!res.ok) throw new Error(`Piped ${res.status}`);
+          const data = await res.json();
+          const audioStreams = data.audioStreams;
+          if (audioStreams && audioStreams.length > 0) {
+            const m4a = audioStreams.find(s => s.format === 'M4A' || (s.mimeType && s.mimeType.includes('mp4')));
+            if (m4a && m4a.url) return m4a.url;
+            return audioStreams[0].url;
+          }
+          throw new Error('No audio found on piped');
+        })
+        .catch(err => {
+          clearTimeout(id);
+          throw err;
+        });
+    });
+
+    const directUrl = await Promise.any(promises);
+    if (directUrl) return directUrl;
+  } catch (err) {
+    console.warn('All client-side Piped instances failed');
   }
 
   return null;

@@ -12,7 +12,10 @@ ydl_opts_clean = {
     'no_warnings': True,
     'no_color': True,
     'no_check_certificates': True,
-    'socket_timeout': 10,
+    'socket_timeout': 5, # Reduce to 5 seconds
+    'retries': 0,
+    'extractor_retries': 0,
+    'fragment_retries': 0,
     'noplaylist': True,
     'extract_flat': False,
     'skip_download': True,
