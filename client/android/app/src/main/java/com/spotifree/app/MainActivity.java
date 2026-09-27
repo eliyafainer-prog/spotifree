@@ -17,6 +17,12 @@ public class MainActivity extends BridgeActivity {
             settings.setMediaPlaybackRequiresUserGesture(false);
             settings.setJavaScriptEnabled(true);
             settings.setDomStorageEnabled(true);
+            
+            // Override Page Visibility API so YouTube iframe doesn't pause in background
+            String js = "Object.defineProperty(document, 'visibilityState', {get: function () { return 'visible'; }});" +
+                        "Object.defineProperty(document, 'hidden', {get: function () { return false; }});" +
+                        "document.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);";
+            webView.evaluateJavascript(js, null);
         }
     }
 

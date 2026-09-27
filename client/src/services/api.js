@@ -277,11 +277,36 @@ export async function fetchDirectStreamUrl(track) {
     const res = await fetchWithFailover(`/api/stream/${encodeURIComponent(vid)}`);
     if (res && res.ok) {
       const data = await res.json();
-      return data.streamUrl || null;
+      if (data.streamUrl) return data.streamUrl;
     }
   } catch (e) {
-    console.warn('fetchDirectStreamUrl error:', e.message);
+    console.warn('Server fetchDirectStreamUrl failed, falling back to client-side Piped API:', e.message);
   }
+
+  // Client-side Fallback using Piped API (uses residential IP, bypasses server IP blocks)
+  const PIPED_INSTANCES = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.tokhmi.xyz',
+    'https://pipedapi.smnz.de'
+  ];
+  
+  for (const inst of PIPED_INSTANCES) {
+    try {
+      const res = await fetch(`${inst}/streams/${vid}`);
+      if (res.ok) {
+        const data = await res.json();
+        const audioStreams = data.audioStreams;
+        if (audioStreams && audioStreams.length > 0) {
+          const m4a = audioStreams.find(s => s.format === 'M4A' || (s.mimeType && s.mimeType.includes('mp4')));
+          if (m4a && m4a.url) return m4a.url;
+          return audioStreams[0].url;
+        }
+      }
+    } catch (err) {
+      // try next instance
+    }
+  }
+
   return null;
 }
 

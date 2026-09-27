@@ -435,20 +435,21 @@ const INVIDIOUS_INSTANCES = [
   'https://inv.nadeko.net',
   'https://yt.chocolatemoo53.com',
   'https://invidious.nerdvpn.de',
-  'https://invidious.tiekoetter.com'
+  'https://invidious.tiekoetter.com',
+  'https://invidious.perennialte.ch'
 ];
 
 /**
- * Fetch direct Google CDN audio stream URL from public Invidious instances when datacenter IPs are 429-blocked
+ * Fetch direct Google CDN audio stream URL from public Invidious instances in parallel (Fast Fail)
  */
 async function fetchFromInvidious(videoId) {
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
-  for (const inst of INVIDIOUS_INSTANCES) {
-    try {
-      const res = await axios.get(`${inst}/api/v1/videos/${videoId}`, {
-        timeout: 3500,
-        headers: { 'Accept': 'application/json' }
-      });
+  
+  const promises = INVIDIOUS_INSTANCES.map(inst => 
+    axios.get(`${inst}/api/v1/videos/${videoId}`, {
+      timeout: 1800,
+      headers: { 'Accept': 'application/json' }
+    }).then(res => {
       if (res.data && res.data.adaptiveFormats) {
         const audio = res.data.adaptiveFormats.find(f => f.type && f.type.includes('audio/mp4')) ||
                       res.data.adaptiveFormats.find(f => f.type && f.type.startsWith('audio/'));
@@ -456,11 +457,15 @@ async function fetchFromInvidious(videoId) {
           return audio.url;
         }
       }
-    } catch (e) {
-      // Continue to next instance
-    }
+      throw new Error('No audio found in format list');
+    })
+  );
+
+  try {
+    return await Promise.any(promises);
+  } catch (e) {
+    return null;
   }
-  return null;
 }
 
 /**

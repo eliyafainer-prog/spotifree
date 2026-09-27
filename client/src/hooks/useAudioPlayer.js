@@ -147,9 +147,23 @@ export function useAudioPlayer() {
               audioRef.current.play().catch(() => {});
             }
           }, 800);
-        } else if (retryCountRef.current >= 2 && currentTrackRef.current && !userPausedRef.current) {
-          console.warn('Native audio stream failed on all servers, falling back to YouTube Player');
-          playViaYouTubePlayerRef.current?.(currentTrackRef.current);
+        } else if (retryCountRef.current === 2 && currentTrackRef.current && !userPausedRef.current) {
+          retryCountRef.current++;
+          console.warn('Native proxy failed on all servers, attempting direct client-side extraction...');
+          fetchDirectStreamUrl(currentTrackRef.current).then(directUrl => {
+            if (directUrl && audioRef.current && activeEngineRef.current === 'audio' && !userPausedRef.current) {
+              audioRef.current.src = directUrl;
+              audioRef.current.load();
+              audioRef.current.play().catch(() => {});
+            } else {
+              throw new Error('No direct URL');
+            }
+          }).catch(() => {
+            if (currentTrackRef.current && !userPausedRef.current) {
+              console.warn('Direct extraction failed, falling back to YouTube Player');
+              playViaYouTubePlayerRef.current?.(currentTrackRef.current);
+            }
+          });
         }
       }
     };
