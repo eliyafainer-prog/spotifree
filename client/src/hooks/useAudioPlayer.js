@@ -553,8 +553,8 @@ export function useAudioPlayer() {
       console.warn('Offline storage check skipped:', e);
     }
 
-    // 2. Play via native HTML5 Audio element (Background & Lock-Screen First)
-    playViaAudioElement(playableTrack);
+    // 2. Play via native YouTube IFrame (Background service keeps it alive instantly)
+    playViaYouTubePlayer(playableTrack);
     addRecentTrack(playableTrack);
 
     prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
