@@ -174,6 +174,10 @@ async function fetchWithFailover(apiPath, options = {}) {
       clearTimeout(timeoutId);
       lastError = err;
       console.warn(`Server ${srv} failed for ${apiPath}:`, err.message);
+      if (srv === activeServerUrl) {
+        activeServerUrl = null;
+        try { localStorage.removeItem('spotifree_last_healthy_server'); } catch (e) {}
+      }
     }
   }
 

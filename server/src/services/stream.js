@@ -135,6 +135,11 @@ function startWorker() {
   workerProcess.on('exit', () => {
     workerReady = false;
     workerProcess = null;
+    for (const [id, req] of pendingRequests.entries()) {
+      clearTimeout(req.timer);
+      extractStreamWithYtDlp(req.target).then(req.resolve).catch(req.reject);
+    }
+    pendingRequests.clear();
     setTimeout(startWorker, 2000);
   });
 }
@@ -550,6 +555,14 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
       ffmpeg.stdout.pipe(res);
       ffmpeg.on('error', (err) => {
         console.error('FFmpeg pipe error:', err.message);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Audio demuxing failed' });
+        } else {
+          try { res.end(); } catch (e) {}
+        }
+      });
+      ffmpeg.stdout.on('error', () => {
+        try { ffmpeg.kill(); } catch (e) {}
       });
       return;
     }
