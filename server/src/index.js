@@ -69,13 +69,19 @@ app.get('/health', (req, res) => {
 });
 
 // Direct APK download route for mobile installation
-const apkPath = path.join(__dirname, '../../client/android/app/build/outputs/apk/debug/app-debug.apk');
-app.get('/spotifree.apk', (req, res) => {
-  if (fs.existsSync(apkPath)) {
-    res.download(apkPath, 'SpotiFree.apk');
-  } else {
-    res.status(404).send('APK not found. Please build the Android app first.');
+const apkCandidates = [
+  path.join(__dirname, '../../client/android/app/build/outputs/apk/debug/app-debug.apk'),
+  path.join(__dirname, '../../SpotiFree.apk'),
+  'C:\\Users\\elyas\\Downloads\\SpotiFree.apk'
+];
+
+app.get(['/spotifree.apk', '/download/apk', '/app.apk'], (req, res) => {
+  for (const p of apkCandidates) {
+    if (fs.existsSync(p)) {
+      return res.download(p, 'SpotiFree.apk');
+    }
   }
+  res.status(404).send('APK not found. Please build the Android app first.');
 });
 
 // Serve production client build directly without dev proxy overhead
@@ -90,7 +96,10 @@ if (fs.existsSync(distPath)) {
   });
 }
 
+const { initTunnelSupervisor } = require('./services/tunnelSupervisor');
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎵 SpotiFree Unified Server running on http://localhost:${PORT}`);
   console.log(`🌐 Available on your local network on port ${PORT}`);
+  initTunnelSupervisor();
 });

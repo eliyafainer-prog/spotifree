@@ -6,6 +6,45 @@ const { searchTracks, getTrendingTracks } = require('../services/search');
 const { getAudioStreamUrl, pipeStream } = require('../services/stream');
 const { getLyrics } = require('../services/lyrics');
 const { universalImport, resolveTrackToStreamableId } = require('../services/importer');
+const { setRegisteredTunnel, getRegisteredTunnel } = require('../services/tunnelState');
+
+/**
+ * Health check under /api
+ */
+router.get('/health', (req, res) => {
+  const tunnel = getRegisteredTunnel();
+  res.json({
+    status: 'ok',
+    app: 'SpotiFree Server',
+    version: '1.0.0',
+    activeTunnel: tunnel.url || null
+  });
+});
+
+/**
+ * Register active dynamic tunnel (called by local PC server)
+ */
+router.post('/tunnel/register', (req, res) => {
+  const { tunnelUrl } = req.body;
+  if (tunnelUrl && typeof tunnelUrl === 'string') {
+    setRegisteredTunnel(tunnelUrl);
+    console.log(`[API] Dynamic tunnel registered: ${tunnelUrl}`);
+    return res.json({ ok: true, tunnelUrl });
+  }
+  res.status(400).json({ error: 'tunnelUrl string is required' });
+});
+
+/**
+ * Get active dynamic tunnel (called by mobile/web clients)
+ */
+router.get('/tunnel/active', (req, res) => {
+  const tunnel = getRegisteredTunnel();
+  res.json({
+    tunnelUrl: tunnel.url || null,
+    isAlive: tunnel.isFresh,
+    registeredAt: tunnel.lastHeartbeat
+  });
+});
 
 /**
  * Search tracks

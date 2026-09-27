@@ -133,14 +133,19 @@ export function useAudioPlayer() {
           retryCountRef.current++;
           setTimeout(() => {
             if (audioRef.current && activeEngineRef.current === 'audio' && !userPausedRef.current && currentTrackRef.current) {
-              const fallbackServer = retryCountRef.current === 1 ? DEFAULT_SERVERS.tunnel : DEFAULT_SERVERS.local;
+              const fallbackServer = retryCountRef.current === 1 
+                ? (DEFAULT_SERVERS.cloud) 
+                : (DEFAULT_SERVERS.local);
               console.log(`Retrying audio with fallback server (${fallbackServer})...`);
               const fallbackUrl = getPlayableAudioUrl(currentTrackRef.current, fallbackServer);
               audioRef.current.src = fallbackUrl;
               audioRef.current.load();
               audioRef.current.play().catch(() => {});
             }
-          }, 1000);
+          }, 800);
+        } else if (retryCountRef.current >= 2 && currentTrackRef.current && !userPausedRef.current) {
+          console.warn('Native audio stream failed on all servers, falling back to YouTube Player');
+          playViaYouTubePlayerRef.current?.(currentTrackRef.current);
         }
       }
     };

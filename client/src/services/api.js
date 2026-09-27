@@ -1,31 +1,132 @@
 import { isNativeApp } from './nativeAudio';
 
-// Server URLs
+// High-speed Server Infrastructure
 export const DEFAULT_SERVERS = {
-  tunnel: 'https://compilation-benjamin-gnome-pockets.trycloudflare.com',
+  tunnel: 'https://depending-lawyer-memories-gui.trycloudflare.com',
   local: 'http://10.100.102.16:5050',
-  cloud: 'https://spotifree-h7s8.onrender.com',
-  tailscale: 'http://100.99.113.87:5050'
+  cloud: 'https://spotifree-h7s8.onrender.com'
 };
+
+let activeServerUrl = null;
+let discoveryPromise = null;
+
+/**
+ * High-speed parallel server discovery:
+ * Races cached server, local Wi-Fi, active Cloudflare tunnel, and Render dynamic registry.
+ * Locks onto the fastest live server in 30-200ms!
+ */
+export async function discoverActiveServer(force = false) {
+  if (activeServerUrl && !force) return activeServerUrl;
+  if (discoveryPromise && !force) return discoveryPromise;
+
+  discoveryPromise = (async () => {
+    // Check user manual override in settings
+    const custom = localStorage.getItem('spotifree_server_url');
+    if (custom) {
+      activeServerUrl = custom.replace(/\/+$/, '');
+      return activeServerUrl;
+    }
+
+    if (!isNativeApp && typeof window !== 'undefined' && window.location.origin && !window.location.origin.includes('localhost:5173')) {
+      activeServerUrl = '';
+      return '';
+    }
+
+    const cachedServer = localStorage.getItem('spotifree_last_healthy_server');
+    const candidates = [
+      cachedServer,
+      'http://10.100.102.16:5050',
+      DEFAULT_SERVERS.tunnel,
+      DEFAULT_SERVERS.cloud
+    ].filter(Boolean);
+
+    const uniqueCandidates = [...new Set(candidates)];
+
+    const ping = async (srv) => {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 900);
+      try {
+        const res = await fetch(`${srv}/health`, { signal: controller.signal });
+        clearTimeout(tid);
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data && data.activeTunnel) {
+            return data.activeTunnel;
+          }
+          return srv;
+        }
+      } catch (e) {
+        clearTimeout(tid);
+      }
+      throw new Error(`Ping failed for ${srv}`);
+    };
+
+    try {
+      const winner = await Promise.any(uniqueCandidates.map(s => ping(s)));
+      if (winner) {
+        activeServerUrl = winner.replace(/\/+$/, '');
+        localStorage.setItem('spotifree_last_healthy_server', activeServerUrl);
+        console.log(`[API] Locked onto fastest server: ${activeServerUrl}`);
+        return activeServerUrl;
+      }
+    } catch (e) {
+      // If direct pings didn't answer within 900ms, ask Render for the dynamic registered tunnel
+      try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch(`${DEFAULT_SERVERS.cloud}/api/tunnel/active`, { signal: controller.signal });
+        clearTimeout(tid);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.tunnelUrl) {
+            activeServerUrl = data.tunnelUrl.replace(/\/+$/, '');
+            localStorage.setItem('spotifree_last_healthy_server', activeServerUrl);
+            return activeServerUrl;
+          }
+        }
+      } catch (err) {}
+    }
+
+    activeServerUrl = cachedServer || DEFAULT_SERVERS.tunnel || DEFAULT_SERVERS.cloud;
+    return activeServerUrl;
+  })();
+
+  try {
+    return await discoveryPromise;
+  } finally {
+    discoveryPromise = null;
+  }
+}
+
+// Proactively run discovery on startup
+discoverActiveServer().catch(() => {});
 
 export function getActiveServerUrl() {
   const custom = localStorage.getItem('spotifree_server_url');
   if (custom) return custom.replace(/\/+$/, '');
 
+  if (activeServerUrl !== null) {
+    return activeServerUrl;
+  }
+
+  const cached = localStorage.getItem('spotifree_last_healthy_server');
+  if (cached) return cached;
+
   if (isNativeApp) {
-    // In native Android app, default to Tunnel (unblocked everywhere, residential IP speed)
     return DEFAULT_SERVERS.tunnel;
   }
 
-  // In web browser, use relative path ('' -> '/api')
   return '';
 }
 
 export function setActiveServerUrl(url) {
   if (!url) {
     localStorage.removeItem('spotifree_server_url');
+    activeServerUrl = null;
   } else {
-    localStorage.setItem('spotifree_server_url', url.replace(/\/+$/, ''));
+    const clean = url.replace(/\/+$/, '');
+    localStorage.setItem('spotifree_server_url', clean);
+    activeServerUrl = clean;
   }
 }
 
@@ -35,15 +136,15 @@ export function getApiBase() {
 }
 
 /**
- * Robust fetch with automatic cascading failover (Tunnel -> Local -> Cloud)
+ * Fast fetch with circuit-breaker failover (1.8s timeout per candidate, never hanging 15 seconds)
  */
 async function fetchWithFailover(apiPath, options = {}) {
-  const base = getActiveServerUrl();
+  const currentBase = getActiveServerUrl();
   const serverCandidates = [
-    base,
+    currentBase,
     DEFAULT_SERVERS.tunnel,
-    DEFAULT_SERVERS.local,
-    DEFAULT_SERVERS.cloud
+    DEFAULT_SERVERS.cloud,
+    'http://10.100.102.16:5050'
   ].filter(Boolean);
 
   const uniqueServers = [...new Set(serverCandidates)];
@@ -52,17 +153,20 @@ async function fetchWithFailover(apiPath, options = {}) {
   for (const srv of uniqueServers) {
     const fullUrl = srv ? `${srv}${apiPath}` : apiPath;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 1800);
     const combinedSignal = options.signal || controller.signal;
 
     try {
       const res = await fetch(fullUrl, { ...options, signal: combinedSignal });
       clearTimeout(timeoutId);
       if (res.ok) {
+        if (srv && srv !== activeServerUrl) {
+          activeServerUrl = srv;
+          localStorage.setItem('spotifree_last_healthy_server', srv);
+        }
         return res;
       }
       if (res.status < 500) {
-        // 4xx errors (client errors) shouldn't cycle through servers
         return res;
       }
       throw new Error(`Server ${srv} returned ${res.status}`);

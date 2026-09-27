@@ -4,6 +4,7 @@ const yts = require('yt-search');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const { getRegisteredTunnel } = require('./tunnelState');
 
 // Persistent HTTP Keep-Alive Agent for reusable CDN sockets
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
@@ -471,6 +472,42 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
   });
 
   try {
+    const isCloudEnv = Boolean(process.env.RENDER || (process.env.NODE_ENV === 'production' && process.platform !== 'win32'));
+    const tunnel = getRegisteredTunnel();
+
+    // If running on Render cloud and an active tunnel is registered, forward directly to the local residential IP
+    if (isCloudEnv && tunnel && tunnel.url) {
+      try {
+        const tunnelStreamUrl = `${tunnel.url}/api/stream/pipe/${encodeURIComponent(videoId)}${fallbackQuery ? `?q=${encodeURIComponent(fallbackQuery)}` : ''}`;
+        const fwdHeaders = { ...req.headers };
+        delete fwdHeaders.host;
+
+        const proxyRes = await axios({
+          method: 'GET',
+          url: tunnelStreamUrl,
+          responseType: 'stream',
+          headers: fwdHeaders,
+          validateStatus: () => true,
+          timeout: 20000
+        });
+
+        if (proxyRes.status >= 200 && proxyRes.status < 400) {
+          res.status(proxyRes.status);
+          for (const [k, v] of Object.entries(proxyRes.headers)) {
+            const lk = k.toLowerCase();
+            if (['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'].includes(lk)) {
+              res.setHeader(lk, v);
+            }
+          }
+          upstreamStream = proxyRes.data;
+          proxyRes.data.pipe(res);
+          return;
+        }
+      } catch (err) {
+        console.warn(`[StreamProxy] Cloud forward to tunnel failed, falling back to local extractor:`, err.message);
+      }
+    }
+
     let streamUrl = null;
     try {
       streamUrl = await getAudioStreamUrl(videoId, fallbackQuery);
