@@ -19,6 +19,7 @@ function generateShuffledDeck(length, startingIndex = -1) {
 
 export function useAudioPlayer() {
   const audioRef = useRef(null);
+  const silentAudioRef = useRef(null);
   const ytPlayerRef = useRef(null);
   const ytTimerRef = useRef(null);
   const activeEngineRef = useRef('audio');
@@ -83,6 +84,20 @@ export function useAudioPlayer() {
     }
     audio.volume = isMuted ? 0 : volume;
     audioRef.current = audio;
+
+    let silentAudio = document.getElementById('spotifree-silent-audio');
+    if (!silentAudio) {
+      silentAudio = document.createElement('audio');
+      silentAudio.id = 'spotifree-silent-audio';
+      silentAudio.src = '/silent.mp3';
+      silentAudio.loop = true;
+      silentAudio.playsInline = true;
+      silentAudio.setAttribute('playsinline', 'true');
+      silentAudio.setAttribute('webkit-playsinline', 'true');
+      silentAudio.style.display = 'none';
+      document.body.appendChild(silentAudio);
+    }
+    silentAudioRef.current = silentAudio;
 
     const handleTimeUpdate = () => {
       if (activeEngineRef.current === 'audio') {
@@ -366,6 +381,7 @@ export function useAudioPlayer() {
           startSeconds: 0,
           suggestedQuality: 'small'
         });
+        silentAudioRef.current?.play().catch(() => {});
         player.playVideo();
       } catch (e) {
         console.error('Error in YT play:', e);
@@ -565,6 +581,7 @@ export function useAudioPlayer() {
    */
   const play = useCallback(() => {
     userPausedRef.current = false;
+    silentAudioRef.current?.play().catch(() => {});
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         if (typeof ytPlayerRef.current.unMute === 'function') {
@@ -582,6 +599,7 @@ export function useAudioPlayer() {
    */
   const pause = useCallback(() => {
     userPausedRef.current = true;
+    silentAudioRef.current?.pause();
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         ytPlayerRef.current.pauseVideo();
