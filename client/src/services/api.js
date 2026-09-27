@@ -36,7 +36,6 @@ export async function discoverActiveServer(force = false) {
     const cachedServer = localStorage.getItem('spotifree_last_healthy_server');
     const candidates = [
       cachedServer,
-      DEFAULT_SERVERS.android_termux,
       'http://10.100.102.16:5050',
       DEFAULT_SERVERS.tunnel,
       DEFAULT_SERVERS.cloud
@@ -144,7 +143,6 @@ async function fetchWithFailover(apiPath, options = {}) {
   const currentBase = getActiveServerUrl();
   const serverCandidates = [
     currentBase,
-    DEFAULT_SERVERS.android_termux,
     DEFAULT_SERVERS.tunnel,
     DEFAULT_SERVERS.cloud,
     'http://10.100.102.16:5050'

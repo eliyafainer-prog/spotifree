@@ -49,10 +49,28 @@ import { PlaylistView } from './components/PlaylistView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { OfflineView } from './components/OfflineView';
 import { ServerSettingsModal } from './components/ServerSettingsModal';
+import { ForegroundService } from '@capawesome-team/capacitor-android-foreground-service';
 
 export default function App() {
   // Audio Player Engine
   const player = useAudioPlayer();
+
+  useEffect(() => {
+    // Start foreground service to keep app awake when screen is off
+    const startService = async () => {
+      try {
+        await ForegroundService.startForegroundService({
+          id: 1,
+          title: 'SpotiFree',
+          body: 'Playing music in background',
+          smallIcon: 'ic_stat_name'
+        });
+      } catch (err) {
+        console.warn('Foreground service could not start:', err);
+      }
+    };
+    startService();
+  }, []);
 
   // Navigation & Views
   const [currentView, setCurrentView] = useState('home'); // 'home' | 'search' | 'library' | 'liked' | 'playlist'
