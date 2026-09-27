@@ -4,6 +4,7 @@ import { isNativeApp } from './nativeAudio';
 export const DEFAULT_SERVERS = {
   tunnel: 'https://depending-lawyer-memories-gui.trycloudflare.com',
   local: 'http://10.100.102.16:5050',
+  android_termux: 'http://127.0.0.1:5050',
   cloud: 'https://spotifree-h7s8.onrender.com'
 };
 
@@ -35,6 +36,7 @@ export async function discoverActiveServer(force = false) {
     const cachedServer = localStorage.getItem('spotifree_last_healthy_server');
     const candidates = [
       cachedServer,
+      DEFAULT_SERVERS.android_termux,
       'http://10.100.102.16:5050',
       DEFAULT_SERVERS.tunnel,
       DEFAULT_SERVERS.cloud
@@ -142,6 +144,7 @@ async function fetchWithFailover(apiPath, options = {}) {
   const currentBase = getActiveServerUrl();
   const serverCandidates = [
     currentBase,
+    DEFAULT_SERVERS.android_termux,
     DEFAULT_SERVERS.tunnel,
     DEFAULT_SERVERS.cloud,
     'http://10.100.102.16:5050'
