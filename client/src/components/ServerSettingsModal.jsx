@@ -60,8 +60,31 @@ export function ServerSettingsModal({ isOpen, onClose, showToast }) {
         {/* Server Options */}
         <div className="mt-4 space-y-3">
           <p className="text-xs text-zinc-400 leading-relaxed">
-            בחר את שרת המקור עבור חיפוש והזרמת שמע. שרת ה-PC המקומי מאפשר איכות מקסימלית ועקיפה מלאה של חסימות.
+            בחר שרת מקור. שרת הענן פועל 24/7 ללא צורך במחשב, בעוד חיבור המחשב מאפשר איכות שמע מקסימלית.
           </p>
+
+          {/* Option: Auto-Detect (Recommended) */}
+          <button
+            onClick={() => handleSelect('')}
+            className={`w-full flex items-center justify-between p-3 rounded-xl border text-right transition-all ${
+              !currentUrl
+                ? 'bg-green-500/10 border-green-500/50 text-white shadow-sm'
+                : 'bg-zinc-900 border-white/5 text-zinc-300 hover:border-white/20'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {!currentUrl && <Check className="w-4 h-4 text-green-500" />}
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <div className="font-semibold text-sm flex items-center gap-1.5 justify-end">
+                  <span>זיהוי אוטומטי חכם (מומלץ)</span>
+                  <Globe className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="text-xs text-zinc-400">בוחר אוטומטית את השרת הזמין והמהיר ביותר (ענן / סלולר / Wi-Fi)</div>
+              </div>
+            </div>
+          </button>
 
           {/* Option 0: Cloudflare Tunnel */}
           <button
@@ -78,10 +101,35 @@ export function ServerSettingsModal({ isOpen, onClose, showToast }) {
             <div className="flex items-center gap-3">
               <div className="text-right">
                 <div className="font-semibold text-sm flex items-center gap-1.5 justify-end">
-                  <span>Cloudflare Tunnel (מומלץ - 4G/5G ו-Wi-Fi)</span>
+                  <span>Cloudflare Tunnel (נתונים ניידים + מחשב דלוק)</span>
                   <Globe className="w-4 h-4 text-purple-400" />
                 </div>
-                <div className="text-xs text-zinc-400 truncate max-w-[240px]">{DEFAULT_SERVERS.tunnel}</div>
+                <div className="text-xs text-zinc-400">עובד בכל מקום בעולם בסלולר (מחייב מחשב דלוק)</div>
+                <div className="text-[10px] text-zinc-500 truncate max-w-[240px] mt-0.5">{DEFAULT_SERVERS.tunnel}</div>
+              </div>
+            </div>
+          </button>
+
+          {/* Option 3: Cloud Render (No PC needed!) */}
+          <button
+            onClick={() => handleSelect(DEFAULT_SERVERS.cloud)}
+            className={`w-full flex items-center justify-between p-3 rounded-xl border text-right transition-all ${
+              currentUrl === DEFAULT_SERVERS.cloud
+                ? 'bg-green-500/10 border-green-500/50 text-white'
+                : 'bg-zinc-900 border-white/5 text-zinc-300 hover:border-white/20'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {currentUrl === DEFAULT_SERVERS.cloud && <Check className="w-4 h-4 text-green-500" />}
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <div className="font-semibold text-sm flex items-center gap-1.5 justify-end">
+                  <span>שרת ענן 24/7 (נתונים ניידים בלבד - ללא מחשב)</span>
+                  <Cloud className="w-4 h-4 text-cyan-400" />
+                </div>
+                <div className="text-xs text-emerald-400 font-medium">עובד תמיד בסלולר! לא דורש מחשב דלוק בבית</div>
+                <div className="text-[10px] text-zinc-500 truncate max-w-[240px] mt-0.5">{DEFAULT_SERVERS.cloud}</div>
               </div>
             </div>
           </button>
@@ -101,56 +149,11 @@ export function ServerSettingsModal({ isOpen, onClose, showToast }) {
             <div className="flex items-center gap-3">
               <div className="text-right">
                 <div className="font-semibold text-sm flex items-center gap-1.5 justify-end">
-                  <span>מחשב מקומי (Wi-Fi LAN)</span>
+                  <span>רשת ביתית (Wi-Fi LAN בלבד)</span>
                   <Wifi className="w-4 h-4 text-green-400" />
                 </div>
-                <div className="text-xs text-zinc-400">{DEFAULT_SERVERS.local}</div>
-              </div>
-            </div>
-          </button>
-
-          {/* Option 2: Tailscale */}
-          <button
-            onClick={() => handleSelect(DEFAULT_SERVERS.tailscale)}
-            className={`w-full flex items-center justify-between p-3 rounded-xl border text-right transition-all ${
-              currentUrl === DEFAULT_SERVERS.tailscale
-                ? 'bg-green-500/10 border-green-500/50 text-white'
-                : 'bg-zinc-900 border-white/5 text-zinc-300 hover:border-white/20'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              {currentUrl === DEFAULT_SERVERS.tailscale && <Check className="w-4 h-4 text-green-500" />}
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="text-right">
-                <div className="font-semibold text-sm flex items-center gap-1.5 justify-end">
-                  <span>Tailscale VPN (מכל מקום בעולם)</span>
-                  <Globe className="w-4 h-4 text-blue-400" />
-                </div>
-                <div className="text-xs text-zinc-400">{DEFAULT_SERVERS.tailscale}</div>
-              </div>
-            </div>
-          </button>
-
-          {/* Option 3: Cloud Render */}
-          <button
-            onClick={() => handleSelect(DEFAULT_SERVERS.cloud)}
-            className={`w-full flex items-center justify-between p-3 rounded-xl border text-right transition-all ${
-              currentUrl === DEFAULT_SERVERS.cloud
-                ? 'bg-green-500/10 border-green-500/50 text-white'
-                : 'bg-zinc-900 border-white/5 text-zinc-300 hover:border-white/20'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              {currentUrl === DEFAULT_SERVERS.cloud && <Check className="w-4 h-4 text-green-500" />}
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="text-right">
-                <div className="font-semibold text-sm flex items-center gap-1.5 justify-end">
-                  <span>שרת ענן (Render)</span>
-                  <Cloud className="w-4 h-4 text-cyan-400" />
-                </div>
-                <div className="text-xs text-zinc-400">{DEFAULT_SERVERS.cloud}</div>
+                <div className="text-xs text-rose-400">עובד אך ורק ב-Wi-Fi בבית (לא עובד בנתונים ניידים)</div>
+                <div className="text-[10px] text-zinc-500 truncate max-w-[240px] mt-0.5">{DEFAULT_SERVERS.local}</div>
               </div>
             </div>
           </button>
