@@ -422,6 +422,17 @@ export function useAudioPlayer() {
       audio.src = streamUrl;
       audio.volume = isMuted ? 0 : volume;
 
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+      
+      // Fast fallback to YouTube IFrame if proxy takes more than 1.5 seconds
+      fallbackTimerRef.current = setTimeout(() => {
+        if (isTransitioningRef.current && activeEngineRef.current === 'audio') {
+          console.warn('Native proxy taking too long (>1.5s). Fast failing to YouTube IFrame...');
+          audio.pause();
+          playViaYouTubePlayerRef.current?.(track);
+        }
+      }, 1500);
+
       const playPromise = audio.play();
       if (playPromise !== undefined) {
         playPromise
@@ -429,19 +440,25 @@ export function useAudioPlayer() {
             isTransitioningRef.current = false;
             setIsPlaying(true);
             setIsLoading(false);
+            if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
           })
           .catch((err) => {
             console.warn('Native audio play status:', err.name, err.message);
             isTransitioningRef.current = false;
             setIsLoading(false);
-            if (err.name === 'NotAllowedError') {
-              setIsPlaying(false);
+            if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+            
+            // If it failed immediately, fallback to YouTube IFrame
+            if (activeEngineRef.current === 'audio') {
+              playViaYouTubePlayerRef.current?.(track);
             }
           });
       }
     } catch (err) {
       console.warn('Native audio exception:', err);
       setIsLoading(false);
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+      playViaYouTubePlayerRef.current?.(track);
     }
   }, [volume, isMuted]);
 
@@ -569,8 +586,8 @@ export function useAudioPlayer() {
       console.warn('Offline storage check skipped:', e);
     }
 
-    // 2. Play via native YouTube IFrame (Background service keeps it alive instantly)
-    playViaYouTubePlayer(playableTrack);
+    // 2. Play via native proxy element with fast fallback to YouTube IFrame
+    playViaAudioElement(playableTrack);
     addRecentTrack(playableTrack);
 
     prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
