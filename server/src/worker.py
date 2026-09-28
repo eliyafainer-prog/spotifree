@@ -7,7 +7,7 @@ import yt_dlp
 
 # High-compatibility client mix: Android + VisionOS + Web provides 100% coverage across all YouTube catalog
 ydl_opts_clean = {
-    'format': '140/ba[ext=m4a]/ba/18/b/best',
+    'format': '140/ba[protocol^=http][ext=m4a]/ba[protocol^=http]/ba/18/b/best',
     'quiet': True,
     'no_warnings': True,
     'no_color': True,
@@ -93,13 +93,29 @@ def extract_best_audio(info):
         if u and f.get('acodec') != 'none' and 'videoplayback' in u:
             return u
 
-    # Priority 4: Any format with a valid videoplayback URL
+    # Priority 5: Any format with a valid videoplayback URL
     for f in formats:
         u = f.get('url')
-        if u and ('videoplayback' in u or u.startswith('http')):
+        if u and 'videoplayback' in u:
             return u
 
-    return info.get('url')
+    # Priority 6: Any HTTP progressive URL (exclude m3u8)
+    for f in formats:
+        u = f.get('url')
+        if u and u.startswith('http') and '.m3u8' not in u:
+            return u
+
+    # Priority 7: Whatever is left
+    for f in formats:
+        u = f.get('url')
+        if u and u.startswith('http'):
+            return u
+
+    url = info.get('url')
+    if url and '.m3u8' not in url:
+        return url
+    
+    return url
 
 def get_audio_url(target):
     # Step 1: Clean extraction (Android + VisionOS + Web)

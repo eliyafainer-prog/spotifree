@@ -239,7 +239,7 @@ function extractStreamWithYtDlp(target) {
 
     const args = [
       '-m', 'yt_dlp',
-      '-f', '140/ba[ext=m4a]/ba/18/b/best',
+      '-f', '140/ba[protocol^=http][ext=m4a]/ba[protocol^=http]/ba/18/b/best',
       '--extractor-args', 'youtube:player_client=android,visionos,web',
       '--get-url',
       '--remote-components', 'ejs:github',
