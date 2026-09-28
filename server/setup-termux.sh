@@ -27,8 +27,22 @@ echo "[4/4] Installing Node.js dependencies..."
 cd server
 npm install
 
+echo "[5/5] Acquiring WakeLock so server stays alive in background..."
+termux-wake-lock
+
 echo "====================================="
 echo "Setup Complete!"
-echo "To start the server, just run this command:"
-echo "node index.js"
+echo "Starting the server now..."
+echo "To stop it, press CTRL+C."
+echo "To start it again later, just type: ./start.sh"
 echo "====================================="
+
+cd ~
+echo "#!/bin/bash" > start.sh
+echo "termux-wake-lock" >> start.sh
+echo "cd spotifree-server/server" >> start.sh
+echo "node index.js" >> start.sh
+chmod +x start.sh
+
+cd spotifree-server/server
+node index.js
