@@ -368,7 +368,19 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       } catch (e) {}
     }
 
-    // 4. Invidious fallback if worker failed or datacenter is 429-blocked
+    // 4. SoundCloud Fallback using scsearch (100% reliable from Datacenter IPs)
+    if (!streamUrl && fallbackQuery) {
+      try {
+        streamUrl = await extractWithWorker(`scsearch1:${fallbackQuery}`, isPriority);
+        if (streamUrl) {
+          console.log(`[SoundCloud Fallback] Found stream for: ${fallbackQuery}`);
+        }
+      } catch (e) {
+        console.error('SoundCloud fallback failed:', e.message);
+      }
+    }
+
+    // 5. Invidious fallback if worker failed or datacenter is 429-blocked
     if (!streamUrl) {
       const vid = (isVideoId ? videoId : null) || resolveCache.get((fallbackQuery || '').toLowerCase().trim());
       if (vid) {

@@ -143,6 +143,7 @@ async function fetchWithFailover(apiPath, options = {}) {
   const currentBase = getActiveServerUrl();
   const serverCandidates = [
     currentBase,
+    'http://localhost:5050',
     DEFAULT_SERVERS.tunnel,
     DEFAULT_SERVERS.cloud,
     'http://10.100.102.16:5050'
@@ -151,40 +152,41 @@ async function fetchWithFailover(apiPath, options = {}) {
   const uniqueServers = [...new Set(serverCandidates)];
   let lastError = null;
 
-  for (const srv of uniqueServers) {
-    const fullUrl = srv ? `${srv}${apiPath}` : apiPath;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1800);
-    const combinedSignal = options.signal || controller.signal;
-
-    try {
-      const res = await fetch(fullUrl, { ...options, signal: combinedSignal });
-      clearTimeout(timeoutId);
-      if (res.ok) {
-        if (srv && srv !== activeServerUrl) {
-          activeServerUrl = srv;
-          localStorage.setItem('spotifree_last_healthy_server', srv);
+  const promises = uniqueServers.map(srv => {
+    return new Promise(async (resolve, reject) => {
+      const fullUrl = srv ? `${srv}${apiPath}` : apiPath;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const combinedSignal = options.signal || controller.signal;
+      
+      try {
+        const res = await fetch(fullUrl, { ...options, signal: combinedSignal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          if (srv && srv !== activeServerUrl) {
+            activeServerUrl = srv;
+            localStorage.setItem('spotifree_last_healthy_server', srv);
+          }
+          resolve(res);
+        } else {
+          reject(new Error(`Status ${res.status}`));
         }
-        return res;
+      } catch (err) {
+        clearTimeout(timeoutId);
+        if (srv === activeServerUrl) {
+          activeServerUrl = null;
+          try { localStorage.removeItem('spotifree_last_healthy_server'); } catch (e) {}
+        }
+        reject(err);
       }
-      if (res.status >= 500) {
-        // Server is ALIVE but failed the operation (e.g. 500 internal error). 
-        // Break the loop and return immediately to fail-fast.
-        return res;
-      }
-      return res;
-    } catch (err) {
-      clearTimeout(timeoutId);
-      lastError = err;
-      console.warn(`Server ${srv} failed for ${apiPath}:`, err.message);
-      if (srv === activeServerUrl) {
-        activeServerUrl = null;
-        try { localStorage.removeItem('spotifree_last_healthy_server'); } catch (e) {}
-      }
-    }
-  }
+    });
+  });
 
-  throw lastError || new Error('All servers unreachable');
+  try {
+    return await Promise.any(promises);
+  } catch (err) {
+    throw new Error('All servers unreachable');
+  }
 }
 
 // In-Memory Client Caches for 0ms repeat searches and resolutions
