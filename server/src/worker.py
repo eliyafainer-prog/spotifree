@@ -122,6 +122,8 @@ def get_audio_url(target):
     clean_err = None
     try:
         info = ydl_clean.extract_info(target, download=False)
+        if info and 'entries' in info and len(info['entries']) > 0:
+            info = info['entries'][0]
         url = extract_best_audio(info)
         if url:
             return url
@@ -133,6 +135,8 @@ def get_audio_url(target):
     if ydl_cookie:
         try:
             info = ydl_cookie.extract_info(target, download=False)
+            if info and 'entries' in info and len(info['entries']) > 0:
+                info = info['entries'][0]
             url = extract_best_audio(info)
             if url:
                 return url
