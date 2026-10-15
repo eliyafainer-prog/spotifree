@@ -2,10 +2,8 @@ import { isNativeApp } from './nativeAudio';
 
 // High-speed Server Infrastructure
 export const DEFAULT_SERVERS = {
-  tunnel: 'https://depending-lawyer-memories-gui.trycloudflare.com',
-  local: 'http://10.100.102.16:5050',
-  android_termux: 'http://127.0.0.1:5050',
-  cloud: 'https://spotifree-h7s8.onrender.com'
+  cloud: 'https://spotifree-h7s8.onrender.com',
+  local: 'http://localhost:5050'
 };
 
 let activeServerUrl = null;
@@ -36,24 +34,19 @@ export async function discoverActiveServer(force = false) {
     const cachedServer = localStorage.getItem('spotifree_last_healthy_server');
     const candidates = [
       cachedServer,
-      'http://10.100.102.16:5050',
-      DEFAULT_SERVERS.tunnel,
-      DEFAULT_SERVERS.cloud
+      DEFAULT_SERVERS.cloud,
+      DEFAULT_SERVERS.local
     ].filter(Boolean);
 
     const uniqueCandidates = [...new Set(candidates)];
 
     const ping = async (srv) => {
       const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 900);
+      const tid = setTimeout(() => controller.abort(), 1200);
       try {
         const res = await fetch(`${srv}/health`, { signal: controller.signal });
         clearTimeout(tid);
         if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          if (data && data.activeTunnel) {
-            return data.activeTunnel;
-          }
           return srv;
         }
       } catch (e) {
@@ -67,28 +60,13 @@ export async function discoverActiveServer(force = false) {
       if (winner) {
         activeServerUrl = winner.replace(/\/+$/, '');
         localStorage.setItem('spotifree_last_healthy_server', activeServerUrl);
-        console.log(`[API] Locked onto fastest server: ${activeServerUrl}`);
         return activeServerUrl;
       }
     } catch (e) {
-      // If direct pings didn't answer within 900ms, ask Render for the dynamic registered tunnel
-      try {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch(`${DEFAULT_SERVERS.cloud}/api/tunnel/active`, { signal: controller.signal });
-        clearTimeout(tid);
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.tunnelUrl) {
-            activeServerUrl = data.tunnelUrl.replace(/\/+$/, '');
-            localStorage.setItem('spotifree_last_healthy_server', activeServerUrl);
-            return activeServerUrl;
-          }
-        }
-      } catch (err) {}
+      // Ignore
     }
 
-    activeServerUrl = cachedServer || DEFAULT_SERVERS.tunnel || DEFAULT_SERVERS.cloud;
+    activeServerUrl = cachedServer || DEFAULT_SERVERS.cloud;
     return activeServerUrl;
   })();
 
@@ -114,7 +92,7 @@ export function getActiveServerUrl() {
   if (cached) return cached;
 
   if (isNativeApp) {
-    return DEFAULT_SERVERS.tunnel;
+    return DEFAULT_SERVERS.cloud;
   }
 
   return '';
@@ -143,10 +121,8 @@ async function fetchWithFailover(apiPath, options = {}) {
   const currentBase = getActiveServerUrl();
   const serverCandidates = [
     currentBase,
-    'http://localhost:5050',
-    DEFAULT_SERVERS.tunnel,
     DEFAULT_SERVERS.cloud,
-    'http://10.100.102.16:5050'
+    DEFAULT_SERVERS.local
   ].filter(Boolean);
 
   const uniqueServers = [...new Set(serverCandidates)];
@@ -328,14 +304,43 @@ export async function fetchDirectStreamUrl(track) {
   return null;
 }
 
-/**
- * Generate playable audio URL with fallback server support
- */
 export function getPlayableAudioUrl(track, serverOverride = null) {
   const base = serverOverride || getActiveServerUrl() || DEFAULT_SERVERS.tunnel || DEFAULT_SERVERS.cloud;
   const fallbackQuery = encodeURIComponent(`${track.title || ''} ${track.artist || ''}`.trim());
   const streamableId = encodeURIComponent(track.streamableId || track.id || '');
   return `${base}/api/stream/pipe/${streamableId}?q=${fallbackQuery}`;
+}
+
+export async function fetchBestAudioUrl(track) {
+  const servers = [getActiveServerUrl(), DEFAULT_SERVERS.tunnel, DEFAULT_SERVERS.cloud].filter(Boolean);
+  const uniqueServers = [...new Set(servers)];
+  
+  const fallbackQuery = encodeURIComponent(`${track.title || ''} ${track.artist || ''}`.trim());
+  const streamableId = encodeURIComponent(track.streamableId || track.id || '');
+
+  // 1. Try server direct stream resolution
+  for (const base of uniqueServers) {
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(`${base}/api/stream/${streamableId}?q=${fallbackQuery}`, { signal: controller.signal });
+      clearTimeout(id);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.streamUrl) return data.streamUrl;
+      }
+    } catch (e) {
+      // Try next server
+    }
+  }
+  
+  // 2. Try client-side Piped instances
+  const directUrl = await fetchDirectStreamUrl(track);
+  if (directUrl) return directUrl;
+
+  // 3. Fallback: Always return playable server pipe proxy stream to guarantee audio stream
+  const activeBase = getActiveServerUrl() || DEFAULT_SERVERS.tunnel || DEFAULT_SERVERS.cloud;
+  return `${activeBase}/api/stream/pipe/${streamableId}?q=${fallbackQuery}`;
 }
 
 /**
