@@ -424,14 +424,14 @@ export function useAudioPlayer() {
 
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
       
-      // Fast fallback to YouTube IFrame if proxy takes more than 1.5 seconds
+      // Fallback to YouTube IFrame only if proxy audio completely fails to respond after 7 seconds
       fallbackTimerRef.current = setTimeout(() => {
         if (isTransitioningRef.current && activeEngineRef.current === 'audio') {
-          console.warn('Native proxy taking too long (>1.5s). Fast failing to YouTube IFrame...');
+          console.warn('Native proxy taking too long (>7s). Falling back to YouTube IFrame...');
           audio.pause();
           playViaYouTubePlayerRef.current?.(track);
         }
-      }, 1500);
+      }, 7000);
 
       const playPromise = audio.play();
       if (playPromise !== undefined) {
