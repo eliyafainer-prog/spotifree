@@ -80,9 +80,9 @@ export function PlayerBar({
                 </div>
               )}
             </div>
-            <div className="flex flex-col min-w-0 truncate text-right">
-              <span className="text-sm font-semibold text-white truncate">{currentTrack.title}</span>
-              <span className="text-xs text-spotify-subtext truncate">{currentTrack.artist}</span>
+            <div className="flex flex-col min-w-0 flex-1 text-right">
+              <span className="text-sm font-semibold text-white truncate" title={currentTrack.title}>{currentTrack.title}</span>
+              <span className="text-xs text-spotify-subtext truncate" title={currentTrack.artist}>{currentTrack.artist}</span>
             </div>
           </div>
 

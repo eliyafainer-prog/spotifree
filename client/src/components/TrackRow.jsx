@@ -131,11 +131,17 @@ export function TrackRow({
           )}
         </div>
 
-        <div className="flex flex-col min-w-0 truncate text-right">
-          <span className={`text-sm font-semibold truncate ${isCurrentTrack ? 'text-spotify-green' : 'text-white'}`}>
+        <div className="flex flex-col min-w-0 flex-1 text-right">
+          <span
+            className={`text-sm font-semibold truncate ${isCurrentTrack ? 'text-spotify-green' : 'text-white'}`}
+            title={track.title}
+          >
             {track.title}
           </span>
-          <span className="text-xs text-spotify-subtext truncate group-hover:text-white transition-colors">
+          <span
+            className="text-xs text-spotify-subtext truncate group-hover:text-white transition-colors"
+            title={track.artist}
+          >
             {track.artist}
           </span>
         </div>

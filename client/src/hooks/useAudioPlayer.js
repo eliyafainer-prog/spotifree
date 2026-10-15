@@ -608,15 +608,15 @@ export function useAudioPlayer() {
     if (newQueue) {
       setQueue(newQueue);
       queueRef.current = newQueue;
-      setQueueIndex(targetIdx);
-      queueIndexRef.current = targetIdx;
+      setQueueIndex(targetIdx >= 0 ? targetIdx : 0);
+      queueIndexRef.current = targetIdx >= 0 ? targetIdx : 0;
       if (shuffleModeRef.current !== 'off') {
-        shuffledIndicesRef.current = generateShuffledDeck(newQueue.length, targetIdx);
+        shuffledIndicesRef.current = generateShuffledDeck(newQueue.length, targetIdx >= 0 ? targetIdx : 0);
         shufflePosRef.current = 0;
       }
-    } else if (indexInQueue >= 0) {
-      setQueueIndex(indexInQueue);
-      queueIndexRef.current = indexInQueue;
+    } else if (targetIdx >= 0) {
+      setQueueIndex(targetIdx);
+      queueIndexRef.current = targetIdx;
     }
 
     let playableTrack = { ...track };
