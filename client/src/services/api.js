@@ -312,34 +312,30 @@ export function getPlayableAudioUrl(track, serverOverride = null) {
 }
 
 export async function fetchBestAudioUrl(track) {
-  const servers = [getActiveServerUrl(), DEFAULT_SERVERS.tunnel, DEFAULT_SERVERS.cloud].filter(Boolean);
-  const uniqueServers = [...new Set(servers)];
-  
+  const activeBase = getActiveServerUrl() || DEFAULT_SERVERS.cloud;
   const fallbackQuery = encodeURIComponent(`${track.title || ''} ${track.artist || ''}`.trim());
   const streamableId = encodeURIComponent(track.streamableId || track.id || '');
 
-  // 1. Try server direct stream resolution
-  for (const base of uniqueServers) {
-    try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 12000);
-      const res = await fetch(`${base}/api/stream/${streamableId}?q=${fallbackQuery}`, { signal: controller.signal });
-      clearTimeout(id);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.streamUrl) return data.streamUrl;
-      }
-    } catch (e) {
-      // Try next server
+  // 1. Fast direct stream resolution from server (responds in ~400ms)
+  try {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(`${activeBase}/api/stream/${streamableId}?q=${fallbackQuery}`, { signal: controller.signal });
+    clearTimeout(id);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.streamUrl) return data.streamUrl;
+      if (data.proxyUrl) return `${activeBase}${data.proxyUrl}`;
     }
+  } catch (e) {
+    // Fast fallback
   }
-  
-  // 2. Try client-side Piped instances
+
+  // 2. Client-side Piped instance fallback
   const directUrl = await fetchDirectStreamUrl(track);
   if (directUrl) return directUrl;
 
-  // 3. Fallback: Always return playable server pipe proxy stream to guarantee audio stream
-  const activeBase = getActiveServerUrl() || DEFAULT_SERVERS.tunnel || DEFAULT_SERVERS.cloud;
+  // 3. Fallback: Direct server audio pipe
   return `${activeBase}/api/stream/pipe/${streamableId}?q=${fallbackQuery}`;
 }
 
