@@ -1,17 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getPlayableAudioUrl, fetchDirectStreamUrl, DEFAULT_SERVERS, prefetchNextTracks, resolveTrack, searchTracks, fetchBestAudioUrl } from '../services/api';
+import { getPlayableAudioUrl, fetchDirectStreamUrl, DEFAULT_SERVERS, prefetchNextTracks, resolveTrack, searchTracks } from '../services/api';
 import { addRecentTrack, updateTrackInPlaylists } from '../services/storage';
 import { getOfflineTrack } from '../services/offlineStorage';
-import {
-  isNativeApp,
-  playNativeStreamUrl,
-  pauseNativeAudio,
-  resumeNativeAudio,
-  seekNativeAudio,
-  registerNativeMediaListener,
-  registerNativeProgressListener,
-  registerNativeDurationListener
-} from '../services/nativeAudio';
 
 // Fisher-Yates shuffle helper: produces a non-repeating permutation of indices
 function generateShuffledDeck(length, startingIndex = -1) {
@@ -193,41 +183,6 @@ export function useAudioPlayer() {
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
-    };
-  }, []);
-
-  // Listen to native Android ExoPlayer events (progress, duration, ended, media actions)
-  useEffect(() => {
-    if (!isNativeApp) return;
-
-    const unregMedia = registerNativeMediaListener((action) => {
-      if (action === 'play') {
-        setIsPlaying(true);
-      } else if (action === 'pause') {
-        setIsPlaying(false);
-      } else if (action === 'ended' || action === 'next') {
-        nextTrackRef.current?.();
-      } else if (action === 'prev') {
-        prevTrackRef.current?.();
-      }
-    });
-
-    const unregProgress = registerNativeProgressListener((sec) => {
-      if (activeEngineRef.current === 'native') {
-        setCurrentTime(sec);
-      }
-    });
-
-    const unregDuration = registerNativeDurationListener((dur) => {
-      if (activeEngineRef.current === 'native' && dur > 0) {
-        setDuration(dur);
-      }
-    });
-
-    return () => {
-      unregMedia();
-      unregProgress();
-      unregDuration();
     };
   }, []);
 
@@ -437,11 +392,8 @@ export function useAudioPlayer() {
 
   playViaYouTubePlayerRef.current = playViaYouTubePlayer;
 
-  // Pre-fetched audio stream cache for instant gapless transitions
-  const prefetchedStreamCacheRef = useRef(new Map());
-
   /**
-   * Play track via native Android ExoPlayer (if on Android) or HTML5 Audio element.
+   * Play track via native HTML5 Audio element streaming from our server proxy.
    * Enables true background playback, lock-screen controls,
    * headphone buttons support, and continuous background playlist advancing.
    */
@@ -457,84 +409,55 @@ export function useAudioPlayer() {
       try { ytPlayerRef.current.pauseVideo(); } catch (e) {}
     }
 
-    setIsLoading(true);
-
-    // When running as a native Android APK: stream directly via ExoPlayer Foreground Service!
-    if (isNativeApp) {
-      activeEngineRef.current = 'native';
-      setActiveEngine('native');
-
-      // Check if we already prefetched this track's stream URL
-      const cachedUrl = prefetchedStreamCacheRef.current.get(track.id || track.streamableId);
-      const urlPromise = cachedUrl ? Promise.resolve(cachedUrl) : fetchBestAudioUrl(track);
-
-      urlPromise.then(streamUrl => {
-        if (!streamUrl || userPausedRef.current) return;
-        playNativeStreamUrl({
-          url: streamUrl,
-          title: track.title,
-          artist: track.artist,
-          thumbnail: track.thumbnail
-        });
-        setIsPlaying(true);
-        setIsLoading(false);
-        isTransitioningRef.current = false;
-      }).catch(err => {
-        console.warn('Native playback error:', err);
-        setIsLoading(false);
-        isTransitioningRef.current = false;
-      });
-
-      return;
-    }
-
     activeEngineRef.current = 'audio';
     setActiveEngine('audio');
+    setIsLoading(true);
 
     const audio = audioRef.current;
     if (!audio) return;
 
     try {
       audio.pause();
+      const streamUrl = getPlayableAudioUrl(track);
+      audio.src = streamUrl;
       audio.volume = isMuted ? 0 : volume;
-      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
 
-      fetchBestAudioUrl(track).then(streamUrl => {
-        if (!streamUrl || !audioRef.current || activeEngineRef.current !== 'audio' || userPausedRef.current) {
-          throw new Error('Native extraction failed or cancelled');
-        }
-        audioRef.current.src = streamUrl;
-        audioRef.current.load();
-        
-        const playPromise = audioRef.current.play();
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => {
-              isTransitioningRef.current = false;
-              setIsPlaying(true);
-              setIsLoading(false);
-            })
-            .catch((err) => {
-              console.warn('Native audio play status:', err.name, err.message);
-              isTransitioningRef.current = false;
-              setIsLoading(false);
-              
-              if (err.name !== 'AbortError' && err.name !== 'NotAllowedError') {
-                playViaYouTubePlayerRef.current?.(track);
-              }
-            });
-        }
-      }).catch(err => {
-        console.warn('fetchBestAudioUrl failed:', err.message);
-        setIsLoading(false);
-        if (activeEngineRef.current === 'audio' && !userPausedRef.current) {
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+      
+      // Fast fallback to YouTube IFrame if proxy takes more than 1.5 seconds
+      fallbackTimerRef.current = setTimeout(() => {
+        if (isTransitioningRef.current && activeEngineRef.current === 'audio') {
+          console.warn('Native proxy taking too long (>1.5s). Fast failing to YouTube IFrame...');
+          audio.pause();
           playViaYouTubePlayerRef.current?.(track);
         }
-      });
-      
+      }, 1500);
+
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            isTransitioningRef.current = false;
+            setIsPlaying(true);
+            setIsLoading(false);
+            if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+          })
+          .catch((err) => {
+            console.warn('Native audio play status:', err.name, err.message);
+            isTransitioningRef.current = false;
+            setIsLoading(false);
+            if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+            
+            // If it failed immediately, fallback to YouTube IFrame
+            if (activeEngineRef.current === 'audio') {
+              playViaYouTubePlayerRef.current?.(track);
+            }
+          });
+      }
     } catch (err) {
       console.warn('Native audio exception:', err);
       setIsLoading(false);
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
       playViaYouTubePlayerRef.current?.(track);
     }
   }, [volume, isMuted]);
@@ -575,21 +498,8 @@ export function useAudioPlayer() {
       }
     });
 
-    // 2. Prefetch audio stream URLs on the backend & cache locally
+    // 2. Prefetch audio stream URLs on the backend
     prefetchNextTracks(targetTracks);
-
-    // 3. For immediate next track, resolve streamUrl in advance so transitions are instant
-    if (targetTracks[0]) {
-      const nextT = targetTracks[0];
-      const tid = nextT.id || nextT.streamableId;
-      if (tid && !prefetchedStreamCacheRef.current.has(tid)) {
-        fetchBestAudioUrl(nextT).then(streamUrl => {
-          if (streamUrl) {
-            prefetchedStreamCacheRef.current.set(tid, streamUrl);
-          }
-        }).catch(() => {});
-      }
-    }
   }, []);
 
   /**
@@ -608,15 +518,15 @@ export function useAudioPlayer() {
     if (newQueue) {
       setQueue(newQueue);
       queueRef.current = newQueue;
-      setQueueIndex(targetIdx >= 0 ? targetIdx : 0);
-      queueIndexRef.current = targetIdx >= 0 ? targetIdx : 0;
-      if (shuffleModeRef.current !== 'off') {
-        shuffledIndicesRef.current = generateShuffledDeck(newQueue.length, targetIdx >= 0 ? targetIdx : 0);
-        shufflePosRef.current = 0;
-      }
-    } else if (targetIdx >= 0) {
       setQueueIndex(targetIdx);
       queueIndexRef.current = targetIdx;
+      if (shuffleModeRef.current !== 'off') {
+        shuffledIndicesRef.current = generateShuffledDeck(newQueue.length, targetIdx);
+        shufflePosRef.current = 0;
+      }
+    } else if (indexInQueue >= 0) {
+      setQueueIndex(indexInQueue);
+      queueIndexRef.current = indexInQueue;
     }
 
     let playableTrack = { ...track };
@@ -689,10 +599,7 @@ export function useAudioPlayer() {
   const play = useCallback(() => {
     userPausedRef.current = false;
     silentAudioRef.current?.play().catch(() => {});
-    if (isNativeApp && activeEngineRef.current === 'native') {
-      resumeNativeAudio();
-      setIsPlaying(true);
-    } else if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
+    if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         if (typeof ytPlayerRef.current.unMute === 'function') {
           ytPlayerRef.current.unMute();
@@ -710,10 +617,7 @@ export function useAudioPlayer() {
   const pause = useCallback(() => {
     userPausedRef.current = true;
     silentAudioRef.current?.pause();
-    if (isNativeApp && activeEngineRef.current === 'native') {
-      pauseNativeAudio();
-      setIsPlaying(false);
-    } else if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
+    if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         ytPlayerRef.current.pauseVideo();
       } catch (e) {}
@@ -891,17 +795,11 @@ export function useAudioPlayer() {
     playTrack(q[prevIdx]);
   }, [playTrack, currentTime]);
 
-  const prevTrackRef = useRef(null);
-  prevTrackRef.current = prevTrack;
-
   /**
    * Seek to timestamp in seconds
    */
   const seek = useCallback((seconds) => {
-    if (isNativeApp && activeEngineRef.current === 'native') {
-      seekNativeAudio(seconds);
-      setCurrentTime(seconds);
-    } else if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
+    if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
         ytPlayerRef.current.seekTo(seconds, true);
         setCurrentTime(seconds);
