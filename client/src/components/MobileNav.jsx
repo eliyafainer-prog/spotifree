@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Search, Library, Plus, BarChart3 } from 'lucide-react';
+import { Home, Search, Library, Plus } from 'lucide-react';
 
 export function MobileNav({ currentView, setCurrentView, openImportModal, setSelectedPlaylistId }) {
   const isLibraryActive = currentView === 'library' || currentView === 'liked' || currentView === 'playlist' || currentView === 'offline';
@@ -15,9 +15,9 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
           currentView === 'home' ? 'text-white' : 'text-[#b3b3b3]'
         }`}
       >
-        <Home className={`w-6 h-6 ${currentView === 'home' ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />
-        <span className={`text-[11px] ${currentView === 'home' ? 'font-bold text-white' : 'font-normal'}`}>
-          דף הבית
+        <Home className={`w-6 h-6 ${currentView === 'home' ? 'fill-white stroke-[2]' : 'stroke-[1.75]'}`} />
+        <span className={`text-[10px] ${currentView === 'home' ? 'font-bold text-white' : 'font-normal'}`}>
+          מסך הבית
         </span>
       </button>
 
@@ -31,7 +31,7 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
         }`}
       >
         <Search className={`w-6 h-6 ${currentView === 'search' ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />
-        <span className={`text-[11px] ${currentView === 'search' ? 'font-bold text-white' : 'font-normal'}`}>
+        <span className={`text-[10px] ${currentView === 'search' ? 'font-bold text-white' : 'font-normal'}`}>
           חיפוש
         </span>
       </button>
@@ -46,8 +46,8 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
         }`}
       >
         <Library className={`w-6 h-6 ${isLibraryActive ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />
-        <span className={`text-[11px] ${isLibraryActive ? 'font-bold text-white' : 'font-normal'}`}>
-          הספרייה שלך
+        <span className={`text-[10px] ${isLibraryActive ? 'font-bold text-white' : 'font-normal'}`}>
+          הספרייה
         </span>
       </button>
 
@@ -56,7 +56,7 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
         className="flex flex-col items-center justify-center gap-1 w-16 py-1 text-[#b3b3b3] active:text-white transition-colors"
       >
         <Plus className="w-6 h-6 stroke-[2]" />
-        <span className="text-[11px] font-normal">ייבוא</span>
+        <span className="text-[10px] font-normal">יצירה</span>
       </button>
     </nav>
   );

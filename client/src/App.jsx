@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Search,
+  Home,
   PlusCircle,
   Plus,
   Heart,
@@ -17,7 +18,11 @@ import {
   Pin,
   X,
   LayoutGrid,
-  List
+  List,
+  Check,
+  FolderSearch,
+  Bell,
+  Users
 } from 'lucide-react';
 
 import { useAudioPlayer } from './hooks/useAudioPlayer';
@@ -42,7 +47,7 @@ import {
 import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
 import { saveTrackOffline, getAllOfflineTracks } from './services/offlineStorage';
 
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, PlaylistThumb } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
 import { PlayerBar } from './components/PlayerBar';
 import { FullscreenPlayer } from './components/FullscreenPlayer';
@@ -69,14 +74,6 @@ const BROWSE_CATEGORIES = [
   { title: 'להיטי ויראלי וטיקטוק', query: 'TikTok Viral Hits 2025', color: 'bg-[#dc148c]' }
 ];
 
-function getTimeGreeting() {
-  const hour = new Date().getHours();
-  if (hour >= 5 && hour < 12) return 'בוקר טוב';
-  if (hour >= 12 && hour < 17) return 'צהריים טובים';
-  if (hour >= 17 && hour < 22) return 'ערב טוב';
-  return 'לילה טוב';
-}
-
 export default function App() {
   const player = useAudioPlayer();
 
@@ -89,9 +86,7 @@ export default function App() {
           body: 'Playing music in background',
           smallIcon: 'ic_stat_name'
         });
-      } catch (err) {
-        // Ignore on web
-      }
+      } catch (err) {}
     };
     startService();
   }, []);
@@ -99,8 +94,10 @@ export default function App() {
   // Navigation & Views
   const [currentView, setCurrentView] = useState('home'); // 'home' | 'search' | 'library' | 'liked' | 'playlist' | 'offline' | 'analytics'
   const [homeFilter, setHomeFilter] = useState('all'); // 'all' | 'music' | 'playlists'
-  const [libraryLayout, setLibraryLayout] = useState('list'); // 'list' | 'grid'
+  const [libraryLayout, setLibraryLayout] = useState('list');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState(null);
+  const [showNowPlayingPanel, setShowNowPlayingPanel] = useState(true);
+  const [mobileProfileMenuOpen, setMobileProfileMenuOpen] = useState(false);
 
   // Library & Storage state
   const [likedSongs, setLikedSongs] = useState(() => getLikedSongs());
@@ -291,7 +288,6 @@ export default function App() {
 
   // Live debounced search as the user types (320ms)
   useEffect(() => {
-    if (currentView !== 'search') return;
     const trimmed = searchQuery.trim();
     if (!trimmed) {
       setSearchResults([]);
@@ -313,12 +309,13 @@ export default function App() {
     }, 320);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, currentView]);
+  }, [searchQuery]);
 
   const handleSearchSubmit = async (e) => {
     e?.preventDefault();
     const trimmed = searchQuery.trim();
     if (!trimmed) return;
+    if (currentView !== 'search') setCurrentView('search');
 
     setIsSearching(true);
     try {
@@ -337,7 +334,7 @@ export default function App() {
   const handleToggleLike = (track) => {
     const { updated, isLiked } = toggleLikeSong(track);
     setLikedSongs(updated);
-    showToast(isLiked ? 'נוסף לשירים שאהבתי 💚' : 'הוסר משירים שאהבתי');
+    showToast(isLiked ? 'נוסף לשירים שאהבתם' : 'הוסר משירים שאהבתם');
   };
 
   const handlePlaylistImported = (newPlaylist) => {
@@ -456,12 +453,136 @@ export default function App() {
     : null;
 
   const isLikedPlaylist = currentView === 'liked';
+  const isCurrentLiked = likedSongs.some(s => isSameTrack(s, player.currentTrack));
+
+  // Find active lyric lines for the Desktop Left Panel preview card (Image 1)
+  const previewLyricsLines = React.useMemo(() => {
+    if (lyricsData?.hasSynced && lyricsData.synced?.length > 0) {
+      let activeIdx = 0;
+      for (let i = 0; i < lyricsData.synced.length; i++) {
+        if (player.currentTime >= lyricsData.synced[i].time) {
+          activeIdx = i;
+        } else {
+          break;
+        }
+      }
+      return lyricsData.synced.slice(Math.max(0, activeIdx - 1), activeIdx + 3).map((l, idx) => ({
+        text: l.text,
+        isCurrent: idx === (activeIdx > 0 ? 1 : 0)
+      }));
+    }
+    if (lyricsData?.plain?.length > 0) {
+      return lyricsData.plain.slice(0, 4).map((t, idx) => ({ text: t, isCurrent: idx === 0 }));
+    }
+    return null;
+  }, [lyricsData, player.currentTime]);
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-black text-white select-none">
-      {/* Main Content Wrapper */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Desktop Sidebar */}
+      {/* ==================== DESKTOP GLOBAL TOP BAR (Exact Match to Image 1) ==================== */}
+      <header className="hidden md:flex items-center justify-between h-16 px-4 bg-black flex-shrink-0 z-30">
+        {/* Right side (RTL): Official Spotify White Logo */}
+        <div
+          onClick={() => {
+            setCurrentView('home');
+            setSelectedPlaylistId(null);
+          }}
+          className="flex items-center gap-2 cursor-pointer pr-1"
+        >
+          <svg viewBox="0 0 24 24" className="w-8 h-8 fill-white">
+            <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
+          </svg>
+        </div>
+
+        {/* Center: Round Home Button + Global Pill Search Input ("מה אתם רוצים לנגן?") */}
+        <div className="flex items-center gap-2 flex-1 max-w-[540px] mx-4">
+          <button
+            onClick={() => {
+              setCurrentView('home');
+              setSelectedPlaylistId(null);
+            }}
+            title="דף הבית"
+            className="w-12 h-12 rounded-full bg-[#1f1f1f] hover:bg-[#2a2a2a] hover:scale-105 transition-all flex items-center justify-center flex-shrink-0 text-white"
+          >
+            <Home className={`w-6 h-6 ${currentView === 'home' ? 'fill-white' : ''}`} />
+          </button>
+
+          <form
+            onSubmit={handleSearchSubmit}
+            className="flex-1 h-12 rounded-full bg-[#1f1f1f] hover:bg-[#2a2a2a] focus-within:bg-[#242424] focus-within:ring-2 focus-within:ring-white/90 transition-all flex items-center px-3.5 gap-3"
+          >
+            <Search className="w-5 h-5 text-[#b3b3b3] flex-shrink-0" />
+            <input
+              type="text"
+              placeholder="מה אתם רוצים לנגן?"
+              value={searchQuery}
+              onFocus={() => {
+                if (currentView !== 'search') setCurrentView('search');
+              }}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                if (currentView !== 'search') setCurrentView('search');
+              }}
+              className="flex-1 bg-transparent text-white text-sm font-medium focus:outline-none placeholder:text-[#b3b3b3] text-right"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="text-[#b3b3b3] hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            ) : (
+              <div className="flex items-center gap-2.5 pr-2 border-r border-white/15 text-[#b3b3b3]">
+                <FolderSearch
+                  onClick={() => setCurrentView('search')}
+                  className="w-5 h-5 hover:text-white cursor-pointer"
+                  title="עיון בקטגוריות"
+                />
+              </div>
+            )}
+          </form>
+        </div>
+
+        {/* Left side (RTL): White Pill Button + Icons + Green Profile Circle "E" (Exact Match to Image 1) */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="bg-white hover:scale-105 active:scale-95 text-black font-extrabold text-xs px-4 py-1.5 rounded-full transition-transform"
+          >
+            ייבוא מספוטיפיי
+          </button>
+
+          <button
+            onClick={() => setCurrentView('analytics')}
+            title="סטטיסטיקות האזנה"
+            className="p-2 text-[#b3b3b3] hover:text-white transition-colors"
+          >
+            <Bell className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => setIsServerModalOpen(true)}
+            title="הגדרות שרת"
+            className="p-2 text-[#b3b3b3] hover:text-white transition-colors"
+          >
+            <Users className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => setIsServerModalOpen(true)}
+            title="פרופיל והגדרות"
+            className="w-8 h-8 rounded-full bg-[#1ed760] text-black font-extrabold text-sm flex items-center justify-center ring-4 ring-[#1f1f1f] hover:scale-105 transition-transform"
+          >
+            E
+          </button>
+        </div>
+      </header>
+
+      {/* ==================== MAIN 3-COLUMN WORKSPACE ==================== */}
+      <div className="flex flex-1 overflow-hidden md:px-2 md:gap-2">
+        {/* Column 1 (Right in RTL): Your Library Sidebar */}
         <Sidebar
           currentView={currentView}
           setCurrentView={setCurrentView}
@@ -469,33 +590,47 @@ export default function App() {
           likedCount={likedSongs.length}
           downloadedCount={downloadedIds.size}
           openImportModal={() => setIsImportModalOpen(true)}
-          onCreatePlaylist={() => handleCreatePlaylist(`הפלייליסט שלי #${playlists.length + 1}`)}
+          onCreatePlaylist={() => handleCreatePlaylist(`פלייליסט מס׳ ${playlists.length + 1} שלי`)}
           selectedPlaylistId={selectedPlaylistId}
           setSelectedPlaylistId={setSelectedPlaylistId}
         />
 
-        {/* Main Scrollable Viewport (#121212 Spotify Surface) */}
-        <main className="flex-1 flex flex-col min-w-0 bg-[#121212] md:rounded-lg md:m-2 overflow-hidden relative">
-          {/* Top Bar (Filter Pills on Home, White Search Bar on Search, Clean Title on Library) */}
+        {/* Column 2 (Center): Main Content Feed */}
+        <main className="flex-1 flex flex-col min-w-0 bg-[#121212] md:rounded-lg overflow-hidden relative">
+          {/* Subtle Ambient Purple/Indigo Top Gradient on Home View (Matches Image 1) */}
+          {currentView === 'home' && (
+            <div className="hidden md:block absolute top-0 inset-x-0 h-64 bg-gradient-to-b from-[#3b2667]/60 via-[#1e1535]/30 to-transparent pointer-events-none" />
+          )}
+
+          {/* Top Bar inside Main Panel */}
           {currentView !== 'playlist' && currentView !== 'liked' && (
-            <div className="flex items-center justify-between gap-2 px-4 pt-4 pb-3 bg-[#121212]/90 backdrop-blur-md sticky top-0 z-20">
+            <div className="relative z-20 flex items-center justify-between gap-2 px-4 pt-3.5 pb-2.5 sticky top-0">
               {currentView === 'home' ? (
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-                  <div className="w-8 h-8 rounded-full bg-spotify-green text-black font-black text-sm flex items-center justify-center flex-shrink-0">
-                    S
-                  </div>
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full">
+                  {/* Mobile Green Avatar "E" (Exact match to Image 3! Tapping opens Server/Analytics sheet) */}
+                  <button
+                    onClick={() => setMobileProfileMenuOpen(prev => !prev)}
+                    className="md:hidden w-8 h-8 rounded-full bg-[#1ed760] text-black font-extrabold text-sm flex items-center justify-center flex-shrink-0 ml-1"
+                  >
+                    E
+                  </button>
+
                   <button
                     onClick={() => setHomeFilter('all')}
                     className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-colors whitespace-nowrap ${
-                      homeFilter === 'all' ? 'bg-spotify-green text-black font-bold' : 'bg-[#2a2a2a] text-white hover:bg-[#333333]'
+                      homeFilter === 'all'
+                        ? 'bg-[#1ed760] md:bg-white text-black font-bold'
+                        : 'bg-[#2a2a2a] md:bg-white/10 text-white hover:bg-white/20'
                     }`}
                   >
-                    הכל
+                    הכול
                   </button>
                   <button
                     onClick={() => setHomeFilter('music')}
                     className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-colors whitespace-nowrap ${
-                      homeFilter === 'music' ? 'bg-spotify-green text-black font-bold' : 'bg-[#2a2a2a] text-white hover:bg-[#333333]'
+                      homeFilter === 'music'
+                        ? 'bg-[#1ed760] md:bg-white text-black font-bold'
+                        : 'bg-[#2a2a2a] md:bg-white/10 text-white hover:bg-white/20'
                     }`}
                   >
                     מוזיקה
@@ -503,33 +638,42 @@ export default function App() {
                   <button
                     onClick={() => setHomeFilter('playlists')}
                     className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-colors whitespace-nowrap ${
-                      homeFilter === 'playlists' ? 'bg-spotify-green text-black font-bold' : 'bg-[#2a2a2a] text-white hover:bg-[#333333]'
+                      homeFilter === 'playlists'
+                        ? 'bg-[#1ed760] md:bg-white text-black font-bold'
+                        : 'bg-[#2a2a2a] md:bg-white/10 text-white hover:bg-white/20'
                     }`}
                   >
-                    פלייליסטים
+                    פודקאסטים
                   </button>
                 </div>
               ) : currentView === 'search' ? (
                 <div className="flex flex-col gap-3 w-full">
-                  <div className="flex items-center justify-between">
-                    <h1 className="text-2xl font-extrabold text-white">חיפוש</h1>
+                  <div className="flex items-center justify-between md:hidden">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setMobileProfileMenuOpen(prev => !prev)}
+                        className="w-8 h-8 rounded-full bg-[#1ed760] text-black font-extrabold text-sm flex items-center justify-center"
+                      >
+                        E
+                      </button>
+                      <h1 className="text-2xl font-extrabold text-white">חיפוש</h1>
+                    </div>
                   </div>
-                  {/* Authentic Spotify White Search Input Bar */}
-                  <form onSubmit={handleSearchSubmit} className="w-full max-w-xl relative">
+                  {/* Mobile White Search Bar */}
+                  <form onSubmit={handleSearchSubmit} className="w-full md:hidden relative">
                     <Search className="w-5 h-5 absolute right-3.5 top-1/2 -translate-y-1/2 text-[#121212]" />
                     <input
                       type="text"
-                      placeholder="מה בא לך לשמוע?"
+                      placeholder="מה אתם רוצים לנגן?"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full h-11 bg-white text-[#121212] font-semibold text-[15px] pr-11 pl-10 rounded-[6px] focus:outline-none placeholder:text-zinc-500 text-right shadow-sm"
-                      autoFocus
                     />
                     {searchQuery && (
                       <button
                         type="button"
                         onClick={() => setSearchQuery('')}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-black"
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600"
                       >
                         <X className="w-5 h-5" />
                       </button>
@@ -537,132 +681,150 @@ export default function App() {
                   </form>
                 </div>
               ) : (
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-spotify-green text-black font-black text-sm flex items-center justify-center">
-                    S
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setMobileProfileMenuOpen(prev => !prev)}
+                      className="md:hidden w-8 h-8 rounded-full bg-[#1ed760] text-black font-extrabold text-sm flex items-center justify-center"
+                    >
+                      E
+                    </button>
+                    <h1 className="text-xl font-extrabold text-white">
+                      {currentView === 'library' && 'הספרייה'}
+                      {currentView === 'offline' && 'הורדות אופליין'}
+                      {currentView === 'analytics' && 'סטטיסטיקות האזנה'}
+                    </h1>
                   </div>
-                  <h1 className="text-xl font-extrabold text-white">
-                    {currentView === 'library' && 'הספרייה שלך'}
-                    {currentView === 'offline' && 'הורדות אופליין'}
-                    {currentView === 'analytics' && 'סטטיסטיקות האזנה'}
-                  </h1>
-                </div>
-              )}
-
-              {/* Right/Left Header Quick Icons */}
-              {currentView !== 'search' && (
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <button
-                    onClick={() => setCurrentView('analytics')}
-                    title="סטטיסטיקות"
-                    className="p-2 rounded-full text-[#b3b3b3] hover:text-white hover:bg-[#282828] transition-colors"
-                  >
-                    <BarChart3 className="w-5 h-5" />
-                  </button>
-                  <button
-                    onClick={() => setIsServerModalOpen(true)}
-                    title="חיבור שרת"
-                    className="p-2 rounded-full text-[#b3b3b3] hover:text-white hover:bg-[#282828] transition-colors"
-                  >
-                    <Server className="w-5 h-5 text-spotify-green" />
-                  </button>
-                  <button
-                    onClick={() => setIsImportModalOpen(true)}
-                    title="ייבוא פלייליסט מספוטיפיי"
-                    className="flex items-center gap-1.5 bg-[#2a2a2a] hover:bg-[#383838] text-white text-xs font-bold px-3 py-1.5 rounded-full transition-colors"
-                  >
-                    <Plus className="w-4 h-4 text-spotify-green" />
-                    <span className="hidden sm:inline">ייבוא</span>
-                  </button>
                 </div>
               )}
             </div>
           )}
 
-          {/* Main Scrollable View Body */}
-          <div className="flex-1 overflow-y-auto px-4 md:px-6 pt-2 pb-24">
-            {/* ==================== VIEW: HOME ==================== */}
+          {/* Mobile Profile Quick Menu Drawer (when tapping green "E" circle) */}
+          {mobileProfileMenuOpen && (
+            <div className="md:hidden mx-4 mb-2 p-3 rounded-lg bg-[#282828] border border-white/10 flex items-center justify-around z-30 animate-fadeIn">
+              <button
+                onClick={() => {
+                  setMobileProfileMenuOpen(false);
+                  setIsImportModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 text-xs font-bold text-spotify-green"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>ייבוא פלייליסט</span>
+              </button>
+              <button
+                onClick={() => {
+                  setMobileProfileMenuOpen(false);
+                  setCurrentView('analytics');
+                }}
+                className="flex items-center gap-1.5 text-xs font-bold text-white"
+              >
+                <BarChart3 className="w-4 h-4" />
+                <span>סטטיסטיקות</span>
+              </button>
+              <button
+                onClick={() => {
+                  setMobileProfileMenuOpen(false);
+                  setIsServerModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 text-xs font-bold text-white"
+              >
+                <Server className="w-4 h-4 text-spotify-green" />
+                <span>הגדרות שרת</span>
+              </button>
+            </div>
+          )}
+
+          {/* Main Scrollable Content Area (no-scrollbar on mobile so there is no grey bar on the left edge!) */}
+          <div className="relative z-10 flex-1 overflow-y-auto no-scrollbar px-4 md:px-6 pt-1 pb-24">
+            {/* ==================== VIEW: HOME (Exact Match to Image 1 & Image 3) ==================== */}
             {currentView === 'home' && (
               <div className="flex flex-col gap-7 animate-fadeIn">
-                {/* Iconic Spotify 2-Column Compact Top Grid (Playlists & Quick Shortcuts) */}
+                {/* Top 2x4 Compact Grid (Image 1 & Image 3) */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                  {/* Card 1: Liked Songs */}
+                  {/* Card 1: שירים שאהבתם */}
                   <div
                     onClick={() => setCurrentView('liked')}
-                    className="flex items-center gap-2.5 h-14 bg-[#282828]/85 hover:bg-[#3e3e3e] active:bg-[#3e3e3e] rounded-[4px] overflow-hidden cursor-pointer transition-colors group"
+                    className="flex items-center gap-2.5 h-[52px] bg-[#282828]/90 hover:bg-[#3e3e3e] active:bg-[#3e3e3e] rounded-[4px] overflow-hidden cursor-pointer transition-colors group"
                   >
-                    <div className="w-14 h-14 bg-gradient-to-br from-[#450af5] via-[#8e8ee5] to-[#c4efd9] flex items-center justify-center flex-shrink-0">
+                    <div className="w-[52px] h-[52px] bg-gradient-to-br from-[#450af5] via-[#8e8ee5] to-[#c4efd9] flex items-center justify-center flex-shrink-0">
                       <Heart className="w-6 h-6 fill-white text-white" />
                     </div>
-                    <span className="font-bold text-[13px] text-white line-clamp-2 pl-2 leading-tight">
-                      שירים שאהבתי
+                    <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-2 leading-tight">
+                      שירים שאהבתם
                     </span>
                   </div>
 
-                  {/* User's Saved/Imported Playlists in Top Grid */}
-                  {playlists.slice(0, 5).map((pl) => (
+                  {/* User's Saved/Imported Playlists with 2x2 Collage Covers */}
+                  {playlists.slice(0, 6).map((pl) => (
                     <div
                       key={pl.id}
                       onClick={() => {
                         setSelectedPlaylistId(pl.id);
                         setCurrentView('playlist');
                       }}
-                      className="flex items-center gap-2.5 h-14 bg-[#282828]/85 hover:bg-[#3e3e3e] active:bg-[#3e3e3e] rounded-[4px] overflow-hidden cursor-pointer transition-colors group"
+                      className="flex items-center gap-2.5 h-[52px] bg-[#282828]/90 hover:bg-[#3e3e3e] active:bg-[#3e3e3e] rounded-[4px] overflow-hidden cursor-pointer transition-colors group"
                     >
-                      <div className="w-14 h-14 bg-[#181818] flex-shrink-0 overflow-hidden">
-                        {pl.cover ? (
-                          <img src={pl.cover} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-[#b3b3b3]">
-                            <Music2 className="w-6 h-6" />
-                          </div>
-                        )}
-                      </div>
-                      <span className="font-bold text-[13px] text-white line-clamp-2 pl-2 leading-tight">
+                      <PlaylistThumb playlist={pl} className="w-[52px] h-[52px]" />
+                      <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-2 leading-tight">
                         {pl.title}
                       </span>
                     </div>
                   ))}
 
-                  {/* Offline Downloads Shortcut */}
-                  <div
-                    onClick={() => setCurrentView('offline')}
-                    className="flex items-center gap-2.5 h-14 bg-[#282828]/85 hover:bg-[#3e3e3e] active:bg-[#3e3e3e] rounded-[4px] overflow-hidden cursor-pointer transition-colors group"
-                  >
-                    <div className="w-14 h-14 bg-gradient-to-br from-emerald-700 to-teal-900 flex items-center justify-center flex-shrink-0">
-                      <ArrowDownCircle className="w-6 h-6 fill-spotify-green text-black" />
-                    </div>
-                    <span className="font-bold text-[13px] text-white line-clamp-2 pl-2 leading-tight">
-                      הורדות אופליין
-                    </span>
-                  </div>
+                  {/* Recent Tracks fill remaining slots in the top 8 grid if user has fewer than 6 playlists */}
+                  {playlists.length < 6 &&
+                    recentTracks.slice(0, 6 - playlists.length).map((t, idx) => (
+                      <div
+                        key={`top_rec_${t.id || idx}`}
+                        onClick={() => handlePlayTrack(t, recentTracks, idx)}
+                        className="flex items-center gap-2.5 h-[52px] bg-[#282828]/90 hover:bg-[#3e3e3e] active:bg-[#3e3e3e] rounded-[4px] overflow-hidden cursor-pointer transition-colors group"
+                      >
+                        <div className="w-[52px] h-[52px] bg-[#181818] flex-shrink-0 overflow-hidden">
+                          {t.thumbnail ? (
+                            <img src={t.thumbnail} alt="" className="w-full h-full object-cover" loading="lazy" />
+                          ) : (
+                            <Music2 className="w-5 h-5 m-4 text-[#b3b3b3]" />
+                          )}
+                        </div>
+                        <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-2 leading-tight">
+                          {t.title}
+                        </span>
+                      </div>
+                    ))}
 
-                  {/* Import Playlist Card */}
-                  <div
-                    onClick={() => setIsImportModalOpen(true)}
-                    className="flex items-center gap-2.5 h-14 bg-[#282828]/85 hover:bg-[#3e3e3e] active:bg-[#3e3e3e] rounded-[4px] overflow-hidden cursor-pointer transition-colors group"
-                  >
-                    <div className="w-14 h-14 bg-[#202020] flex items-center justify-center flex-shrink-0 text-spotify-green">
-                      <PlusCircle className="w-6 h-6" />
+                  {/* Import Playlist Card if grid still has room */}
+                  {playlists.length + recentTracks.length < 7 && (
+                    <div
+                      onClick={() => setIsImportModalOpen(true)}
+                      className="flex items-center gap-2.5 h-[52px] bg-[#282828]/90 hover:bg-[#3e3e3e] active:bg-[#3e3e3e] rounded-[4px] overflow-hidden cursor-pointer transition-colors group"
+                    >
+                      <div className="w-[52px] h-[52px] bg-[#202020] flex items-center justify-center flex-shrink-0 text-spotify-green">
+                        <PlusCircle className="w-6 h-6" />
+                      </div>
+                      <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-2 leading-tight">
+                        ייבוא מספוטיפיי
+                      </span>
                     </div>
-                    <span className="font-bold text-[13px] text-white line-clamp-2 pl-2 leading-tight">
-                      ייבוא מספוטיפיי
-                    </span>
-                  </div>
+                  )}
                 </div>
 
-                {/* Section 1: Recently Played (Horizontal Carousel on Mobile, Grid on Desktop) */}
+                {/* Section 1: חזרה לנקודה האחרונה (Exact title from Image 1 & Image 3) */}
                 {homeFilter !== 'playlists' && recentTracks.length > 0 && (
                   <section className="flex flex-col gap-3">
                     <div className="flex items-center justify-between">
-                      <h2 className="font-extrabold text-xl text-white tracking-tight">הושמעו לאחרונה</h2>
+                      <h2 className="font-extrabold text-[22px] text-white tracking-tight">חזרה לנקודה האחרונה</h2>
+                      <span className="hidden sm:inline text-xs font-bold text-[#b3b3b3] hover:underline cursor-pointer">
+                        הצגת כל האפשרויות
+                      </span>
                     </div>
-                    <div className="flex overflow-x-auto gap-3.5 no-scrollbar pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
+                    <div className="flex overflow-x-auto gap-4 no-scrollbar pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
                       {recentTracks.slice(0, 10).map((track, idx) => (
                         <div
                           key={track.id || idx}
                           onClick={() => handlePlayTrack(track, recentTracks, idx)}
-                          className="w-36 sm:w-44 flex-shrink-0 sm:p-3 sm:rounded-md sm:hover:bg-[#181818] flex flex-col gap-2 group cursor-pointer transition-colors"
+                          className="w-[152px] sm:w-[172px] flex-shrink-0 sm:p-2.5 sm:rounded-md sm:hover:bg-[#181818] flex flex-col gap-1.5 group cursor-pointer transition-colors"
                         >
                           <div className="relative aspect-square w-full rounded-[6px] overflow-hidden bg-[#282828] shadow-md">
                             {track.thumbnail ? (
@@ -674,9 +836,9 @@ export default function App() {
                               <Play className="w-5 h-5 fill-black text-black translate-x-0.5" />
                             </button>
                           </div>
-                          <div className="flex flex-col min-w-0">
+                          <div className="flex flex-col min-w-0 text-right mt-0.5">
                             <span className="font-bold text-[13px] truncate text-white">{track.title}</span>
-                            <span className="text-xs text-[#b3b3b3] truncate">{track.artist}</span>
+                            <span className="text-xs text-[#b3b3b3] truncate mt-0.5">{track.artist}</span>
                           </div>
                         </div>
                       ))}
@@ -684,13 +846,19 @@ export default function App() {
                   </section>
                 )}
 
-                {/* Section 2: Your Playlists Carousel */}
+                {/* Section 2: הפלייליסטים שלכם (Exact title from Image 3) */}
                 {homeFilter !== 'music' && playlists.length > 0 && (
                   <section className="flex flex-col gap-3">
                     <div className="flex items-center justify-between">
-                      <h2 className="font-extrabold text-xl text-white tracking-tight">הפלייליסטים שלך</h2>
+                      <h2 className="font-extrabold text-[22px] text-white tracking-tight">הפלייליסטים שלכם</h2>
+                      <span
+                        onClick={() => setCurrentView('library')}
+                        className="hidden sm:inline text-xs font-bold text-[#b3b3b3] hover:underline cursor-pointer"
+                      >
+                        הצגת כל האפשרויות
+                      </span>
                     </div>
-                    <div className="flex overflow-x-auto gap-3.5 no-scrollbar pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
+                    <div className="flex overflow-x-auto gap-4 no-scrollbar pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
                       {playlists.map((pl) => (
                         <div
                           key={pl.id}
@@ -698,19 +866,16 @@ export default function App() {
                             setSelectedPlaylistId(pl.id);
                             setCurrentView('playlist');
                           }}
-                          className="w-36 sm:w-44 flex-shrink-0 sm:p-3 sm:rounded-md sm:hover:bg-[#181818] flex flex-col gap-2 group cursor-pointer transition-colors"
+                          className="w-[152px] sm:w-[172px] flex-shrink-0 sm:p-2.5 sm:rounded-md sm:hover:bg-[#181818] flex flex-col gap-1.5 group cursor-pointer transition-colors"
                         >
                           <div className="relative aspect-square w-full rounded-[6px] overflow-hidden bg-[#282828] shadow-md">
-                            {pl.cover ? (
-                              <img src={pl.cover} alt="" loading="lazy" className="w-full h-full object-cover" />
-                            ) : (
-                              <Music2 className="w-10 h-10 m-auto text-[#b3b3b3]" />
-                            )}
+                            <PlaylistThumb playlist={pl} className="w-full h-full" />
                             <button className="hidden sm:flex absolute bottom-2 right-2 w-11 h-11 rounded-full bg-spotify-green text-black items-center justify-center shadow-xl opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 hover:scale-105">
                               <Play className="w-5 h-5 fill-black text-black translate-x-0.5" />
                             </button>
                           </div>
-                          <div className="flex flex-col min-w-0">
+                          <div className="flex flex-col min-w-0 text-right mt-0.5">
+                            <span className="text-[11px] text-[#b3b3b3]">פלייליסט</span>
                             <span className="font-bold text-[13px] truncate text-white">{pl.title}</span>
                             <span className="text-xs text-[#b3b3b3] truncate">{pl.tracks?.length || 0} שירים</span>
                           </div>
@@ -720,20 +885,23 @@ export default function App() {
                   </section>
                 )}
 
-                {/* Section 3: Trending & Hits */}
+                {/* Section 3: תחנות מומלצות ולהיטים חמים (Matches Image 1) */}
                 {homeFilter !== 'playlists' && (
                   <section className="flex flex-col gap-3">
                     <div className="flex items-center justify-between">
-                      <h2 className="font-extrabold text-xl text-white tracking-tight">להיטים חמים עכשיו</h2>
+                      <div>
+                        <p className="text-xs text-[#b3b3b3] mb-0.5">מוזיקה ללא הפסקה על סמך האמנים והשירים האהובים עליכם.</p>
+                        <h2 className="font-extrabold text-[22px] text-white tracking-tight">תחנות מומלצות ולהיטים</h2>
+                      </div>
                     </div>
 
                     {isTrendingLoading ? (
                       <div className="flex items-center justify-center p-12 text-[#b3b3b3] gap-3">
                         <Loader2 className="w-6 h-6 animate-spin text-spotify-green" />
-                        <span className="text-sm">טוען להיטים...</span>
+                        <span className="text-sm">טוען שירים...</span>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5">
+                      <div className="flex overflow-x-auto sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 no-scrollbar pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
                         {trendingTracks.map((track, idx) => {
                           const active = isSameTrack(player.currentTrack, track);
                           return (
@@ -741,7 +909,7 @@ export default function App() {
                               key={track.id || idx}
                               onClick={() => handlePlayTrack(track, trendingTracks, idx)}
                               onMouseEnter={() => prefetchNextTracks([track])}
-                              className="sm:bg-[#181818] sm:hover:bg-[#282828] sm:p-3 rounded-md flex flex-col gap-2 group cursor-pointer transition-all duration-200"
+                              className="w-[152px] sm:w-auto flex-shrink-0 sm:p-2.5 rounded-md sm:hover:bg-[#181818] flex flex-col gap-1.5 group cursor-pointer transition-all duration-200"
                             >
                               <div className="relative aspect-square w-full rounded-[6px] overflow-hidden bg-[#282828] shadow-md">
                                 {track.thumbnail ? (
@@ -765,7 +933,7 @@ export default function App() {
                                   )}
                                 </button>
                               </div>
-                              <div className="flex flex-col min-w-0">
+                              <div className="flex flex-col min-w-0 text-right mt-0.5">
                                 <span className={`font-bold text-[13px] truncate ${active ? 'text-spotify-green' : 'text-white'}`}>
                                   {track.title}
                                 </span>
@@ -810,17 +978,16 @@ export default function App() {
                     ))}
                   </div>
                 ) : (
-                  /* Authentic Spotify "עיון בהכל" Colorful Category Tiles */
                   <div className="flex flex-col gap-3 mt-1">
                     <h2 className="font-bold text-base text-white">עיון בהכל</h2>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                       {BROWSE_CATEGORIES.map((cat, idx) => (
                         <div
                           key={idx}
                           onClick={() => setSearchQuery(cat.query)}
                           className={`${cat.color} h-24 sm:h-28 rounded-[8px] p-3.5 relative overflow-hidden cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-transform shadow-md`}
                         >
-                          <span className="font-extrabold text-base text-white leading-snug block max-w-[75%]">
+                          <span className="font-extrabold text-base text-white leading-snug block max-w-[75%] text-right">
                             {cat.title}
                           </span>
                           <div className="w-16 h-16 rounded shadow-lg bg-black/25 absolute -bottom-2 -left-2 rotate-[25deg] flex items-center justify-center">
@@ -837,11 +1004,10 @@ export default function App() {
             {/* ==================== VIEW: YOUR LIBRARY ==================== */}
             {currentView === 'library' && (
               <div className="flex flex-col gap-4 animate-fadeIn">
-                {/* Library Action Bar */}
                 <div className="flex items-center justify-between gap-2 pb-1">
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleCreatePlaylist(`הפלייליסט שלי #${playlists.length + 1}`)}
+                      onClick={() => handleCreatePlaylist(`פלייליסט מס׳ ${playlists.length + 1} שלי`)}
                       className="px-3.5 py-1.5 rounded-full bg-[#2a2a2a] hover:bg-[#383838] text-white text-xs font-semibold flex items-center gap-1.5"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -866,9 +1032,8 @@ export default function App() {
                 </div>
 
                 {libraryLayout === 'list' ? (
-                  /* Authentic Spotify Mobile/Desktop Library List View */
                   <div className="flex flex-col gap-1">
-                    {/* Pinned: Liked Songs */}
+                    {/* Pinned: שירים שאהבתם */}
                     <div
                       onClick={() => setCurrentView('liked')}
                       className="flex items-center gap-3.5 p-2 rounded-md hover:bg-[#1f1f1f] active:bg-[#1f1f1f] cursor-pointer transition-colors"
@@ -877,7 +1042,7 @@ export default function App() {
                         <Heart className="w-7 h-7 fill-white" />
                       </div>
                       <div className="flex flex-col min-w-0 flex-1 text-right">
-                        <span className="text-base font-semibold text-white truncate">שירים שאהבתי</span>
+                        <span className="text-base font-semibold text-white truncate">שירים שאהבתם</span>
                         <div className="flex items-center gap-1.5 text-[13px] text-[#b3b3b3] mt-0.5">
                           <Pin className="w-3.5 h-3.5 fill-spotify-green text-spotify-green rotate-45 flex-shrink-0" />
                           <span>פלייליסט • {likedSongs.length} שירים</span>
@@ -901,7 +1066,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Playlists */}
+                    {/* Playlists with 2x2 Collages */}
                     {playlists.map((pl) => (
                       <div
                         key={pl.id}
@@ -911,27 +1076,18 @@ export default function App() {
                         }}
                         className="flex items-center gap-3.5 p-2 rounded-md hover:bg-[#1f1f1f] active:bg-[#1f1f1f] cursor-pointer transition-colors"
                       >
-                        <div className="w-16 h-16 rounded-[4px] bg-[#282828] overflow-hidden flex-shrink-0 shadow">
-                          {pl.cover ? (
-                            <img src={pl.cover} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[#b3b3b3]">
-                              <Music2 className="w-7 h-7" />
-                            </div>
-                          )}
-                        </div>
+                        <PlaylistThumb playlist={pl} className="w-16 h-16 rounded-[4px] shadow" />
                         <div className="flex flex-col min-w-0 flex-1 text-right">
                           <span className="text-base font-semibold text-white truncate">{pl.title}</span>
                           <span className="text-[13px] text-[#b3b3b3] truncate mt-0.5">
-                            {pl.type === 'album' ? 'אלבום' : 'פלייליסט'} • SpotiFree • {pl.tracks?.length || 0} שירים
+                            {pl.type === 'album' ? 'אלבום' : 'פלייליסט'} • {pl.tracks?.length || 0} שירים
                           </span>
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  /* Grid View */
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                     <div
                       onClick={() => setCurrentView('liked')}
                       className="flex flex-col gap-2 cursor-pointer group"
@@ -939,7 +1095,7 @@ export default function App() {
                       <div className="aspect-square rounded-[6px] bg-gradient-to-br from-[#450af5] via-[#8e8ee5] to-[#c4efd9] flex items-center justify-center shadow-lg">
                         <Heart className="w-14 h-14 fill-white text-white" />
                       </div>
-                      <span className="font-bold text-sm text-white truncate">שירים שאהבתי</span>
+                      <span className="font-bold text-sm text-white truncate">שירים שאהבתם</span>
                       <span className="text-xs text-[#b3b3b3]">פלייליסט • {likedSongs.length} שירים</span>
                     </div>
 
@@ -952,13 +1108,7 @@ export default function App() {
                         }}
                         className="flex flex-col gap-2 cursor-pointer group"
                       >
-                        <div className="aspect-square rounded-[6px] overflow-hidden bg-[#282828] shadow-lg">
-                          {pl.cover ? (
-                            <img src={pl.cover} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <Music2 className="w-12 h-12 m-auto text-[#b3b3b3]" />
-                          )}
-                        </div>
+                        <PlaylistThumb playlist={pl} className="aspect-square w-full rounded-[6px] shadow-lg" />
                         <span className="font-bold text-sm text-white truncate">{pl.title}</span>
                         <span className="text-xs text-[#b3b3b3]">{pl.tracks?.length || 0} שירים</span>
                       </div>
@@ -973,7 +1123,7 @@ export default function App() {
               <PlaylistView
                 playlist={{
                   id: 'liked',
-                  title: 'שירים שאהבתי',
+                  title: 'שירים שאהבתם',
                   cover: likedSongs[0]?.thumbnail || '',
                   type: 'Favorites',
                   tracks: likedSongs
@@ -1042,6 +1192,125 @@ export default function App() {
             )}
           </div>
         </main>
+
+        {/* ==================== Column 3 (Left in RTL): DESKTOP NOW PLAYING + LYRICS PREVIEW PANEL (Exact Match to Image 1) ==================== */}
+        {showNowPlayingPanel && player.currentTrack && (
+          <aside className="hidden xl:flex flex-col w-[300px] 2xl:w-[340px] flex-shrink-0 bg-[#121212] rounded-lg overflow-y-auto no-scrollbar p-4 gap-4 select-none">
+            {/* Panel Header: Current Playlist / Source Name */}
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-sm text-white truncate">
+                {activePlaylist?.title || player.currentTrack.album || 'שירים שאהבתם'}
+              </span>
+              <button
+                onClick={() => setShowNowPlayingPanel(false)}
+                className="p-1 text-[#b3b3b3] hover:text-white rounded-full"
+                title="סגור פאנל"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Large Square Track Cover */}
+            <div
+              onClick={() => setIsFullscreenPlayerOpen(true)}
+              className="aspect-square w-full rounded-[8px] overflow-hidden bg-[#282828] shadow-xl cursor-pointer"
+            >
+              {player.currentTrack.thumbnail ? (
+                <img src={player.currentTrack.thumbnail} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-[#b3b3b3]">
+                  <Music2 className="w-16 h-16" />
+                </div>
+              )}
+            </div>
+
+            {/* Song Title & Artist on Right + Green Checkmark on Left (Exact Match to Image 1) */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col min-w-0 flex-1 text-right">
+                <span className="text-xl font-extrabold text-white truncate hover:underline cursor-pointer">
+                  {player.currentTrack.title}
+                </span>
+                <span className="text-sm text-[#b3b3b3] truncate mt-0.5">
+                  {player.currentTrack.artist}
+                </span>
+              </div>
+
+              <button
+                onClick={() => handleToggleLike(player.currentTrack)}
+                className="flex-shrink-0 transition-transform active:scale-125"
+                title={isCurrentLiked ? 'הסר משירים שאהבתם' : 'הוסף לשירים שאהבתם'}
+              >
+                {isCurrentLiked ? (
+                  <span className="w-6 h-6 rounded-full bg-spotify-green text-black flex items-center justify-center shadow">
+                    <Check className="w-3.5 h-3.5 stroke-[3.5]" />
+                  </span>
+                ) : (
+                  <PlusCircle className="w-6 h-6 text-[#b3b3b3] hover:text-white" />
+                )}
+              </button>
+            </div>
+
+            {/* Purple Live Lyrics Preview Card ("תצוגה מקדימה של מילות השיר" — Exact Match to Image 1!) */}
+            <div
+              onClick={() => setIsLyricsOpen(true)}
+              className="w-full rounded-xl bg-gradient-to-b from-[#6b1169] to-[#4a0c48] p-4 flex flex-col gap-2.5 cursor-pointer hover:brightness-110 transition-all shadow-lg"
+            >
+              <span className="text-xs font-bold text-white/90 text-right">
+                תצוגה מקדימה של מילות השיר
+              </span>
+              {previewLyricsLines && previewLyricsLines.length > 0 ? (
+                <div className="flex flex-col gap-1.5 text-right py-1">
+                  {previewLyricsLines.map((line, i) => (
+                    <p
+                      key={i}
+                      className={`font-extrabold leading-snug transition-colors ${
+                        line.isCurrent ? 'text-white text-lg' : 'text-white/50 text-base'
+                      }`}
+                    >
+                      {line.text}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5 text-right py-2">
+                  <p className="text-white font-extrabold text-base">{player.currentTrack.title}</p>
+                  <p className="text-white/65 font-bold text-sm">לחץ לצפייה במילות השיר המלאות</p>
+                </div>
+              )}
+            </div>
+
+            {/* Next in Queue / Related Card */}
+            {player.queue && player.queue.length > 1 && (
+              <div className="w-full rounded-xl bg-[#1f1f1f] p-3.5 flex flex-col gap-2.5">
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="text-white">הבא בתור</span>
+                  <span className="text-[#b3b3b3]">{player.currentTrack.artist}</span>
+                </div>
+                {player.queue
+                  .slice(player.queueIndex + 1, player.queueIndex + 3)
+                  .map((nextT, idx) => (
+                    <div
+                      key={nextT.id || idx}
+                      onClick={() => handlePlayTrack(nextT)}
+                      className="flex items-center gap-2.5 p-1.5 rounded-md hover:bg-white/10 cursor-pointer transition-colors"
+                    >
+                      <div className="w-10 h-10 rounded-[4px] bg-[#282828] overflow-hidden flex-shrink-0">
+                        {nextT.thumbnail ? (
+                          <img src={nextT.thumbnail} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <Music2 className="w-4 h-4 m-3 text-[#b3b3b3]" />
+                        )}
+                      </div>
+                      <div className="flex flex-col min-w-0 flex-1 text-right">
+                        <span className="text-xs font-bold text-white truncate">{nextT.title}</span>
+                        <span className="text-[11px] text-[#b3b3b3] truncate">{nextT.artist}</span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </aside>
+        )}
       </div>
 
       {/* Fixed Bottom Controls & Navigation */}
@@ -1064,10 +1333,12 @@ export default function App() {
         onToggleMute={player.toggleMute}
         onToggleShuffle={handleToggleShuffle}
         onToggleRepeat={player.toggleRepeat}
-        isLiked={likedSongs.some(s => isSameTrack(s, player.currentTrack))}
+        isLiked={isCurrentLiked}
         onToggleLike={handleToggleLike}
         onOpenLyrics={() => setIsLyricsOpen(true)}
         onOpenFullscreen={() => setIsFullscreenPlayerOpen(true)}
+        showNowPlayingPanel={showNowPlayingPanel}
+        onToggleNowPlayingPanel={() => setShowNowPlayingPanel(prev => !prev)}
       />
 
       {/* Mobile Tab Bar */}
@@ -1095,7 +1366,7 @@ export default function App() {
         onToggleShuffle={handleToggleShuffle}
         repeatMode={player.repeatMode}
         onToggleRepeat={player.toggleRepeat}
-        isLiked={likedSongs.some(s => isSameTrack(s, player.currentTrack))}
+        isLiked={isCurrentLiked}
         onToggleLike={handleToggleLike}
         onOpenLyrics={() => {
           setIsFullscreenPlayerOpen(false);
@@ -1118,7 +1389,7 @@ export default function App() {
           isShuffle={player.isShuffle}
           shuffleMode={player.shuffleMode}
           onToggleShuffle={handleToggleShuffle}
-          isLiked={likedSongs.some(s => isSameTrack(s, player.currentTrack))}
+          isLiked={isCurrentLiked}
           onToggleLike={handleToggleLike}
           onClose={() => setIsLyricsOpen(false)}
           currentTrack={player.currentTrack}

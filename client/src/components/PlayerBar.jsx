@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Play,
   Pause,
@@ -16,8 +16,31 @@ import {
   Music,
   Loader2,
   Check,
-  ChevronUp
+  PlusCircle,
+  MonitorSpeaker,
+  PanelLeft
 } from 'lucide-react';
+
+// Rich Spotify Mini-Player palette (matches Image 3 deep wine/plum/indigo/teal tones)
+const MINI_PLAYER_PALETTE = [
+  '#4c1d4b', // Deep Wine Purple (exact match to Image 3!)
+  '#3b2667', // Deep Indigo
+  '#1e3264', // Spotify Royal Blue
+  '#472133', // Burgundy Rose
+  '#1b4332', // Deep Emerald
+  '#4a2c11', // Warm Amber Brown
+  '#2d3142'  // Slate Navy
+];
+
+function getTrackAccentColor(track) {
+  if (!track) return MINI_PLAYER_PALETTE[0];
+  const str = `${track.id || ''}${track.title || ''}`;
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return MINI_PLAYER_PALETTE[Math.abs(hash) % MINI_PLAYER_PALETTE.length];
+}
 
 export function PlayerBar({
   currentTrack,
@@ -41,8 +64,12 @@ export function PlayerBar({
   isLiked,
   onToggleLike,
   onOpenLyrics,
-  onOpenFullscreen
+  onOpenFullscreen,
+  showNowPlayingPanel = true,
+  onToggleNowPlayingPanel
 }) {
+  const accentColor = useMemo(() => getTrackAccentColor(currentTrack), [currentTrack]);
+
   if (!currentTrack) return null;
 
   const formatTime = (secs) => {
@@ -58,25 +85,27 @@ export function PlayerBar({
 
   return (
     <>
-      {/* Authentic Spotify Mobile Floating Mini-Player Pill */}
+      {/* ==================== MOBILE FLOATING MINI-PLAYER (Exact Match to Image 3) ==================== */}
       <div
         onClick={onOpenFullscreen}
-        className="md:hidden relative mx-2 mb-1 h-14 rounded-[8px] bg-[#282828] overflow-hidden flex items-center justify-between px-2.5 cursor-pointer z-30 shadow-[0_8px_24px_rgba(0,0,0,0.85)] border border-white/[0.07]"
+        dir="ltr"
+        style={{ backgroundColor: accentColor }}
+        className="md:hidden relative mx-2 mb-1 h-[56px] rounded-[8px] overflow-hidden flex items-center justify-between px-2.5 cursor-pointer z-30 shadow-[0_8px_24px_rgba(0,0,0,0.85)]"
       >
-        {/* Dynamic Ambient Artwork Tint Background */}
+        {/* Subtle ambient artwork overlay */}
         {currentTrack.thumbnail && (
           <>
             <img
               src={currentTrack.thumbnail}
               alt=""
-              className="absolute inset-0 w-full h-full object-cover blur-2xl scale-150 opacity-45 saturate-150 pointer-events-none"
+              className="absolute inset-0 w-full h-full object-cover blur-2xl scale-150 opacity-35 saturate-150 pointer-events-none"
             />
-            <div className="absolute inset-0 bg-black/50 pointer-events-none" />
+            <div className="absolute inset-0 bg-black/35 pointer-events-none" />
           </>
         )}
 
-        {/* Right Side (RTL): 40x40 Cover + Title & Artist */}
-        <div className="relative z-10 flex items-center gap-2.5 min-w-0 flex-1">
+        {/* Left Side in Mini-Player (Image 3): 40x40 Cover + Title & Artist */}
+        <div className="relative z-10 flex items-center gap-2.5 min-w-0 flex-1 pr-2">
           <div className="w-10 h-10 rounded-[4px] bg-[#181818] overflow-hidden flex-shrink-0 shadow-md">
             {currentTrack.thumbnail ? (
               <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover" />
@@ -86,35 +115,43 @@ export function PlayerBar({
               </div>
             )}
           </div>
-          <div className="flex flex-col min-w-0 flex-1 text-right">
+          <div className="flex flex-col min-w-0 flex-1 text-right" dir="rtl">
             <span className="text-[13px] font-bold text-white truncate leading-tight" title={currentTrack.title}>
               {currentTrack.title}
             </span>
-            <span className="text-[11px] text-white/75 truncate leading-tight mt-0.5" title={currentTrack.artist}>
+            <span className="text-[12px] text-white/80 truncate leading-tight mt-0.5" title={currentTrack.artist}>
               {currentTrack.artist}
             </span>
           </div>
         </div>
 
-        {/* Left Side (RTL): Like + Play/Pause */}
-        <div className="relative z-10 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+        {/* Right Side in Mini-Player (Image 3): Device/Lyrics Icon + Green Check + Play/Pause */}
+        <div className="relative z-10 flex items-center gap-2.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={onOpenLyrics}
+            className="p-1.5 text-white/90 active:scale-95 transition-transform"
+            title="מילים לשיר"
+          >
+            <MonitorSpeaker className="w-5 h-5" />
+          </button>
+
           <button
             onClick={() => onToggleLike(currentTrack)}
-            className="p-2 transition-transform active:scale-125"
+            className="p-1 transition-transform active:scale-125"
             aria-label={isLiked ? 'הסר ממועדפים' : 'שמור במועדפים'}
           >
             {isLiked ? (
-              <span className="w-5 h-5 rounded-full bg-spotify-green text-black flex items-center justify-center">
-                <Check className="w-3.5 h-3.5 stroke-[3]" />
+              <span className="w-6 h-6 rounded-full bg-spotify-green text-black flex items-center justify-center shadow">
+                <Check className="w-3.5 h-3.5 stroke-[3.5]" />
               </span>
             ) : (
-              <Heart className="w-5 h-5 text-white/80" />
+              <PlusCircle className="w-6 h-6 text-white/90" />
             )}
           </button>
 
           <button
             onClick={onTogglePlay}
-            className="p-2 text-white flex items-center justify-center active:scale-90 transition-transform"
+            className="p-1.5 text-white flex items-center justify-center active:scale-90 transition-transform"
             aria-label={isPlaying ? 'השהה' : 'נגן'}
           >
             {isLoading ? (
@@ -128,7 +165,7 @@ export function PlayerBar({
         </div>
 
         {/* Bottom Thin Progress Line inside Floating Pill */}
-        <div className="absolute bottom-0 left-2 right-2 h-[2px] bg-white/20 rounded-full overflow-hidden z-10" dir="ltr">
+        <div className="absolute bottom-0 left-2 right-2 h-[2px] bg-white/25 rounded-full overflow-hidden z-10" dir="ltr">
           <div
             className="h-full bg-white rounded-full transition-all duration-150"
             style={{ width: `${progressPercent}%` }}
@@ -136,9 +173,9 @@ export function PlayerBar({
         </div>
       </div>
 
-      {/* Authentic Spotify Desktop Fixed Bottom Bar */}
-      <div className="hidden md:flex items-center justify-between bg-black h-[88px] px-4 z-40 select-none">
-        {/* Right side (RTL): Now Playing Track Info */}
+      {/* ==================== DESKTOP BOTTOM BAR (Exact Match to Image 1) ==================== */}
+      <div className="hidden md:flex items-center justify-between bg-black h-[80px] px-4 z-40 select-none">
+        {/* Right side (RTL): Now Playing Track Info + Green Checkmark */}
         <div className="flex items-center gap-3.5 w-[30%] min-w-[200px]">
           <div
             onClick={onOpenFullscreen}
@@ -151,15 +188,12 @@ export function PlayerBar({
                 <Music className="w-6 h-6" />
               </div>
             )}
-            <div className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/70 text-white hidden group-hover:flex items-center justify-center">
-              <ChevronUp className="w-4 h-4" />
-            </div>
           </div>
 
           <div className="flex flex-col min-w-0 truncate text-right">
             <span
               onClick={onOpenFullscreen}
-              className="text-sm font-semibold text-white truncate hover:underline cursor-pointer"
+              className="text-sm font-bold text-white truncate hover:underline cursor-pointer"
             >
               {currentTrack.title}
             </span>
@@ -175,16 +209,16 @@ export function PlayerBar({
           >
             {isLiked ? (
               <span className="w-4 h-4 rounded-full bg-spotify-green text-black flex items-center justify-center">
-                <Check className="w-3 h-3 stroke-[3]" />
+                <Check className="w-3 h-3 stroke-[3.5]" />
               </span>
             ) : (
-              <Heart className="w-4 h-4 text-[#b3b3b3] hover:text-white" />
+              <PlusCircle className="w-4 h-4 text-[#b3b3b3] hover:text-white" />
             )}
           </button>
         </div>
 
         {/* Center: Playback Controls & Scrubber (LTR) */}
-        <div className="flex flex-col items-center gap-2 w-[40%] max-w-[600px]" dir="ltr">
+        <div className="flex flex-col items-center gap-1.5 w-[40%] max-w-[600px]" dir="ltr">
           <div className="flex items-center gap-5">
             {/* Shuffle */}
             <button
@@ -271,7 +305,7 @@ export function PlayerBar({
               value={currentTime}
               onChange={(e) => onSeek(parseFloat(e.target.value))}
               style={{
-                background: `linear-gradient(to right, #1ed760 ${progressPercent}%, rgba(255, 255, 255, 0.25) ${progressPercent}%)`
+                background: `linear-gradient(to right, #ffffff ${progressPercent}%, rgba(255, 255, 255, 0.25) ${progressPercent}%)`
               }}
               className="spotify-slider flex-1"
             />
@@ -281,14 +315,14 @@ export function PlayerBar({
           </div>
         </div>
 
-        {/* Left side (RTL): Lyrics, Volume & Fullscreen (LTR) */}
+        {/* Left side (RTL): Lyrics, Now Playing Panel Toggle, Volume & Fullscreen (LTR) */}
         <div className="flex items-center justify-end gap-3 w-[30%]" dir="ltr">
           <button
-            onClick={onOpenLyrics}
-            title="מילים לשיר"
+            onClick={onOpenFullscreen}
+            title="מסך מלא"
             className="p-1.5 text-[#b3b3b3] hover:text-white transition-colors"
           >
-            <Mic2 className="w-4 h-4" />
+            <Maximize2 className="w-4 h-4" />
           </button>
 
           <div className="flex items-center gap-2 group">
@@ -306,18 +340,30 @@ export function PlayerBar({
               value={currentVolume}
               onChange={(e) => onSetVolume(parseFloat(e.target.value))}
               style={{
-                background: `linear-gradient(to right, #1ed760 ${volumePercent}%, rgba(255, 255, 255, 0.25) ${volumePercent}%)`
+                background: `linear-gradient(to right, #ffffff ${volumePercent}%, rgba(255, 255, 255, 0.25) ${volumePercent}%)`
               }}
               className="spotify-slider w-24"
             />
           </div>
 
+          {onToggleNowPlayingPanel && (
+            <button
+              onClick={onToggleNowPlayingPanel}
+              title="תצוגת מתנגן עכשיו"
+              className={`p-1.5 transition-colors ${
+                showNowPlayingPanel ? 'text-spotify-green' : 'text-[#b3b3b3] hover:text-white'
+              }`}
+            >
+              <PanelLeft className="w-4 h-4" />
+            </button>
+          )}
+
           <button
-            onClick={onOpenFullscreen}
-            title="מסך מלא"
+            onClick={onOpenLyrics}
+            title="מילים לשיר"
             className="p-1.5 text-[#b3b3b3] hover:text-white transition-colors"
           >
-            <Maximize2 className="w-4 h-4" />
+            <Mic2 className="w-4 h-4" />
           </button>
         </div>
       </div>
