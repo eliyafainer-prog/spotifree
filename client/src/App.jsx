@@ -32,7 +32,8 @@ import {
   createCustomPlaylist,
   reorderPlaylistTracks,
   reorderLikedSongs,
-  renamePlaylist
+  renamePlaylist,
+  isSameTrack
 } from './services/storage';
 import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
 import { saveTrackOffline, getAllOfflineTracks } from './services/offlineStorage';
@@ -197,44 +198,53 @@ export default function App() {
     return () => { isMounted = false; };
   }, []);
 
-  // Proactively prefetch and auto-enrich playlist tracks when opening a playlist
+  // Proactively prefetch and auto-enrich all playlist tracks in batches when opening a playlist
   useEffect(() => {
     const activePl = playlists.find(p => p.id === selectedPlaylistId);
     if (!activePl || !activePl.tracks || activePl.tracks.length === 0) return;
 
-    prefetchNextTracks(activePl.tracks.slice(0, 5));
+    prefetchNextTracks(activePl.tracks.slice(0, 4));
 
-    // Background auto-enrich existing imported playlist tracks with individual artwork and YouTube IDs
-    const needsEnrichment = activePl.tracks.some(t => t.id?.startsWith('sp_') || !t.thumbnail || t.thumbnail === activePl.cover);
-    if (needsEnrichment) {
+    const isAlbumPlaylist = activePl.type?.toLowerCase() === 'album';
+    const unverified = activePl.tracks.filter(
+      t => t.id?.startsWith('sp_') || !t.thumbnail || (!isAlbumPlaylist && t.hasCustomArtwork === false) || (!isAlbumPlaylist && t.thumbnail === activePl.cover && !t.hasCustomArtwork)
+    );
+
+    if (unverified.length > 0) {
       let cancelled = false;
-      const unverified = activePl.tracks.filter(t => t.id?.startsWith('sp_') || !t.thumbnail || t.thumbnail === activePl.cover).slice(0, 10);
 
-      Promise.all(
-        unverified.map(async (t) => {
-          try {
-            const res = await resolveTrack(t);
-            if (res && res.streamableId) {
-              updateTrackInPlaylists({
-                ...t,
-                originalId: t.id,
-                streamableId: res.streamableId,
-                id: res.streamableId,
-                thumbnail: res.thumbnail || t.thumbnail,
-                durationSeconds: res.durationSeconds || t.durationSeconds
-              });
-            }
-          } catch (e) {}
-        })
-      ).then(() => {
-        if (!cancelled) {
-          setPlaylists(getPlaylists());
+      (async () => {
+        const batchSize = 5;
+        for (let i = 0; i < unverified.length; i += batchSize) {
+          if (cancelled) break;
+          const batch = unverified.slice(i, i + batchSize);
+          await Promise.all(
+            batch.map(async (t) => {
+              try {
+                const res = await resolveTrack(t, true);
+                if (res && res.streamableId) {
+                  updateTrackInPlaylists({
+                    ...t,
+                    originalId: t.originalId || t.id,
+                    streamableId: res.streamableId,
+                    id: res.streamableId,
+                    hasCustomArtwork: true,
+                    thumbnail: res.thumbnail || t.thumbnail,
+                    durationSeconds: res.durationSeconds || t.durationSeconds
+                  });
+                }
+              } catch (e) {}
+            })
+          );
+          if (!cancelled) {
+            setPlaylists(getPlaylists());
+          }
         }
-      });
+      })();
 
       return () => { cancelled = true; };
     }
-  }, [selectedPlaylistId, playlists.length]);
+  }, [selectedPlaylistId]);
 
   // Proactively prefetch liked songs when entering liked view
   useEffect(() => {
@@ -588,13 +598,13 @@ export default function App() {
                               <Music2 className="w-10 h-10 m-auto text-spotify-subtext" />
                             )}
                             <button className={`absolute bottom-2 right-2 w-10 h-10 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-lg transition-all duration-200 hover:scale-105 ${
-                              player.currentTrack?.id === track.id
+                              isSameTrack(player.currentTrack, track)
                                 ? 'opacity-100 translate-y-0'
                                 : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
                             }`}>
-                              {player.currentTrack?.id === track.id && player.isLoading ? (
+                              {isSameTrack(player.currentTrack, track) && player.isLoading ? (
                                 <Loader2 className="w-5 h-5 animate-spin" />
-                              ) : player.currentTrack?.id === track.id && player.isPlaying ? (
+                              ) : isSameTrack(player.currentTrack, track) && player.isPlaying ? (
                                 <Pause className="w-5 h-5 fill-current" />
                               ) : (
                                 <Play className="w-5 h-5 fill-current translate-x-0.5" />
@@ -627,11 +637,11 @@ export default function App() {
                         key={track.id || idx}
                         index={idx}
                         track={track}
-                        isCurrentTrack={player.currentTrack?.id === track.id}
+                        isCurrentTrack={isSameTrack(player.currentTrack, track)}
                         isPlaying={player.isPlaying}
                         isLoading={player.isLoading}
                         onPlay={(t) => handlePlayTrack(t, searchResults, idx)}
-                        isLiked={likedSongs.some(s => s.id === track.id || (s.title === track.title && s.artist === track.artist))}
+                        isLiked={likedSongs.some(s => isSameTrack(s, track))}
                         onToggleLike={handleToggleLike}
                         isDownloaded={downloadedIds?.has(track.id)}
                         isDownloading={downloadingIds?.has(track.id)}

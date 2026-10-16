@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Play,
   Pause,
@@ -38,8 +38,14 @@ export function TrackRow({
   onDragOver,
   onDrop
 }) {
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [track?.thumbnail]);
+
   const formatDuration = (seconds) => {
-    if (!seconds) return track.duration || '0:00';
+    if (!seconds || !Number.isFinite(seconds)) return track.duration || '0:00';
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m}:${s < 10 ? '0' : ''}${s}`;
@@ -59,7 +65,7 @@ export function TrackRow({
       onDragStart={(e) => onDragStart && onDragStart(e, index)}
       onDragOver={(e) => onDragOver && onDragOver(e, index)}
       onDrop={(e) => onDrop && onDrop(e, index)}
-      className={`group flex items-center justify-between p-2 rounded-md transition-colors select-none ${
+      className={`group flex items-center justify-between gap-2 p-2 rounded-md transition-colors select-none ${
         isReorderMode ? 'cursor-grab active:cursor-grabbing border border-transparent hover:border-white/20' : 'cursor-pointer'
       } ${
         isCurrentTrack
@@ -68,7 +74,7 @@ export function TrackRow({
       }`}
     >
       {/* Right side in RTL: Reorder handles / Index / Play Icon + Artwork + Title & Artist */}
-      <div className="flex items-center gap-3.5 min-w-0 flex-1">
+      <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1">
         {isReorderMode ? (
           <div className="flex items-center gap-1 text-spotify-subtext flex-shrink-0" onClick={(e) => e.stopPropagation()}>
             <GripVertical className="w-4 h-4 text-spotify-subtext/60 hover:text-white" />
@@ -99,7 +105,7 @@ export function TrackRow({
             <span className="text-[11px] text-spotify-subtext/60 font-mono w-4 text-center">{index + 1}</span>
           </div>
         ) : (
-          <div className="w-6 text-center text-xs text-spotify-subtext font-mono flex-shrink-0 flex items-center justify-center">
+          <div className="w-5 sm:w-6 text-center text-xs text-spotify-subtext font-mono flex-shrink-0 flex items-center justify-center">
             {isCurrentTrack ? (
               isLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin text-spotify-green" />
@@ -121,9 +127,15 @@ export function TrackRow({
           </div>
         )}
 
-        <div className="w-10 h-10 rounded bg-spotify-elevated flex-shrink-0 overflow-hidden shadow-sm relative">
-          {track.thumbnail ? (
-            <img src={track.thumbnail} alt="" className="w-full h-full object-cover" />
+        <div className="w-10 h-10 sm:w-11 sm:h-11 rounded bg-spotify-elevated flex-shrink-0 overflow-hidden shadow-sm relative">
+          {track.thumbnail && !imgError ? (
+            <img
+              src={track.thumbnail}
+              alt=""
+              loading="lazy"
+              onError={() => setImgError(true)}
+              className="w-full h-full object-cover"
+            />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-spotify-subtext">
               <Music className="w-4 h-4" />
@@ -131,15 +143,15 @@ export function TrackRow({
           )}
         </div>
 
-        <div className="flex flex-col min-w-0 flex-1 text-right">
+        <div className="flex flex-col min-w-0 flex-1 text-right pr-0.5">
           <span
-            className={`text-sm font-semibold truncate ${isCurrentTrack ? 'text-spotify-green' : 'text-white'}`}
+            className={`text-sm font-semibold truncate leading-snug ${isCurrentTrack ? 'text-spotify-green' : 'text-white'}`}
             title={track.title}
           >
             {track.title}
           </span>
           <span
-            className="text-xs text-spotify-subtext truncate group-hover:text-white transition-colors"
+            className="text-xs text-spotify-subtext truncate group-hover:text-white transition-colors leading-snug"
             title={track.artist}
           >
             {track.artist}
@@ -147,8 +159,8 @@ export function TrackRow({
         </div>
       </div>
 
-      {/* Left side in RTL: Download Button, Like Button & Duration */}
-      <div className="flex items-center gap-3.5 flex-shrink-0 pl-2">
+      {/* Left side in RTL: Compact action buttons that never steal mobile title width when hidden */}
+      <div className="flex items-center gap-1 sm:gap-2.5 flex-shrink-0 pl-1">
         {/* Offline Download Button */}
         {onDownload && (
           <button
@@ -159,14 +171,18 @@ export function TrackRow({
               }
             }}
             title={isDownloaded ? 'שמור להאזנה אופליין' : 'הורד להאזנה אופליין'}
-            className="p-1 transition-transform active:scale-125 flex items-center justify-center"
+            className={`p-1 transition-transform active:scale-125 items-center justify-center ${
+              isDownloading || isDownloaded
+                ? 'inline-flex'
+                : 'hidden sm:inline-flex sm:opacity-0 sm:group-hover:opacity-100'
+            }`}
           >
             {isDownloading ? (
               <Loader2 className="w-4 h-4 text-teal-400 animate-spin" />
             ) : isDownloaded ? (
               <CheckCircle2 className="w-4 h-4 text-teal-400 fill-teal-400/20" />
             ) : (
-              <ArrowDownCircle className="w-4 h-4 text-spotify-subtext opacity-0 group-hover:opacity-100 hover:text-teal-400 transition-opacity" />
+              <ArrowDownCircle className="w-4 h-4 text-spotify-subtext hover:text-teal-400 transition-colors" />
             )}
           </button>
         )}
@@ -179,7 +195,9 @@ export function TrackRow({
           }}
           title={isLiked ? 'הסר ממועדפים' : 'שמור במועדפים'}
           className={`p-1 transition-transform active:scale-125 ${
-            isLiked ? 'text-spotify-green' : 'text-spotify-subtext opacity-0 group-hover:opacity-100 hover:text-white'
+            isLiked
+              ? 'text-spotify-green inline-flex'
+              : 'text-spotify-subtext/70 hover:text-white inline-flex sm:opacity-0 sm:group-hover:opacity-100'
           }`}
         >
           <Heart className={`w-4 h-4 ${isLiked ? 'fill-spotify-green' : ''}`} />
@@ -193,7 +211,7 @@ export function TrackRow({
               onOpenAddToPlaylist(track);
             }}
             title="הוסף לפלייליסט"
-            className="p-1 transition-transform active:scale-125 text-spotify-subtext opacity-0 group-hover:opacity-100 hover:text-white"
+            className="p-1 transition-transform active:scale-125 text-spotify-subtext/70 hover:text-white inline-flex sm:opacity-0 sm:group-hover:opacity-100"
           >
             <ListPlus className="w-4 h-4" />
           </button>
@@ -207,14 +225,14 @@ export function TrackRow({
               onRemoveFromPlaylist(track);
             }}
             title="הסר שיר זה מהפלייליסט"
-            className="p-1 transition-transform active:scale-125 text-spotify-subtext opacity-0 group-hover:opacity-100 hover:text-red-400"
+            className="p-1 transition-transform active:scale-125 text-spotify-subtext/70 hover:text-red-400 hidden sm:inline-flex sm:opacity-0 sm:group-hover:opacity-100"
           >
             <Trash2 className="w-4 h-4" />
           </button>
         )}
 
         {/* Duration */}
-        <span className="text-xs text-spotify-subtext font-mono w-10 text-left">
+        <span className="text-[11px] sm:text-xs text-spotify-subtext font-mono w-9 sm:w-10 text-left">
           {formatDuration(track.durationSeconds)}
         </span>
       </div>

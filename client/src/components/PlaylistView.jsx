@@ -15,6 +15,7 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import { TrackRow } from './TrackRow';
+import { isSameTrack } from '../services/storage';
 
 export function PlaylistView({
   playlist,
@@ -387,11 +388,11 @@ export function PlaylistView({
               key={track.id || idx}
               index={idx}
               track={track}
-              isCurrentTrack={currentTrack?.id === track.id}
+              isCurrentTrack={isSameTrack(currentTrack, track)}
               isPlaying={isPlaying}
               isLoading={isLoading}
               onPlay={(t) => onPlayTrack(t, processedTracks, idx)}
-              isLiked={likedSongs.some(s => s.id === track.id || (s.title === track.title && s.artist === track.artist))}
+              isLiked={likedSongs.some(s => isSameTrack(s, track))}
               onToggleLike={onToggleLike}
               isDownloaded={downloadedIds?.has(track.id)}
               isDownloading={downloadingIds?.has(track.id)}

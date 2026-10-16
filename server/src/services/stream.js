@@ -23,6 +23,15 @@ const urlCache = new Map();
 const resolveCache = new Map();
 const inFlightRequests = new Map();
 const failedVideoIds = new Map(); // id -> timestamp
+let youtubeDatacenterBlockedUntil = 0;
+
+function isValidCachedStreamUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  if (url.includes('mime=audio%2Fwebm')) return false;
+  if (url.includes('/preview/') || url.includes('cf-preview-media')) return false;
+  if (url.includes('.m3u8')) return false;
+  return true;
+}
 
 function isFailed(id) {
   if (!id) return false;
@@ -39,13 +48,13 @@ function markFailed(id) {
   if (id) failedVideoIds.set(id, Date.now());
 }
 
-// Load disk caches on boot (filtering out old WebM streams)
+// Load disk caches on boot (filtering out old WebM or 30s preview streams)
 try {
   if (fs.existsSync(URL_CACHE_FILE)) {
     const data = JSON.parse(fs.readFileSync(URL_CACHE_FILE, 'utf8'));
     const now = Date.now();
     for (const [k, v] of Object.entries(data)) {
-      if (v && v.expiresAt > now && v.url && !v.url.includes('mime=audio%2Fwebm')) {
+      if (v && v.expiresAt > now && isValidCachedStreamUrl(v.url)) {
         urlCache.set(k, v);
       }
     }
@@ -66,7 +75,7 @@ function saveCachesToDisk() {
     const urlObj = {};
     const now = Date.now();
     for (const [k, v] of urlCache.entries()) {
-      if (v && v.expiresAt > now && v.url && !v.url.includes('mime=audio%2Fwebm')) {
+      if (v && v.expiresAt > now && isValidCachedStreamUrl(v.url)) {
         urlObj[k] = v;
       }
     }
@@ -278,130 +287,156 @@ function extractStreamWithYtDlp(target) {
 }
 
 /**
+ * Fast 120ms YouTube oEmbed lookup to get title + artist when only videoId is provided
+ */
+async function fetchVideoQueryFromOembed(videoId) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+  try {
+    const res = await axios.get(
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+      { timeout: 1400 }
+    );
+    if (res.data && res.data.title) {
+      const author = (res.data.author_name || '').replace(/\s*-\s*Topic$/i, '').trim();
+      const title = res.data.title
+        .replace(/\s*[\(\[](official\s*(music\s*)?video|official\s*audio|lyrics?|visualizer|hd|4k|audio)[\)\]]/gi, '')
+        .trim();
+      return author && !title.toLowerCase().includes(author.toLowerCase())
+        ? `${author} - ${title}`
+        : title;
+    }
+  } catch (e) {}
+  return null;
+}
+
+/**
  * Get audio stream URL for a given video ID or search query, with fast in-memory & disk caching
  */
 async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = true) {
   const cacheKey = videoId || fallbackQuery;
   const cached = urlCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now() && cached.url && !cached.url.includes('mime=audio%2Fwebm')) {
+  if (cached && cached.expiresAt > Date.now() && isValidCachedStreamUrl(cached.url)) {
     return cached.url;
   }
 
-  // Deduplicate concurrent in-flight extractions (prevents mobile Safari multi-range stampede)
+  // Deduplicate concurrent in-flight extractions (prevents mobile multi-range stampede)
   if (inFlightRequests.has(cacheKey)) {
     return await inFlightRequests.get(cacheKey);
   }
 
   const jobPromise = (async () => {
     let streamUrl = null;
+    const isVideoId = Boolean(videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId));
+    let effectiveQuery = fallbackQuery ? fallbackQuery.trim() : null;
 
-    // 1. Direct video ID (11 chars YouTube ID)
-    const isVideoId = videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId);
-    if (isVideoId && !isFailed(videoId)) {
+    if (!effectiveQuery && !isVideoId && videoId && !videoId.startsWith('sp_')) {
+      effectiveQuery = videoId.trim();
+    }
+
+    // If only videoId was provided, fetch title/artist via oEmbed in parallel so SoundCloud fallback is always ready
+    const oembedPromise = (!effectiveQuery && isVideoId)
+      ? fetchVideoQueryFromOembed(videoId)
+      : Promise.resolve(effectiveQuery);
+
+    const ytBlocked = Date.now() < youtubeDatacenterBlockedUntil;
+
+    // Helper for SoundCloud full-track extraction
+    const extractSoundCloud = async (q) => {
+      const queryToUse = q || (await oembedPromise);
+      if (!queryToUse) throw new Error('No query for SoundCloud');
+      const cleanQ = queryToUse.replace(/[^\p{L}\p{N}\s\-']/gu, ' ').replace(/\s+/g, ' ').trim();
+      const url = await extractWithWorker(`scsearch5:${cleanQ}`, isPriority);
+      if (url && isValidCachedStreamUrl(url)) {
+        return url;
+      }
+      throw new Error('Invalid SC url');
+    };
+
+    // Helper for YouTube direct worker extraction (with bot-block circuit breaker)
+    const extractYouTube = async (vid) => {
+      if (!vid || isFailed(vid) || ytBlocked) {
+        throw new Error('YouTube skipped or blocked');
+      }
       try {
-        streamUrl = await extractWithWorker(`https://www.youtube.com/watch?v=${videoId}`, isPriority);
-        if (streamUrl) {
-          urlCache.set(videoId, {
-            url: streamUrl,
-            expiresAt: Date.now() + 4 * 60 * 60 * 1000
-          });
-          return streamUrl;
-        }
+        const url = await extractWithWorker(`https://www.youtube.com/watch?v=${vid}`, isPriority);
+        if (url && isValidCachedStreamUrl(url)) return url;
+        throw new Error('Empty YT url');
       } catch (err) {
-        console.warn(`Direct stream for ${videoId} failed (${err.message}). Trying query resolution...`);
-        markFailed(videoId);
+        const msg = String(err.message || '');
+        if (msg.includes('Sign in to confirm') || msg.includes('not a bot')) {
+          youtubeDatacenterBlockedUntil = Date.now() + 15 * 60 * 1000;
+          console.warn('[Stream] YouTube datacenter bot-block detected; activating fast SoundCloud/Invidious circuit-breaker for 15m.');
+        }
+        markFailed(vid);
+        throw err;
       }
-    }
+    };
 
-    // 2. Query resolution using resolveCache (0ms if previously resolved)
-    if (!streamUrl && fallbackQuery) {
-      const cleanKey = fallbackQuery.toLowerCase().trim();
-      let targetVideoId = resolveCache.get(cleanKey);
-
-      if (targetVideoId && isFailed(targetVideoId)) {
-        targetVideoId = null;
-      }
-
-      if (!targetVideoId) {
+    // 1. If we have a valid 11-char YouTube videoId
+    if (isVideoId) {
+      if (ytBlocked) {
+        // Fast path when YouTube datacenter IP is blocked: race Invidious and SoundCloud immediately (1.2-1.8s)
         try {
-          const ytsRes = await yts(fallbackQuery);
-          if (ytsRes && ytsRes.videos && ytsRes.videos.length > 0) {
-            // Find first video that is NOT blacklisted and under 10 minutes (avoids multi-hour mix files)
-            const candidate = ytsRes.videos.find(v => !isFailed(v.videoId) && (!v.seconds || v.seconds < 600));
-            if (candidate) {
-              targetVideoId = candidate.videoId;
-              resolveCache.set(cleanKey, targetVideoId);
-            }
-          }
-        } catch (e) {
-          console.error('yts search failed:', e.message);
-        }
-      }
-
-      if (targetVideoId && !isFailed(targetVideoId)) {
-        // Check if videoId itself was already cached
-        const cachedVideo = urlCache.get(targetVideoId);
-        if (cachedVideo && cachedVideo.expiresAt > Date.now() && cachedVideo.url && !cachedVideo.url.includes('mime=audio%2Fwebm')) {
-          urlCache.set(cacheKey, cachedVideo);
-          return cachedVideo.url;
-        }
-
+          streamUrl = await Promise.any([
+            extractSoundCloud(effectiveQuery),
+            fetchFromInvidious(videoId).then(u => {
+              if (u && isValidCachedStreamUrl(u)) return u;
+              throw new Error('No Invidious stream');
+            })
+          ]);
+        } catch (e) {}
+      } else {
+        // Try YouTube worker, but start SoundCloud + Invidious fallback after 900ms so we never wait >2.5s
         try {
-          streamUrl = await extractWithWorker(`https://www.youtube.com/watch?v=${targetVideoId}`, isPriority);
-          if (streamUrl) {
-            const entry = { url: streamUrl, expiresAt: Date.now() + 4 * 60 * 60 * 1000 };
-            urlCache.set(targetVideoId, entry);
-            urlCache.set(cacheKey, entry);
-            return streamUrl;
-          }
-        } catch (e) {
-          console.error('extractWithWorker failed for targetVideoId:', e.message);
-          markFailed(targetVideoId);
-        }
-      }
-    }
-
-    // 3. Fallback search
-    if (!streamUrl && videoId && !isVideoId) {
-      try {
-        streamUrl = await extractWithWorker(`ytsearch5:${videoId}`, isPriority);
-      } catch (e) {}
-    }
-
-    // 4. SoundCloud Fallback using scsearch (100% reliable from Datacenter IPs)
-    if (!streamUrl && fallbackQuery) {
-      try {
-        streamUrl = await extractWithWorker(`scsearch1:${fallbackQuery}`, isPriority);
-        if (streamUrl) {
-          console.log(`[SoundCloud Fallback] Found stream for: ${fallbackQuery}`);
-        }
-      } catch (e) {
-        console.error('SoundCloud fallback failed:', e.message);
-      }
-    }
-
-    // 5. Invidious fallback if worker failed or datacenter is 429-blocked
-    if (!streamUrl) {
-      const vid = (isVideoId ? videoId : null) || resolveCache.get((fallbackQuery || '').toLowerCase().trim());
-      if (vid) {
-        try {
-          streamUrl = await fetchFromInvidious(vid);
+          streamUrl = await Promise.any([
+            extractYouTube(videoId),
+            new Promise((resolve, reject) => {
+              setTimeout(() => {
+                Promise.any([
+                  extractSoundCloud(effectiveQuery),
+                  fetchFromInvidious(videoId).then(u => {
+                    if (u && isValidCachedStreamUrl(u)) return u;
+                    throw new Error('No Invidious stream');
+                  })
+                ]).then(resolve).catch(reject);
+              }, 900);
+            })
+          ]);
         } catch (e) {}
       }
     }
 
-    // 5. Cloudflare Tunnel fallback for datacenter cloud environments (Render)
+    // 2. If not resolved yet and we have a query (e.g. sp_... track or search query)
     if (!streamUrl) {
-      const vid = (isVideoId ? videoId : null) || resolveCache.get((fallbackQuery || '').toLowerCase().trim());
-      const tunnelBase = process.env.TUNNEL_FALLBACK_URL || 'https://compilation-benjamin-gnome-pockets.trycloudflare.com';
-      if (vid && tunnelBase) {
+      const queryToResolve = effectiveQuery || (await oembedPromise);
+      if (queryToResolve) {
         try {
-          const tunnelRes = await axios.get(`${tunnelBase}/api/stream/${vid}`, { timeout: 8000 });
-          if (tunnelRes.data && tunnelRes.data.streamUrl) {
+          streamUrl = await extractSoundCloud(queryToResolve);
+        } catch (e) {
+          // Try simplified query (without special suffixes)
+          const simpleQ = queryToResolve.split('-').slice(0, 2).join(' ').trim();
+          if (simpleQ && simpleQ !== queryToResolve) {
+            try {
+              streamUrl = await extractSoundCloud(simpleQ);
+            } catch (err2) {}
+          }
+        }
+      }
+    }
+
+    // 3. Registered active residential tunnel fallback (only if dynamically registered and alive)
+    if (!streamUrl) {
+      const tunnel = getRegisteredTunnel();
+      const activeTunnelBase = (tunnel && tunnel.isFresh && tunnel.url) ? tunnel.url : process.env.TUNNEL_FALLBACK_URL;
+      const vid = isVideoId ? videoId : null;
+      if (vid && activeTunnelBase) {
+        try {
+          const tunnelRes = await axios.get(`${activeTunnelBase}/api/stream/${vid}`, { timeout: 3500 });
+          if (tunnelRes.data && isValidCachedStreamUrl(tunnelRes.data.streamUrl)) {
             streamUrl = tunnelRes.data.streamUrl;
           }
         } catch (e) {
-          console.warn('Tunnel fallback failed:', e.message);
+          console.warn('Registered tunnel fallback failed:', e.message);
         }
       }
     }
@@ -410,11 +445,15 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
     }
 
-    // Cache for 4 hours
-    urlCache.set(cacheKey, {
+    // Cache for 4 hours under both cacheKey and videoId
+    const cacheEntry = {
       url: streamUrl,
       expiresAt: Date.now() + 4 * 60 * 60 * 1000
-    });
+    };
+    urlCache.set(cacheKey, cacheEntry);
+    if (isVideoId) {
+      urlCache.set(videoId, cacheEntry);
+    }
 
     return streamUrl;
   })();
@@ -432,12 +471,13 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
  */
 async function prefetchTracks(tracks) {
   if (!Array.isArray(tracks)) return;
-  for (const track of tracks.slice(0, 2)) {
+  for (const track of tracks.slice(0, 3)) {
+    if (!track) continue;
     const vid = track.streamableId || track.id;
-    if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) {
-      if (!urlCache.has(vid) && !inFlightRequests.has(vid)) {
-        getAudioStreamUrl(vid, null, false).catch(() => {});
-      }
+    const fallbackQuery = `${track.artist || ''} - ${track.title || ''}`.replace(/^-\s*|\s*-$/g, '').trim();
+    const key = vid || fallbackQuery;
+    if (key && !urlCache.has(key) && !inFlightRequests.has(key)) {
+      getAudioStreamUrl(vid, fallbackQuery || null, false).catch(() => {});
     }
   }
 }

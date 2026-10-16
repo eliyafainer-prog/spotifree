@@ -167,9 +167,10 @@ router.get('/debug-extract', async (req, res) => {
  */
 router.get('/stream/:id', async (req, res) => {
   const { id } = req.params;
+  const fallbackQuery = req.query.q || null;
   try {
-    const streamUrl = await getAudioStreamUrl(id);
-    res.json({ streamUrl, proxyUrl: `/api/stream/pipe/${id}` });
+    const streamUrl = await getAudioStreamUrl(id, fallbackQuery);
+    res.json({ streamUrl, proxyUrl: `/api/stream/pipe/${id}${fallbackQuery ? `?q=${encodeURIComponent(fallbackQuery)}` : ''}` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -1,11 +1,30 @@
 const LIKED_SONGS_KEY = 'spotifree_liked_songs';
 const PLAYLISTS_KEY = 'spotifree_playlists';
 const RECENT_KEY = 'spotifree_recent_tracks';
+const PLAYBACK_STATE_KEY = 'spotifree_last_playback';
+
+export function isSameTrack(a, b) {
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  if (a.streamableId && (a.streamableId === b.streamableId || a.streamableId === b.id)) return true;
+  if (b.streamableId && b.streamableId === a.id) return true;
+  if (a.originalId && (a.originalId === b.id || a.originalId === b.originalId)) return true;
+  if (b.originalId && b.originalId === a.id) return true;
+  if (a.title && b.title && a.artist && b.artist) {
+    return (
+      a.title.trim().toLowerCase() === b.title.trim().toLowerCase() &&
+      a.artist.trim().toLowerCase() === b.artist.trim().toLowerCase()
+    );
+  }
+  return false;
+}
 
 export function getLikedSongs() {
   try {
     const raw = localStorage.getItem(LIKED_SONGS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
   } catch {
     return [];
   }
@@ -13,6 +32,7 @@ export function getLikedSongs() {
 
 export function saveLikedSongs(tracks) {
   try {
+    if (!Array.isArray(tracks)) return;
     localStorage.setItem(LIKED_SONGS_KEY, JSON.stringify(tracks));
   } catch (e) {
     console.error('Failed to save liked songs:', e);
@@ -20,11 +40,12 @@ export function saveLikedSongs(tracks) {
 }
 
 export function toggleLikeSong(track) {
+  if (!track) return { updated: getLikedSongs(), isLiked: false };
   const current = getLikedSongs();
-  const exists = current.some(t => t.id === track.id || (t.title === track.title && t.artist === track.artist));
+  const exists = current.some(t => isSameTrack(t, track));
   let updated;
   if (exists) {
-    updated = current.filter(t => t.id !== track.id && !(t.title === track.title && t.artist === track.artist));
+    updated = current.filter(t => !isSameTrack(t, track));
   } else {
     updated = [track, ...current];
   }
@@ -33,20 +54,23 @@ export function toggleLikeSong(track) {
 }
 
 export function isSongLiked(track, likedSongs) {
-  if (!track) return false;
-  return likedSongs.some(t => t.id === track.id || (t.title === track.title && t.artist === track.artist));
+  if (!track || !Array.isArray(likedSongs)) return false;
+  return likedSongs.some(t => isSameTrack(t, track));
 }
 
 export function getPlaylists() {
   try {
     const raw = localStorage.getItem(PLAYLISTS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(p => p && typeof p === 'object') : [];
   } catch {
     return [];
   }
 }
 
 export function savePlaylist(playlist) {
+  if (!playlist) return getPlaylists();
   const playlists = getPlaylists();
   const index = playlists.findIndex(p => p.id === playlist.id);
   let updated;
@@ -56,29 +80,36 @@ export function savePlaylist(playlist) {
   } else {
     updated = [playlist, ...playlists];
   }
-  localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+  try {
+    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+  } catch (e) {}
   return updated;
 }
 
 export function deletePlaylist(playlistId) {
   const playlists = getPlaylists();
   const updated = playlists.filter(p => p.id !== playlistId);
-  localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+  try {
+    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+  } catch (e) {}
   return updated;
 }
 
 export function getRecentTracks() {
   try {
     const raw = localStorage.getItem(RECENT_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
   } catch {
     return [];
   }
 }
 
 export function addRecentTrack(track) {
+  if (!track) return getRecentTracks();
   try {
-    const current = getRecentTracks().filter(t => t.id !== track.id);
+    const current = getRecentTracks().filter(t => !isSameTrack(t, track));
     const updated = [track, ...current].slice(0, 30);
     localStorage.setItem(RECENT_KEY, JSON.stringify(updated));
     return updated;
@@ -93,21 +124,20 @@ export function updateTrackInPlaylists(resolvedTrack) {
     const playlists = getPlaylists();
     let changed = false;
     const updated = playlists.map(p => {
-      if (!p.tracks) return p;
+      if (!Array.isArray(p.tracks)) return p;
       let pChanged = false;
       const newTracks = p.tracks.map(t => {
-        if (
-          t.id === resolvedTrack.originalId ||
-          t.id === resolvedTrack.id ||
-          (t.title === resolvedTrack.title && t.artist === resolvedTrack.artist)
-        ) {
+        if (isSameTrack(t, resolvedTrack)) {
           pChanged = true;
           changed = true;
           return {
             ...t,
+            originalId: t.originalId || t.id,
             streamableId: resolvedTrack.streamableId || resolvedTrack.id,
             id: resolvedTrack.streamableId || resolvedTrack.id,
-            thumbnail: resolvedTrack.thumbnail || t.thumbnail
+            thumbnail: resolvedTrack.thumbnail || t.thumbnail,
+            hasCustomArtwork: true,
+            durationSeconds: resolvedTrack.durationSeconds || t.durationSeconds
           };
         }
         return t;
@@ -121,13 +151,27 @@ export function updateTrackInPlaylists(resolvedTrack) {
   } catch (e) {}
 }
 
+export function getLastPlaybackState() {
+  try {
+    const raw = localStorage.getItem(PLAYBACK_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastPlaybackState(state) {
+  try {
+    if (!state || typeof state !== 'object') return;
+    localStorage.setItem(PLAYBACK_STATE_KEY, JSON.stringify(state));
+  } catch (e) {}
+}
+
 export function isTrackInPlaylist(playlist, track) {
-  if (!playlist || !playlist.tracks || !track) return false;
-  return playlist.tracks.some(
-    t => t.id === track.id ||
-         (t.streamableId && t.streamableId === track.streamableId) ||
-         (t.title === track.title && t.artist === track.artist)
-  );
+  if (!playlist || !Array.isArray(playlist.tracks) || !track) return false;
+  return playlist.tracks.some(t => isSameTrack(t, track));
 }
 
 export function addTrackToPlaylist(playlistId, track) {

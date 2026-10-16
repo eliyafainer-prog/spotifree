@@ -2,42 +2,56 @@ import { isNativeApp } from './nativeAudio';
 
 // High-speed Server Infrastructure
 export const DEFAULT_SERVERS = {
-  tunnel: 'https://depending-lawyer-memories-gui.trycloudflare.com',
-  local: 'http://10.100.102.16:5050',
+  tunnel: '',
+  local: 'http://localhost:5050',
   android_termux: 'http://127.0.0.1:5050',
   cloud: 'https://spotifree-h7s8.onrender.com'
 };
+
+// Clean up any stale/dead tunnel URLs from previous sessions in localStorage
+try {
+  const lastHealthy = localStorage.getItem('spotifree_last_healthy_server') || '';
+  if (lastHealthy.includes('trycloudflare.com') || lastHealthy.includes('10.100.102.16')) {
+    localStorage.removeItem('spotifree_last_healthy_server');
+  }
+  const customSrv = localStorage.getItem('spotifree_server_url') || '';
+  if (customSrv.includes('depending-lawyer-memories-gui.trycloudflare.com')) {
+    localStorage.removeItem('spotifree_server_url');
+  }
+} catch (e) {}
 
 let activeServerUrl = null;
 let discoveryPromise = null;
 
 /**
  * High-speed parallel server discovery:
- * Races cached server, local Wi-Fi, active Cloudflare tunnel, and Render dynamic registry.
- * Locks onto the fastest live server in 30-200ms!
+ * Locks onto the current origin on web, or fastest live server on native mobile.
  */
 export async function discoverActiveServer(force = false) {
-  if (activeServerUrl && !force) return activeServerUrl;
+  if (activeServerUrl !== null && !force) return activeServerUrl;
   if (discoveryPromise && !force) return discoveryPromise;
 
   discoveryPromise = (async () => {
-    // Check user manual override in settings
-    const custom = localStorage.getItem('spotifree_server_url');
-    if (custom) {
-      activeServerUrl = custom.replace(/\/+$/, '');
-      return activeServerUrl;
-    }
+    try {
+      const custom = localStorage.getItem('spotifree_server_url');
+      if (custom) {
+        activeServerUrl = custom.replace(/\/+$/, '');
+        return activeServerUrl;
+      }
+    } catch (e) {}
 
     if (!isNativeApp && typeof window !== 'undefined' && window.location.origin && !window.location.origin.includes('localhost:5173')) {
       activeServerUrl = '';
       return '';
     }
 
-    const cachedServer = localStorage.getItem('spotifree_last_healthy_server');
+    let cachedServer = null;
+    try {
+      cachedServer = localStorage.getItem('spotifree_last_healthy_server');
+    } catch (e) {}
+
     const candidates = [
       cachedServer,
-      'http://10.100.102.16:5050',
-      DEFAULT_SERVERS.tunnel,
       DEFAULT_SERVERS.cloud
     ].filter(Boolean);
 
@@ -45,7 +59,7 @@ export async function discoverActiveServer(force = false) {
 
     const ping = async (srv) => {
       const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 900);
+      const tid = setTimeout(() => controller.abort(), 1500);
       try {
         const res = await fetch(`${srv}/health`, { signal: controller.signal });
         clearTimeout(tid);
@@ -66,29 +80,12 @@ export async function discoverActiveServer(force = false) {
       const winner = await Promise.any(uniqueCandidates.map(s => ping(s)));
       if (winner) {
         activeServerUrl = winner.replace(/\/+$/, '');
-        localStorage.setItem('spotifree_last_healthy_server', activeServerUrl);
-        console.log(`[API] Locked onto fastest server: ${activeServerUrl}`);
+        try { localStorage.setItem('spotifree_last_healthy_server', activeServerUrl); } catch (e) {}
         return activeServerUrl;
       }
-    } catch (e) {
-      // If direct pings didn't answer within 900ms, ask Render for the dynamic registered tunnel
-      try {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch(`${DEFAULT_SERVERS.cloud}/api/tunnel/active`, { signal: controller.signal });
-        clearTimeout(tid);
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.tunnelUrl) {
-            activeServerUrl = data.tunnelUrl.replace(/\/+$/, '');
-            localStorage.setItem('spotifree_last_healthy_server', activeServerUrl);
-            return activeServerUrl;
-          }
-        }
-      } catch (err) {}
-    }
+    } catch (e) {}
 
-    activeServerUrl = cachedServer || DEFAULT_SERVERS.tunnel || DEFAULT_SERVERS.cloud;
+    activeServerUrl = isNativeApp ? DEFAULT_SERVERS.cloud : '';
     return activeServerUrl;
   })();
 
@@ -103,32 +100,42 @@ export async function discoverActiveServer(force = false) {
 discoverActiveServer().catch(() => {});
 
 export function getActiveServerUrl() {
-  const custom = localStorage.getItem('spotifree_server_url');
-  if (custom) return custom.replace(/\/+$/, '');
+  try {
+    const custom = localStorage.getItem('spotifree_server_url');
+    if (custom) return custom.replace(/\/+$/, '');
+  } catch (e) {}
+
+  if (!isNativeApp && typeof window !== 'undefined' && window.location.origin && !window.location.origin.includes('localhost:5173')) {
+    return '';
+  }
 
   if (activeServerUrl !== null) {
     return activeServerUrl;
   }
 
-  const cached = localStorage.getItem('spotifree_last_healthy_server');
-  if (cached) return cached;
+  try {
+    const cached = localStorage.getItem('spotifree_last_healthy_server');
+    if (cached) return cached;
+  } catch (e) {}
 
   if (isNativeApp) {
-    return DEFAULT_SERVERS.tunnel;
+    return DEFAULT_SERVERS.cloud;
   }
 
   return '';
 }
 
 export function setActiveServerUrl(url) {
-  if (!url) {
-    localStorage.removeItem('spotifree_server_url');
-    activeServerUrl = null;
-  } else {
-    const clean = url.replace(/\/+$/, '');
-    localStorage.setItem('spotifree_server_url', clean);
-    activeServerUrl = clean;
-  }
+  try {
+    if (!url) {
+      localStorage.removeItem('spotifree_server_url');
+      activeServerUrl = null;
+    } else {
+      const clean = url.replace(/\/+$/, '');
+      localStorage.setItem('spotifree_server_url', clean);
+      activeServerUrl = clean;
+    }
+  } catch (e) {}
 }
 
 export function getApiBase() {
@@ -137,26 +144,30 @@ export function getApiBase() {
 }
 
 /**
- * Fast fetch with circuit-breaker failover (1.8s timeout per candidate, never hanging 15 seconds)
+ * Fast fetch with automatic failover (never hanging on dead tunnels)
  */
 async function fetchWithFailover(apiPath, options = {}) {
   const currentBase = getActiveServerUrl();
-  const serverCandidates = [
-    currentBase,
-    'http://localhost:5050',
-    DEFAULT_SERVERS.tunnel,
-    DEFAULT_SERVERS.cloud,
-    'http://10.100.102.16:5050'
-  ].filter(Boolean);
+  const serverCandidates = [];
+
+  if (currentBase === '') {
+    serverCandidates.push('');
+  } else if (currentBase) {
+    serverCandidates.push(currentBase);
+  }
+
+  if (typeof window !== 'undefined' && window.location.origin?.includes('localhost:5173')) {
+    serverCandidates.push('http://localhost:5050');
+  }
+  serverCandidates.push(DEFAULT_SERVERS.cloud);
 
   const uniqueServers = [...new Set(serverCandidates)];
-  let lastError = null;
 
   const promises = uniqueServers.map(srv => {
     return new Promise(async (resolve, reject) => {
       const fullUrl = srv ? `${srv}${apiPath}` : apiPath;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       const combinedSignal = options.signal || controller.signal;
       
       try {
@@ -165,7 +176,7 @@ async function fetchWithFailover(apiPath, options = {}) {
         if (res.ok) {
           if (srv && srv !== activeServerUrl) {
             activeServerUrl = srv;
-            localStorage.setItem('spotifree_last_healthy_server', srv);
+            try { localStorage.setItem('spotifree_last_healthy_server', srv); } catch (e) {}
           }
           resolve(res);
         } else {
@@ -173,10 +184,6 @@ async function fetchWithFailover(apiPath, options = {}) {
         }
       } catch (err) {
         clearTimeout(timeoutId);
-        if (srv === activeServerUrl) {
-          activeServerUrl = null;
-          try { localStorage.removeItem('spotifree_last_healthy_server'); } catch (e) {}
-        }
         reject(err);
       }
     });
@@ -332,9 +339,10 @@ export async function fetchDirectStreamUrl(track) {
  * Generate playable audio URL with fallback server support
  */
 export function getPlayableAudioUrl(track, serverOverride = null) {
-  const base = serverOverride || getActiveServerUrl() || DEFAULT_SERVERS.tunnel || DEFAULT_SERVERS.cloud;
-  const fallbackQuery = encodeURIComponent(`${track.title || ''} ${track.artist || ''}`.trim());
-  const streamableId = encodeURIComponent(track.streamableId || track.id || '');
+  const active = getActiveServerUrl();
+  const base = serverOverride !== null ? serverOverride : (active !== null && active !== undefined ? active : DEFAULT_SERVERS.cloud);
+  const fallbackQuery = encodeURIComponent(`${track.artist || ''} - ${track.title || ''}`.replace(/^-\s*|\s*-$/g, '').trim());
+  const streamableId = encodeURIComponent(track.streamableId || track.id || 'query');
   return `${base}/api/stream/pipe/${streamableId}?q=${fallbackQuery}`;
 }
 
@@ -358,7 +366,7 @@ export async function prefetchNextTracks(tracks) {
  * Download track audio as a Blob for offline playback
  */
 export async function downloadTrackAudioBlob(track, onProgress = null) {
-  const audioUrl = await getPlayableAudioUrl(track);
+  const audioUrl = getPlayableAudioUrl(track);
   const response = await fetch(audioUrl);
   if (!response.ok) {
     throw new Error('הורדת קובץ השמע נכשלה מהשרת.');
@@ -369,11 +377,14 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
 }
 
 // Persistent resolved tracks cache in localStorage for 0ms repeat playback
-const RESOLVED_CACHE_KEY = 'spotifree_resolved_v1';
+const RESOLVED_CACHE_KEY = 'spotifree_resolved_v2';
 let persistedResolveCache = {};
 try {
   const stored = localStorage.getItem(RESOLVED_CACHE_KEY);
-  if (stored) persistedResolveCache = JSON.parse(stored);
+  if (stored) {
+    const parsed = JSON.parse(stored);
+    if (parsed && typeof parsed === 'object') persistedResolveCache = parsed;
+  }
 } catch (e) {}
 
 function saveToResolvedCache(key, data) {
@@ -388,14 +399,27 @@ function saveToResolvedCache(key, data) {
 }
 
 /**
+ * Check if a track already has a cached resolution synchronously
+ */
+export function getCachedTrackResolution(track) {
+  if (!track) return null;
+  const key = `${track.artist || ''}:::${track.title || ''}`.trim().toLowerCase();
+  if (clientResolveCache.has(key)) return clientResolveCache.get(key);
+  if (persistedResolveCache[key]) return persistedResolveCache[key];
+  return null;
+}
+
+/**
  * Resolve track (e.g. Spotify imported track) to streamable YouTube videoId and individual artwork
  */
-export async function resolveTrack(track) {
-  if (track.streamableId && !track.streamableId.startsWith('sp_')) {
-    return { streamableId: track.streamableId, thumbnail: track.thumbnail };
-  }
-  if (track.id && !track.id.startsWith('sp_')) {
-    return { streamableId: track.id, thumbnail: track.thumbnail };
+export async function resolveTrack(track, forceArtwork = false) {
+  if (!forceArtwork && track.hasCustomArtwork !== false) {
+    if (track.streamableId && !track.streamableId.startsWith('sp_')) {
+      return { streamableId: track.streamableId, thumbnail: track.thumbnail, hasCustomArtwork: true };
+    }
+    if (track.id && !track.id.startsWith('sp_')) {
+      return { streamableId: track.id, thumbnail: track.thumbnail, hasCustomArtwork: true };
+    }
   }
 
   const key = `${track.artist || ''}:::${track.title || ''}`.trim().toLowerCase();
@@ -410,7 +434,7 @@ export async function resolveTrack(track) {
   const res = await fetchWithFailover('/api/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ track })
+    body: JSON.stringify({ track: { ...track, hasCustomArtwork: false } })
   });
   if (!res.ok) throw new Error('Failed to resolve track to streamable source');
   const data = await res.json();

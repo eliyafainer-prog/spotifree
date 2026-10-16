@@ -111,30 +111,31 @@ async function importSpotify(url) {
   }
 
   const tracks = rawTracks.map((t, index) => {
-    const title = t.title || t.name || 'שיר ללא שם';
-    const artist = t.subtitle || (t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist');
+    const rawTitle = (t.title || t.name || 'שיר ללא שם').trim();
+    const artist = (t.subtitle || (t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist')).trim();
     const durationMs = t.duration || 0;
     const durationSec = Math.round(durationMs / 1000);
     const mins = Math.floor(durationSec / 60);
     const secs = durationSec % 60;
     const durationStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 
+    const trackSpecificCover = t.coverArt?.sources?.[0]?.url || t.images?.[0]?.url || t.album?.images?.[0]?.url || null;
+
     return {
       id: `sp_${parsed.id}_${index}`,
-      spotifyId: t.id || null,
-      title: cleanTitle(title),
-      originalTitle: title,
+      spotifyId: t.id || t.uri?.split(':').pop() || null,
+      title: rawTitle,
+      originalTitle: rawTitle,
       artist: artist,
       album: playlistTitle,
-      thumbnail: playlistCover,
+      thumbnail: trackSpecificCover || playlistCover,
+      hasCustomArtwork: Boolean(trackSpecificCover || parsed.type === 'album' || parsed.type === 'track'),
       duration: durationStr,
       durationSeconds: durationSec,
       source: 'spotify',
-      query: `${artist} - ${title}`
+      query: `${artist} - ${rawTitle}`
     };
   });
-
-  // Return immediately with playlist cover - 0ms delay!
 
   return {
     title: playlistTitle,
@@ -328,10 +329,11 @@ const MAX_RESOLVE_CACHE = 1000;
  * Resolve a track to a streamable audio ID (matches Spotify track to exact YouTube studio version and artwork)
  */
 async function resolveTrackToStreamableId(track) {
-  if (track.source === 'youtube' && track.id && !track.id.startsWith('sp_')) {
+  if (track.source === 'youtube' && track.id && !track.id.startsWith('sp_') && track.hasCustomArtwork !== false) {
     return {
       streamableId: track.id,
       thumbnail: track.thumbnail,
+      hasCustomArtwork: true,
       durationSeconds: track.durationSeconds
     };
   }
@@ -342,13 +344,27 @@ async function resolveTrackToStreamableId(track) {
   }
 
   const query = track.query || `${track.artist} - ${track.title}`.trim();
+  const needsIndividualCover = !track.hasCustomArtwork || !track.thumbnail || track.thumbnail.includes('default') || track.thumbnail.includes('spotifree');
 
-  // 1. Fetch individual studio cover in parallel with audio resolution (non-blocking, fast 1000ms timeout)
-  const coverPromise = (track.thumbnail && !track.thumbnail.includes('default') && !track.thumbnail.includes('spotifree'))
+  // 1. Fetch individual studio cover in parallel from Deezer & iTunes (non-blocking, fast 1400ms timeout)
+  const coverPromise = !needsIndividualCover
     ? Promise.resolve(track.thumbnail)
-    : axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`, { timeout: 1200 })
-        .then(dRes => dRes.data?.data?.[0]?.album?.cover_medium || null)
-        .catch(() => null);
+    : Promise.any([
+        axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`, { timeout: 1400 })
+          .then(dRes => {
+            const c = dRes.data?.data?.[0]?.album?.cover_big || dRes.data?.data?.[0]?.album?.cover_medium;
+            if (c) return c;
+            throw new Error('No Deezer cover');
+          }),
+        axios.get('https://itunes.apple.com/search', {
+          params: { term: query, entity: 'song', limit: 1 },
+          timeout: 1400
+        }).then(iRes => {
+          const art = iRes.data?.results?.[0]?.artworkUrl100;
+          if (art) return art.replace('100x100bb', '600x600bb');
+          throw new Error('No iTunes cover');
+        })
+      ]).catch(() => null);
 
   // 2. High-accuracy single search (with instant fallback if empty)
   const searchPromise = (async () => {
@@ -372,10 +388,13 @@ async function resolveTrackToStreamableId(track) {
   })).sort((a, b) => b.score - a.score);
 
   const topMatch = scored[0].cand;
+  const resolvedId = topMatch.id || topMatch.videoId;
+  const ytThumb = topMatch.thumbnail || topMatch.image || (resolvedId ? `https://i.ytimg.com/vi/${resolvedId}/hqdefault.jpg` : '');
 
   const resolutionResult = {
-    streamableId: topMatch.id || topMatch.videoId,
-    thumbnail: albumCover || topMatch.thumbnail || topMatch.image || `https://i.ytimg.com/vi/${topMatch.id}/hqdefault.jpg`,
+    streamableId: resolvedId,
+    thumbnail: albumCover || ytThumb || track.thumbnail || '',
+    hasCustomArtwork: true,
     durationSeconds: topMatch.durationSeconds || track.durationSeconds || 0
   };
 
