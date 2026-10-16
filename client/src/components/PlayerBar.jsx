@@ -14,7 +14,9 @@ import {
   Mic2,
   Maximize2,
   Music,
-  Loader2
+  Loader2,
+  Check,
+  ChevronUp
 } from 'lucide-react';
 
 export function PlayerBar({
@@ -56,166 +58,187 @@ export function PlayerBar({
 
   return (
     <>
-      {/* Mobile Mini Player */}
+      {/* Authentic Spotify Mobile Floating Mini-Player Pill */}
       <div
         onClick={onOpenFullscreen}
-        className="md:hidden flex flex-col bg-spotify-elevated/95 backdrop-blur-md border-t border-spotify-border px-3.5 py-2 cursor-pointer z-30 relative"
+        className="md:hidden relative mx-2 mb-1 h-14 rounded-[8px] bg-[#282828] overflow-hidden flex items-center justify-between px-2.5 cursor-pointer z-30 shadow-[0_8px_24px_rgba(0,0,0,0.85)] border border-white/[0.07]"
       >
-        {/* Progress Line at Top */}
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-white/10" dir="ltr">
-          <div
-            className="h-full bg-spotify-green transition-all"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
+        {/* Dynamic Ambient Artwork Tint Background */}
+        {currentTrack.thumbnail && (
+          <>
+            <img
+              src={currentTrack.thumbnail}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover blur-2xl scale-150 opacity-45 saturate-150 pointer-events-none"
+            />
+            <div className="absolute inset-0 bg-black/50 pointer-events-none" />
+          </>
+        )}
 
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            <div className="w-10 h-10 rounded-md bg-spotify-dark overflow-hidden flex-shrink-0 shadow">
-              {currentTrack.thumbnail ? (
-                <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-spotify-subtext">
-                  <Music className="w-4 h-4" />
-                </div>
-              )}
-            </div>
-            <div className="flex flex-col min-w-0 flex-1 text-right">
-              <span className="text-sm font-semibold text-white truncate" title={currentTrack.title}>{currentTrack.title}</span>
-              <span className="text-xs text-spotify-subtext truncate" title={currentTrack.artist}>{currentTrack.artist}</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={onToggleShuffle}
-              title={shuffleMode === 'smart' ? 'ערבוב חכם ✨' : shuffleMode === 'standard' || isShuffle ? 'ערבוב רגיל' : 'ערבוב כבוי'}
-              className={`p-1.5 transition-colors ${
-                shuffleMode !== 'off' || isShuffle ? 'text-spotify-green' : 'text-spotify-subtext'
-              }`}
-            >
-              <div className="relative inline-flex items-center justify-center">
-                <Shuffle className="w-4 h-4" />
-                {shuffleMode === 'smart' && (
-                  <Sparkles className="w-2.5 h-2.5 text-emerald-300 absolute -top-1.5 -right-1.5 animate-pulse" />
-                )}
-              </div>
-            </button>
-
-            <button
-              onClick={() => onToggleLike(currentTrack)}
-              className={`p-1.5 ${isLiked ? 'text-spotify-green' : 'text-spotify-subtext'}`}
-            >
-              <Heart className={`w-5 h-5 ${isLiked ? 'fill-spotify-green' : ''}`} />
-            </button>
-
-            <button
-              onClick={onTogglePlay}
-              className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-md"
-            >
-              {isLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin text-black" />
-              ) : isPlaying ? (
-                <Pause className="w-4 h-4 fill-current" />
-              ) : (
-                <Play className="w-4 h-4 fill-current translate-x-0.5" />
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Desktop Fixed Bottom Bar */}
-      <div className="hidden md:flex items-center justify-between bg-black border-t border-spotify-border/40 h-20 px-4 z-40 select-none">
-        {/* Right side (RTL): Track Info */}
-        <div className="flex items-center gap-3.5 w-[30%] min-w-[200px]">
-          <div className="w-14 h-14 rounded-md bg-spotify-elevated overflow-hidden flex-shrink-0 relative shadow-md">
+        {/* Right Side (RTL): 40x40 Cover + Title & Artist */}
+        <div className="relative z-10 flex items-center gap-2.5 min-w-0 flex-1">
+          <div className="w-10 h-10 rounded-[4px] bg-[#181818] overflow-hidden flex-shrink-0 shadow-md">
             {currentTrack.thumbnail ? (
               <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover" />
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-spotify-subtext">
-                <Music className="w-6 h-6" />
+              <div className="w-full h-full flex items-center justify-center text-[#b3b3b3]">
+                <Music className="w-4 h-4" />
               </div>
             )}
           </div>
-
-          <div className="flex flex-col min-w-0 truncate text-right">
-            <span className="text-sm font-semibold text-white truncate hover:underline cursor-pointer">
+          <div className="flex flex-col min-w-0 flex-1 text-right">
+            <span className="text-[13px] font-bold text-white truncate leading-tight" title={currentTrack.title}>
               {currentTrack.title}
             </span>
-            <span className="text-xs text-spotify-subtext truncate hover:underline hover:text-white cursor-pointer transition-colors">
+            <span className="text-[11px] text-white/75 truncate leading-tight mt-0.5" title={currentTrack.artist}>
+              {currentTrack.artist}
+            </span>
+          </div>
+        </div>
+
+        {/* Left Side (RTL): Like + Play/Pause */}
+        <div className="relative z-10 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => onToggleLike(currentTrack)}
+            className="p-2 transition-transform active:scale-125"
+            aria-label={isLiked ? 'הסר ממועדפים' : 'שמור במועדפים'}
+          >
+            {isLiked ? (
+              <span className="w-5 h-5 rounded-full bg-spotify-green text-black flex items-center justify-center">
+                <Check className="w-3.5 h-3.5 stroke-[3]" />
+              </span>
+            ) : (
+              <Heart className="w-5 h-5 text-white/80" />
+            )}
+          </button>
+
+          <button
+            onClick={onTogglePlay}
+            className="p-2 text-white flex items-center justify-center active:scale-90 transition-transform"
+            aria-label={isPlaying ? 'השהה' : 'נגן'}
+          >
+            {isLoading ? (
+              <Loader2 className="w-6 h-6 animate-spin text-white" />
+            ) : isPlaying ? (
+              <Pause className="w-6 h-6 fill-white text-white" />
+            ) : (
+              <Play className="w-6 h-6 fill-white text-white" />
+            )}
+          </button>
+        </div>
+
+        {/* Bottom Thin Progress Line inside Floating Pill */}
+        <div className="absolute bottom-0 left-2 right-2 h-[2px] bg-white/20 rounded-full overflow-hidden z-10" dir="ltr">
+          <div
+            className="h-full bg-white rounded-full transition-all duration-150"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Authentic Spotify Desktop Fixed Bottom Bar */}
+      <div className="hidden md:flex items-center justify-between bg-black h-[88px] px-4 z-40 select-none">
+        {/* Right side (RTL): Now Playing Track Info */}
+        <div className="flex items-center gap-3.5 w-[30%] min-w-[200px]">
+          <div
+            onClick={onOpenFullscreen}
+            className="w-14 h-14 rounded-[4px] bg-[#282828] overflow-hidden flex-shrink-0 relative shadow-md cursor-pointer group"
+          >
+            {currentTrack.thumbnail ? (
+              <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-[#b3b3b3]">
+                <Music className="w-6 h-6" />
+              </div>
+            )}
+            <div className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/70 text-white hidden group-hover:flex items-center justify-center">
+              <ChevronUp className="w-4 h-4" />
+            </div>
+          </div>
+
+          <div className="flex flex-col min-w-0 truncate text-right">
+            <span
+              onClick={onOpenFullscreen}
+              className="text-sm font-semibold text-white truncate hover:underline cursor-pointer"
+            >
+              {currentTrack.title}
+            </span>
+            <span className="text-xs text-[#b3b3b3] truncate hover:underline hover:text-white cursor-pointer transition-colors">
               {currentTrack.artist}
             </span>
           </div>
 
           <button
             onClick={() => onToggleLike(currentTrack)}
-            title={isLiked ? 'הסר ממועדפים' : 'שמור במועדפים'}
-            className={`p-1 transition-transform active:scale-125 ${
-              isLiked ? 'text-spotify-green' : 'text-spotify-subtext hover:text-white'
-            }`}
+            title={isLiked ? 'הסר משירים שאהבתי' : 'שמור בשירים שאהבתי'}
+            className="p-1.5 transition-transform active:scale-125 flex-shrink-0"
           >
-            <Heart className={`w-5 h-5 ${isLiked ? 'fill-spotify-green' : ''}`} />
+            {isLiked ? (
+              <span className="w-4 h-4 rounded-full bg-spotify-green text-black flex items-center justify-center">
+                <Check className="w-3 h-3 stroke-[3]" />
+              </span>
+            ) : (
+              <Heart className="w-4 h-4 text-[#b3b3b3] hover:text-white" />
+            )}
           </button>
         </div>
 
-        {/* Center: Playback Controls & Scrubber - Explicitly LTR! */}
-        <div className="flex flex-col items-center gap-1.5 w-[40%] max-w-xl" dir="ltr">
+        {/* Center: Playback Controls & Scrubber (LTR) */}
+        <div className="flex flex-col items-center gap-2 w-[40%] max-w-[600px]" dir="ltr">
           <div className="flex items-center gap-5">
             {/* Shuffle */}
             <button
               onClick={onToggleShuffle}
               title={
                 shuffleMode === 'smart'
-                  ? 'ערבוב חכם פעיל (כולל המלצות ✨)'
+                  ? 'ערבוב חכם פעיל (Smart Shuffle ✨)'
                   : shuffleMode === 'standard' || isShuffle
-                  ? 'ערבוב רגיל (ללא חזרות)'
-                  : 'ערבוב כבוי (לחץ להפעלה)'
+                  ? 'ערבוב רגיל פעיל'
+                  : 'הפעל ערבוב'
               }
-              className={`p-1 transition-all ${
-                shuffleMode === 'smart'
-                  ? 'text-spotify-green relative'
-                  : shuffleMode === 'standard' || isShuffle
+              className={`relative p-1 transition-all ${
+                shuffleMode !== 'off' || isShuffle
                   ? 'text-spotify-green'
-                  : 'text-spotify-subtext hover:text-white'
+                  : 'text-[#b3b3b3] hover:text-white'
               }`}
             >
-              <div className="relative inline-flex items-center justify-center">
-                <Shuffle className="w-4 h-4" />
-                {shuffleMode === 'smart' && (
-                  <Sparkles className="w-2.5 h-2.5 text-emerald-300 absolute -top-1.5 -right-1.5 animate-pulse" />
-                )}
-              </div>
+              <Shuffle className="w-4 h-4" />
+              {shuffleMode === 'smart' && (
+                <Sparkles className="w-2.5 h-2.5 text-spotify-green fill-spotify-green absolute -top-0.5 -right-1 animate-pulse" />
+              )}
+              {(shuffleMode !== 'off' || isShuffle) && (
+                <span className="w-1 h-1 rounded-full bg-spotify-green absolute -bottom-1 left-1/2 -translate-x-1/2" />
+              )}
             </button>
 
-            {/* Previous Track (points left) */}
+            {/* Previous Track */}
             <button
               onClick={onPrev}
               title="הקודם"
-              className="text-spotify-subtext hover:text-white transition-colors"
+              className="text-[#b3b3b3] hover:text-white transition-colors active:scale-95"
             >
               <SkipBack className="w-5 h-5 fill-current" />
             </button>
 
-            {/* Big Play/Pause Button */}
+            {/* White Circle Play/Pause Button */}
             <button
               onClick={onTogglePlay}
-              className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-md"
+              className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
             >
               {isLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin text-black" />
               ) : isPlaying ? (
-                <Pause className="w-4 h-4 fill-current" />
+                <Pause className="w-4 h-4 fill-black text-black" />
               ) : (
-                <Play className="w-4 h-4 fill-current translate-x-0.5" />
+                <Play className="w-4 h-4 fill-black text-black translate-x-0.5" />
               )}
             </button>
 
-            {/* Next Track (points right) */}
+            {/* Next Track */}
             <button
               onClick={onNext}
               title="הבא"
-              className="text-spotify-subtext hover:text-white transition-colors"
+              className="text-[#b3b3b3] hover:text-white transition-colors active:scale-95"
             >
               <SkipForward className="w-5 h-5 fill-current" />
             </button>
@@ -224,17 +247,20 @@ export function PlayerBar({
             <button
               onClick={onToggleRepeat}
               title="חזרה (Repeat)"
-              className={`p-1 transition-colors ${
-                repeatMode !== 'off' ? 'text-spotify-green' : 'text-spotify-subtext hover:text-white'
+              className={`relative p-1 transition-colors ${
+                repeatMode !== 'off' ? 'text-spotify-green' : 'text-[#b3b3b3] hover:text-white'
               }`}
             >
               {repeatMode === 'one' ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
+              {repeatMode !== 'off' && (
+                <span className="w-1 h-1 rounded-full bg-spotify-green absolute -bottom-1 left-1/2 -translate-x-1/2" />
+              )}
             </button>
           </div>
 
-          {/* Time Scrubber (Left to Right: 0:00 -> [======|......] -> 3:07) */}
-          <div className="flex items-center gap-2.5 w-full group">
-            <span className="text-[11px] text-spotify-subtext font-mono w-9 text-right select-none">
+          {/* Time Scrubber */}
+          <div className="flex items-center gap-2 w-full group">
+            <span className="text-[11px] text-[#b3b3b3] font-normal w-9 text-right tabular-nums">
               {formatTime(currentTime)}
             </span>
             <input
@@ -249,28 +275,28 @@ export function PlayerBar({
               }}
               className="spotify-slider flex-1"
             />
-            <span className="text-[11px] text-spotify-subtext font-mono w-9 text-left select-none">
+            <span className="text-[11px] text-[#b3b3b3] font-normal w-9 text-left tabular-nums">
               {formatTime(duration)}
             </span>
           </div>
         </div>
 
-        {/* Left side (RTL): Extra Tools (Lyrics, Volume, Fullscreen) - LTR for slider */}
-        <div className="flex items-center justify-end gap-3.5 w-[30%]" dir="ltr">
+        {/* Left side (RTL): Lyrics, Volume & Fullscreen (LTR) */}
+        <div className="flex items-center justify-end gap-3 w-[30%]" dir="ltr">
           <button
             onClick={onOpenLyrics}
-            title="מילים מסונכרנות"
-            className="p-1.5 text-spotify-subtext hover:text-spotify-green transition-colors"
+            title="מילים לשיר"
+            className="p-1.5 text-[#b3b3b3] hover:text-white transition-colors"
           >
-            <Mic2 className="w-5 h-5" />
+            <Mic2 className="w-4 h-4" />
           </button>
 
           <div className="flex items-center gap-2 group">
             <button
               onClick={onToggleMute}
-              className="p-1.5 text-spotify-subtext hover:text-white transition-colors"
+              className="p-1.5 text-[#b3b3b3] hover:text-white transition-colors"
             >
-              {isMuted || currentVolume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+              {isMuted || currentVolume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
             <input
               type="range"
@@ -289,7 +315,7 @@ export function PlayerBar({
           <button
             onClick={onOpenFullscreen}
             title="מסך מלא"
-            className="p-1.5 text-spotify-subtext hover:text-white transition-colors"
+            className="p-1.5 text-[#b3b3b3] hover:text-white transition-colors"
           >
             <Maximize2 className="w-4 h-4" />
           </button>

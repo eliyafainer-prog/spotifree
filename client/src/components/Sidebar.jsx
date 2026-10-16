@@ -1,173 +1,193 @@
 import React from 'react';
-import { Home, Search, Library, Heart, PlusCircle, Plus, Music2, BarChart3, ArrowDownCircle } from 'lucide-react';
+import { Home, Search, Library, Heart, Plus, Music2, BarChart3, ArrowDownCircle, Pin } from 'lucide-react';
 
-export function Sidebar({ currentView, setCurrentView, playlists, openImportModal, onCreatePlaylist, selectedPlaylistId, setSelectedPlaylistId }) {
+export function Sidebar({
+  currentView,
+  setCurrentView,
+  playlists,
+  likedCount = 0,
+  downloadedCount = 0,
+  openImportModal,
+  onCreatePlaylist,
+  selectedPlaylistId,
+  setSelectedPlaylistId
+}) {
   return (
-    <aside className="hidden md:flex flex-col w-64 bg-black p-3 gap-2 select-none h-full">
-      {/* Top Box: Brand & Primary Navigation */}
-      <div className="bg-spotify-dark rounded-lg p-4 flex flex-col gap-4">
-        <div className="flex items-center gap-2.5 px-2 text-white font-bold text-xl tracking-tight">
-          <div className="w-8 h-8 rounded-full bg-spotify-green flex items-center justify-center text-black font-black flex-shrink-0 shadow-md">
-            <Music2 className="w-5 h-5 fill-black stroke-black" />
-          </div>
-          <span>SpotiFree</span>
-        </div>
+    <aside className="hidden md:flex flex-col w-[280px] lg:w-[310px] bg-black p-2 pl-0 gap-2 select-none h-full">
+      {/* Top Panel: Home & Search */}
+      <div className="bg-[#121212] rounded-lg px-3 py-2 flex flex-col gap-1">
+        <button
+          onClick={() => {
+            setCurrentView('home');
+            setSelectedPlaylistId(null);
+          }}
+          className={`flex items-center gap-5 px-3 py-3 rounded-md font-bold text-[15px] transition-colors text-right ${
+            currentView === 'home' ? 'text-white' : 'text-[#b3b3b3] hover:text-white'
+          }`}
+        >
+          <Home className={`w-6 h-6 flex-shrink-0 ${currentView === 'home' ? 'stroke-[2.5]' : 'stroke-[2]'}`} />
+          <span>דף הבית</span>
+        </button>
 
-        <nav className="flex flex-col gap-1">
-          <button
-            onClick={() => {
-              setCurrentView('home');
-              setSelectedPlaylistId(null);
-            }}
-            className={`flex items-center gap-4 px-3 py-2.5 rounded-md font-semibold text-sm transition-colors text-right ${
-              currentView === 'home' ? 'text-white bg-spotify-highlight' : 'text-spotify-subtext hover:text-white'
-            }`}
-          >
-            <Home className="w-5 h-5 flex-shrink-0" />
-            <span>דף הבית</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setCurrentView('search');
-              setSelectedPlaylistId(null);
-            }}
-            className={`flex items-center gap-4 px-3 py-2.5 rounded-md font-semibold text-sm transition-colors text-right ${
-              currentView === 'search' ? 'text-white bg-spotify-highlight' : 'text-spotify-subtext hover:text-white'
-            }`}
-          >
-            <Search className="w-5 h-5 flex-shrink-0" />
-            <span>חיפוש</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setCurrentView('analytics');
-              setSelectedPlaylistId(null);
-            }}
-            className={`flex items-center gap-4 px-3 py-2.5 rounded-md font-semibold text-sm transition-colors text-right ${
-              currentView === 'analytics' ? 'text-white bg-spotify-highlight' : 'text-spotify-subtext hover:text-white'
-            }`}
-          >
-            <BarChart3 className="w-5 h-5 flex-shrink-0 text-emerald-400" />
-            <span>ניתוח נתונים (Stats)</span>
-          </button>
-        </nav>
+        <button
+          onClick={() => {
+            setCurrentView('search');
+            setSelectedPlaylistId(null);
+          }}
+          className={`flex items-center gap-5 px-3 py-3 rounded-md font-bold text-[15px] transition-colors text-right ${
+            currentView === 'search' ? 'text-white' : 'text-[#b3b3b3] hover:text-white'
+          }`}
+        >
+          <Search className={`w-6 h-6 flex-shrink-0 ${currentView === 'search' ? 'stroke-[2.5]' : 'stroke-[2]'}`} />
+          <span>חיפוש</span>
+        </button>
       </div>
 
-      {/* Bottom Box: Library & Playlists */}
-      <div className="bg-spotify-dark rounded-lg p-4 flex-1 flex flex-col gap-3 min-h-0 overflow-hidden">
-        <div className="flex items-center justify-between text-spotify-subtext hover:text-white transition-colors">
+      {/* Bottom Panel: Your Library (Spotify 2025/2026 style) */}
+      <div className="bg-[#121212] rounded-lg flex-1 flex flex-col min-h-0 overflow-hidden">
+        {/* Library Header */}
+        <div className="flex items-center justify-between px-4 pt-3 pb-2">
           <button
             onClick={() => {
               setCurrentView('library');
               setSelectedPlaylistId(null);
             }}
-            className="flex items-center gap-3 font-semibold text-sm"
+            className="flex items-center gap-3 text-[#b3b3b3] hover:text-white transition-colors font-bold text-[15px]"
           >
-            <Library className="w-5 h-5 flex-shrink-0" />
+            <Library className="w-6 h-6 flex-shrink-0" />
             <span>הספרייה שלך</span>
           </button>
 
-          <button
-            onClick={openImportModal}
-            title="ייבוא פלייליסט מספוטיפיי או מיוטיוב"
-            className="p-1 text-spotify-subtext hover:text-spotify-green transition-colors"
-          >
-            <PlusCircle className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            {onCreatePlaylist && (
+              <button
+                onClick={onCreatePlaylist}
+                title="צור פלייליסט חדש"
+                className="p-2 rounded-full text-[#b3b3b3] hover:text-white hover:bg-[#1f1f1f] transition-colors"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Quick Access: Liked Songs & Import Button */}
-        <div className="flex flex-col gap-1 pt-1 border-b border-spotify-border pb-3">
+        {/* Filter Chips Row */}
+        <div className="flex items-center gap-2 px-4 py-2 overflow-x-auto no-scrollbar">
           <button
-            onClick={() => {
-              setCurrentView('liked');
-              setSelectedPlaylistId(null);
-            }}
-            className={`flex items-center gap-3 p-2 rounded-md font-medium text-sm transition-colors text-right ${
-              currentView === 'liked' ? 'bg-spotify-highlight text-white' : 'text-spotify-subtext hover:text-white'
-            }`}
+            onClick={openImportModal}
+            className="px-3 py-1.5 rounded-full bg-[#232323] hover:bg-[#2a2a2a] text-white text-xs font-semibold whitespace-nowrap transition-colors"
           >
-            <div className="w-8 h-8 rounded bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center text-white flex-shrink-0 shadow">
-              <Heart className="w-4 h-4 fill-white" />
-            </div>
-            <span>שירים שאהבתי</span>
+            + ייבוא מספוטיפיי
           </button>
-
           <button
             onClick={() => {
               setCurrentView('offline');
               setSelectedPlaylistId(null);
             }}
-            className={`flex items-center gap-3 p-2 rounded-md font-medium text-sm transition-colors text-right ${
-              currentView === 'offline' ? 'bg-spotify-highlight text-white' : 'text-spotify-subtext hover:text-white'
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+              currentView === 'offline'
+                ? 'bg-white text-black'
+                : 'bg-[#232323] hover:bg-[#2a2a2a] text-white'
             }`}
           >
-            <div className="w-8 h-8 rounded bg-teal-600/20 border border-teal-500/40 flex items-center justify-center text-teal-400 flex-shrink-0 shadow">
-              <ArrowDownCircle className="w-4 h-4" />
-            </div>
-            <span>שירים שהורדו (אופליין)</span>
+            הורדות
           </button>
-
-          {onCreatePlaylist && (
-            <button
-              onClick={onCreatePlaylist}
-              className="flex items-center gap-3 p-2 rounded-md font-medium text-sm text-spotify-subtext hover:text-white hover:bg-spotify-highlight/40 transition-colors text-right"
-            >
-              <div className="w-8 h-8 rounded bg-white/10 flex items-center justify-center text-white border border-white/20 flex-shrink-0">
-                <Plus className="w-4 h-4" />
-              </div>
-              <span>צור פלייליסט חדש</span>
-            </button>
-          )}
-
           <button
-            onClick={openImportModal}
-            className="flex items-center gap-3 p-2 rounded-md font-medium text-sm text-spotify-green hover:bg-spotify-highlight/40 transition-colors text-right"
+            onClick={() => {
+              setCurrentView('analytics');
+              setSelectedPlaylistId(null);
+            }}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+              currentView === 'analytics'
+                ? 'bg-white text-black'
+                : 'bg-[#232323] hover:bg-[#2a2a2a] text-white'
+            }`}
           >
-            <div className="w-8 h-8 rounded bg-spotify-highlight flex items-center justify-center text-spotify-green border border-spotify-green/30 flex-shrink-0">
-              <PlusCircle className="w-4 h-4" />
-            </div>
-            <span>ייבוא פלייליסט חדש</span>
+            סטטיסטיקות
           </button>
         </div>
 
-        {/* Playlists List */}
-        <div className="flex-1 overflow-y-auto flex flex-col gap-1">
-          {playlists.length === 0 ? (
-            <div className="text-xs text-spotify-subtext p-3 text-center leading-relaxed">
-              אין עדיין פלייליסטים שמורים.<br />
-              לחץ על <span className="text-spotify-green font-bold">ייבוא פלייליסט</span> כדי להוסיף אלבום או פלייליסט!
+        {/* Scrollable Library Items */}
+        <div className="flex-1 overflow-y-auto px-2 py-1 flex flex-col gap-0.5">
+          {/* Pinned: Liked Songs */}
+          <button
+            onClick={() => {
+              setCurrentView('liked');
+              setSelectedPlaylistId(null);
+            }}
+            className={`flex items-center gap-3 p-2 rounded-md text-right transition-colors ${
+              currentView === 'liked' ? 'bg-[#232323]' : 'hover:bg-[#1a1a1a]'
+            }`}
+          >
+            <div className="w-12 h-12 rounded-[4px] bg-gradient-to-br from-[#450af5] via-[#8e8ee5] to-[#c4efd9] flex items-center justify-center text-white flex-shrink-0">
+              <Heart className="w-5 h-5 fill-white" />
             </div>
-          ) : (
-            playlists.map((pl) => (
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className={`text-[15px] font-medium truncate ${currentView === 'liked' ? 'text-spotify-green' : 'text-white'}`}>
+                שירים שאהבתי
+              </span>
+              <div className="flex items-center gap-1.5 text-xs text-[#b3b3b3] mt-0.5">
+                <Pin className="w-3 h-3 fill-spotify-green text-spotify-green rotate-45 flex-shrink-0" />
+                <span className="truncate">פלייליסט • {likedCount} שירים</span>
+              </div>
+            </div>
+          </button>
+
+          {/* Offline Downloads Row */}
+          <button
+            onClick={() => {
+              setCurrentView('offline');
+              setSelectedPlaylistId(null);
+            }}
+            className={`flex items-center gap-3 p-2 rounded-md text-right transition-colors ${
+              currentView === 'offline' ? 'bg-[#232323]' : 'hover:bg-[#1a1a1a]'
+            }`}
+          >
+            <div className="w-12 h-12 rounded-[4px] bg-gradient-to-br from-emerald-700 to-teal-900 flex items-center justify-center text-spotify-green flex-shrink-0">
+              <ArrowDownCircle className="w-6 h-6 fill-spotify-green text-black" />
+            </div>
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className={`text-[15px] font-medium truncate ${currentView === 'offline' ? 'text-spotify-green' : 'text-white'}`}>
+                הורדות אופליין
+              </span>
+              <span className="text-xs text-[#b3b3b3] truncate mt-0.5">
+                שמורים במכשיר • {downloadedCount} שירים
+              </span>
+            </div>
+          </button>
+
+          {/* User & Imported Playlists */}
+          {playlists.map((pl) => {
+            const isSelected = selectedPlaylistId === pl.id && currentView === 'playlist';
+            return (
               <button
                 key={pl.id}
                 onClick={() => {
                   setSelectedPlaylistId(pl.id);
                   setCurrentView('playlist');
                 }}
-                className={`flex items-center gap-3 p-2 rounded-md text-sm text-right transition-colors ${
-                  selectedPlaylistId === pl.id && currentView === 'playlist'
-                    ? 'bg-spotify-highlight text-white'
-                    : 'text-spotify-subtext hover:text-white hover:bg-spotify-highlight/20'
+                className={`flex items-center gap-3 p-2 rounded-md text-right transition-colors ${
+                  isSelected ? 'bg-[#232323]' : 'hover:bg-[#1a1a1a]'
                 }`}
               >
                 {pl.cover ? (
-                  <img src={pl.cover} alt="" className="w-9 h-9 rounded object-cover flex-shrink-0 shadow-sm" />
+                  <img src={pl.cover} alt="" className="w-12 h-12 rounded-[4px] object-cover flex-shrink-0" />
                 ) : (
-                  <div className="w-9 h-9 rounded bg-spotify-elevated flex items-center justify-center text-spotify-subtext flex-shrink-0">
-                    <Music2 className="w-4 h-4" />
+                  <div className="w-12 h-12 rounded-[4px] bg-[#282828] flex items-center justify-center text-[#b3b3b3] flex-shrink-0">
+                    <Music2 className="w-5 h-5" />
                   </div>
                 )}
-                <div className="flex-1 truncate">
-                  <div className="font-medium truncate text-white">{pl.title}</div>
-                  <div className="text-xs text-spotify-subtext">{pl.tracks?.length || 0} שירים</div>
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className={`text-[15px] font-medium truncate ${isSelected ? 'text-spotify-green' : 'text-white'}`}>
+                    {pl.title}
+                  </span>
+                  <span className="text-xs text-[#b3b3b3] truncate mt-0.5">
+                    {pl.type === 'album' ? 'אלבום' : 'פלייליסט'} • {pl.tracks?.length || 0} שירים
+                  </span>
                 </div>
               </button>
-            ))
-          )}
+            );
+          })}
         </div>
       </div>
     </aside>

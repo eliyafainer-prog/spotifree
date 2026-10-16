@@ -1,20 +1,24 @@
 import React from 'react';
-import { Home, Search, Library, PlusCircle, BarChart3 } from 'lucide-react';
+import { Home, Search, Library, Plus, BarChart3 } from 'lucide-react';
 
 export function MobileNav({ currentView, setCurrentView, openImportModal, setSelectedPlaylistId }) {
+  const isLibraryActive = currentView === 'library' || currentView === 'liked' || currentView === 'playlist' || currentView === 'offline';
+
   return (
-    <nav className="md:hidden flex items-center justify-around bg-spotify-dark/95 backdrop-blur-md border-t border-spotify-border h-16 px-2 z-40 select-none">
+    <nav className="md:hidden flex items-center justify-around bg-gradient-to-t from-black via-black/95 to-black/85 backdrop-blur-lg h-16 px-2 z-40 select-none">
       <button
         onClick={() => {
           setCurrentView('home');
           setSelectedPlaylistId(null);
         }}
         className={`flex flex-col items-center justify-center gap-1 w-16 py-1 transition-colors ${
-          currentView === 'home' ? 'text-white' : 'text-spotify-subtext hover:text-white'
+          currentView === 'home' ? 'text-white' : 'text-[#b3b3b3]'
         }`}
       >
-        <Home className="w-5 h-5" />
-        <span className="text-[10px] font-medium">בית</span>
+        <Home className={`w-6 h-6 ${currentView === 'home' ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />
+        <span className={`text-[11px] ${currentView === 'home' ? 'font-bold text-white' : 'font-normal'}`}>
+          דף הבית
+        </span>
       </button>
 
       <button
@@ -23,24 +27,13 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
           setSelectedPlaylistId(null);
         }}
         className={`flex flex-col items-center justify-center gap-1 w-16 py-1 transition-colors ${
-          currentView === 'search' ? 'text-white' : 'text-spotify-subtext hover:text-white'
+          currentView === 'search' ? 'text-white' : 'text-[#b3b3b3]'
         }`}
       >
-        <Search className="w-5 h-5" />
-        <span className="text-[10px] font-medium">חיפוש</span>
-      </button>
-
-      <button
-        onClick={() => {
-          setCurrentView('analytics');
-          setSelectedPlaylistId(null);
-        }}
-        className={`flex flex-col items-center justify-center gap-1 w-14 py-1 transition-colors ${
-          currentView === 'analytics' ? 'text-emerald-400' : 'text-spotify-subtext hover:text-white'
-        }`}
-      >
-        <BarChart3 className="w-5 h-5" />
-        <span className="text-[10px] font-medium">נתונים</span>
+        <Search className={`w-6 h-6 ${currentView === 'search' ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />
+        <span className={`text-[11px] ${currentView === 'search' ? 'font-bold text-white' : 'font-normal'}`}>
+          חיפוש
+        </span>
       </button>
 
       <button
@@ -48,20 +41,22 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
           setCurrentView('library');
           setSelectedPlaylistId(null);
         }}
-        className={`flex flex-col items-center justify-center gap-1 w-14 py-1 transition-colors ${
-          currentView === 'library' || currentView === 'liked' || currentView === 'playlist' ? 'text-white' : 'text-spotify-subtext hover:text-white'
+        className={`flex flex-col items-center justify-center gap-1 w-16 py-1 transition-colors ${
+          isLibraryActive ? 'text-white' : 'text-[#b3b3b3]'
         }`}
       >
-        <Library className="w-5 h-5" />
-        <span className="text-[10px] font-medium">ספרייה</span>
+        <Library className={`w-6 h-6 ${isLibraryActive ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />
+        <span className={`text-[11px] ${isLibraryActive ? 'font-bold text-white' : 'font-normal'}`}>
+          הספרייה שלך
+        </span>
       </button>
 
       <button
         onClick={openImportModal}
-        className="flex flex-col items-center justify-center gap-1 w-16 py-1 text-spotify-green hover:text-spotify-green-hover transition-colors"
+        className="flex flex-col items-center justify-center gap-1 w-16 py-1 text-[#b3b3b3] active:text-white transition-colors"
       >
-        <PlusCircle className="w-5 h-5" />
-        <span className="text-[10px] font-medium font-bold">ייבוא</span>
+        <Plus className="w-6 h-6 stroke-[2]" />
+        <span className="text-[11px] font-normal">ייבוא</span>
       </button>
     </nav>
   );

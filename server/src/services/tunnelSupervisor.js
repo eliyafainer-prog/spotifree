@@ -33,14 +33,18 @@ function setTunnelUrl(url) {
     fs.writeFileSync(TUNNEL_URL_FILE, cleanUrl, 'utf8');
   } catch (e) {}
   console.log(`[TunnelSupervisor] Active tunnel set to: ${cleanUrl}`);
-  registerWithRender(cleanUrl);
+  registerWithRender(cleanUrl, true);
+  setTimeout(() => registerWithRender(cleanUrl), 5000);
+  setTimeout(() => registerWithRender(cleanUrl), 12000);
 }
 
-async function registerWithRender(tunnelUrl) {
+async function registerWithRender(tunnelUrl, skipHealthCheck = false) {
   if (!tunnelUrl) return;
   try {
-    const healthy = await verifyTunnelHealthy(tunnelUrl);
-    if (!healthy) return;
+    if (!skipHealthCheck) {
+      const healthy = await verifyTunnelHealthy(tunnelUrl);
+      if (!healthy) return;
+    }
     await axios.post(`${RENDER_CLOUD_URL}/api/tunnel/register`, {
       tunnelUrl: tunnelUrl,
       timestamp: Date.now()
