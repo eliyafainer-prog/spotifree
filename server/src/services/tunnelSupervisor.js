@@ -7,22 +7,22 @@ const RENDER_CLOUD_URL = 'https://spotifree-h7s8.onrender.com';
 const TUNNEL_URL_FILE = path.join(__dirname, '../../tunnel_url.txt');
 const CLOUDFLARED_BIN = path.join(__dirname, '../../../cloudflared.exe');
 
-let currentTunnelUrl = 'https://depending-lawyer-memories-gui.trycloudflare.com';
+let currentTunnelUrl = null;
 let spawnedProcess = null;
 let heartbeatInterval = null;
 
-// Read cached tunnel URL if available
-try {
-  if (fs.existsSync(TUNNEL_URL_FILE)) {
-    const saved = fs.readFileSync(TUNNEL_URL_FILE, 'utf8').trim();
-    if (saved.startsWith('https://') && saved.includes('trycloudflare.com')) {
-      currentTunnelUrl = saved;
-    }
-  }
-} catch (e) {}
-
 function getActiveTunnelUrl() {
   return currentTunnelUrl;
+}
+
+async function verifyTunnelHealthy(url) {
+  if (!url || !url.startsWith('https://')) return false;
+  try {
+    const res = await axios.get(`${url}/health`, { timeout: 2500 });
+    return res.status === 200 && res.data && res.data.status === 'ok';
+  } catch (e) {
+    return false;
+  }
 }
 
 function setTunnelUrl(url) {
@@ -39,11 +39,13 @@ function setTunnelUrl(url) {
 async function registerWithRender(tunnelUrl) {
   if (!tunnelUrl) return;
   try {
+    const healthy = await verifyTunnelHealthy(tunnelUrl);
+    if (!healthy) return;
     await axios.post(`${RENDER_CLOUD_URL}/api/tunnel/register`, {
       tunnelUrl: tunnelUrl,
       timestamp: Date.now()
     }, { timeout: 8000 });
-    console.log(`[TunnelSupervisor] Successfully registered tunnel with Render: ${tunnelUrl}`);
+    console.log(`[TunnelSupervisor] Successfully registered verified tunnel with Render: ${tunnelUrl}`);
   } catch (err) {
     // Render might be waking up; heartbeat will retry
   }
@@ -70,15 +72,23 @@ function isCloudflaredRunning() {
   }
 }
 
-function ensureTunnelProcess() {
-  // If cloudflared is already running (e.g. in background or another console), do not duplicate
+async function ensureTunnelProcess() {
   if (isCloudflaredRunning()) {
-    console.log(`[TunnelSupervisor] cloudflared is already running. Using tunnel URL: ${currentTunnelUrl}`);
-    return;
+    try {
+      if (fs.existsSync(TUNNEL_URL_FILE)) {
+        const saved = fs.readFileSync(TUNNEL_URL_FILE, 'utf8').trim();
+        if (await verifyTunnelHealthy(saved)) {
+          currentTunnelUrl = saved;
+          console.log(`[TunnelSupervisor] cloudflared is already running and healthy: ${currentTunnelUrl}`);
+          registerWithRender(currentTunnelUrl);
+          return;
+        }
+      }
+    } catch (e) {}
   }
 
   if (!fs.existsSync(CLOUDFLARED_BIN)) {
-    console.warn(`[TunnelSupervisor] cloudflared binary not found at ${CLOUDFLARED_BIN}. Using configured tunnel.`);
+    console.warn(`[TunnelSupervisor] cloudflared binary not found at ${CLOUDFLARED_BIN}.`);
     return;
   }
 
@@ -103,6 +113,7 @@ function ensureTunnelProcess() {
     spawnedProcess.on('exit', (code) => {
       console.warn(`[TunnelSupervisor] cloudflared exited with code ${code}. Restarting in 5s...`);
       spawnedProcess = null;
+      currentTunnelUrl = null;
       setTimeout(ensureTunnelProcess, 5000);
     });
 
@@ -115,28 +126,18 @@ function ensureTunnelProcess() {
 }
 
 function initTunnelSupervisor() {
-  // Only run tunnel management on local development machine, not on Render
   if (process.env.RENDER || (process.env.NODE_ENV === 'production' && process.platform !== 'win32')) {
     console.log('[TunnelSupervisor] Running in cloud production environment. Supervisor daemon idle.');
     return;
   }
 
-  console.log(`[TunnelSupervisor] Initializing. Current tunnel URL: ${currentTunnelUrl}`);
-  
-  // Ensure tunnel is running
+  console.log('[TunnelSupervisor] Initializing...');
   ensureTunnelProcess();
 
-  // Register initial tunnel immediately
-  if (currentTunnelUrl) {
-    registerWithRender(currentTunnelUrl);
-  }
-
-  // Set up periodic heartbeat every 2 minutes (keeps Render warm and maintains fresh registry)
   if (!heartbeatInterval) {
     heartbeatInterval = setInterval(sendKeepAlive, 2 * 60 * 1000);
   }
 
-  // Clean shutdown
   const cleanup = () => {
     if (spawnedProcess) {
       try { spawnedProcess.kill(); } catch (e) {}

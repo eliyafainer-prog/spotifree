@@ -28,8 +28,7 @@ let youtubeDatacenterBlockedUntil = 0;
 function isValidCachedStreamUrl(url) {
   if (!url || typeof url !== 'string') return false;
   if (url.includes('mime=audio%2Fwebm')) return false;
-  if (url.includes('/preview/') || url.includes('cf-preview-media')) return false;
-  if (url.includes('.m3u8')) return false;
+  if (url.includes('/preview/') || url.includes('cf-preview-media') || url.includes('_preview')) return false;
   return true;
 }
 
@@ -445,10 +444,11 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
     }
 
-    // Cache for 4 hours under both cacheKey and videoId
+    // Cache under both cacheKey and videoId (12m for HLS .m3u8 tokens, 4h for progressive HTTP)
+    const ttlMs = streamUrl.includes('.m3u8') ? 12 * 60 * 1000 : 4 * 60 * 60 * 1000;
     const cacheEntry = {
       url: streamUrl,
-      expiresAt: Date.now() + 4 * 60 * 60 * 1000
+      expiresAt: Date.now() + ttlMs
     };
     urlCache.set(cacheKey, cacheEntry);
     if (isVideoId) {
@@ -588,24 +588,38 @@ async function pipeStream(videoId, req, res, fallbackQuery = null) {
       throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
     }
 
+    const isHls = streamUrl.includes('.m3u8');
     const isVideo = streamUrl.includes('mime=video') || streamUrl.includes('itag=18');
-    if (isVideo) {
-      const ffmpeg = spawn('ffmpeg', [
-        '-loglevel', 'error',
-        '-i', streamUrl,
-        '-vn',
-        '-c:a', 'copy',
-        '-f', 'mp4',
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        'pipe:1'
-      ]);
+    if (isVideo || isHls) {
+      const isMp3Hls = isHls && streamUrl.includes('mp3');
+      const ffmpegArgs = isMp3Hls
+        ? [
+            '-loglevel', 'error',
+            '-i', streamUrl,
+            '-vn',
+            '-c:a', 'copy',
+            '-f', 'mp3',
+            'pipe:1'
+          ]
+        : [
+            '-loglevel', 'error',
+            '-i', streamUrl,
+            '-vn',
+            '-c:a', 'copy',
+            ...(isHls ? ['-bsf:a', 'aac_adtstoasc'] : []),
+            '-f', 'mp4',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            'pipe:1'
+          ];
+
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
       upstreamStream = ffmpeg;
 
       req.on('close', () => {
         try { ffmpeg.kill(); } catch (e) {}
       });
 
-      res.setHeader('Content-Type', 'audio/mp4');
+      res.setHeader('Content-Type', isMp3Hls ? 'audio/mpeg' : 'audio/mp4');
       res.setHeader('Cache-Control', 'public, max-age=14400');
       if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
