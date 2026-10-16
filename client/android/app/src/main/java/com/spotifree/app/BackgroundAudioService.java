@@ -9,38 +9,56 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
-import android.support.v4.media.MediaMetadataCompat;
-import android.support.v4.media.session.MediaSessionCompat;
-import android.support.v4.media.session.PlaybackStateCompat;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import androidx.media3.common.AudioAttributes;
+import androidx.media3.common.C;
+import androidx.media3.common.ForwardingPlayer;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MediaMetadata;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.session.MediaSession;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
+@UnstableApi
 public class BackgroundAudioService extends Service {
     public static final String CHANNEL_ID = "spotifree_playback_channel";
     public static final int NOTIFICATION_ID = 5050;
 
-    public static final String ACTION_START = "com.spotifree.app.ACTION_START";
-    public static final String ACTION_UPDATE = "com.spotifree.app.ACTION_UPDATE";
-    public static final String ACTION_STOP = "com.spotifree.app.ACTION_STOP";
-    public static final String ACTION_PLAY = "com.spotifree.app.ACTION_PLAY";
+    public static final String ACTION_PLAY_URL = "com.spotifree.app.ACTION_PLAY_URL";
     public static final String ACTION_PAUSE = "com.spotifree.app.ACTION_PAUSE";
-    public static final String ACTION_NEXT = "com.spotifree.app.ACTION_NEXT";
-    public static final String ACTION_PREV = "com.spotifree.app.ACTION_PREV";
+    public static final String ACTION_RESUME = "com.spotifree.app.ACTION_RESUME";
+    public static final String ACTION_SEEK = "com.spotifree.app.ACTION_SEEK";
+    public static final String ACTION_STOP = "com.spotifree.app.ACTION_STOP";
+    public static final String ACTION_UPDATE_META = "com.spotifree.app.ACTION_UPDATE_META";
 
-    private MediaSessionCompat mediaSession;
+    private ExoPlayer player;
+    private MediaSession mediaSession;
     private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
+
     private String currentTitle = "SpotiFree";
     private String currentArtist = "No song playing";
     private String currentThumbnailUrl = null;
     private Bitmap cachedArtwork = null;
-    private boolean isPlaying = false;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Runnable progressRunnable;
 
     @Override
     public void onCreate() {
@@ -53,34 +71,154 @@ public class BackgroundAudioService extends Service {
             wakeLock.setReferenceCounted(false);
         }
 
-        mediaSession = new MediaSessionCompat(this, "SpotiFreeMediaSession");
-        mediaSession.setCallback(new MediaSessionCompat.Callback() {
+        WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wifiManager != null) {
+            int lockType = WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+            wifiLock = wifiManager.createWifiLock(lockType, "SpotiFree:WifiLock");
+            wifiLock.setReferenceCounted(false);
+        }
+
+        initializeExoPlayer();
+    }
+
+    private void initializeExoPlayer() {
+        // Setup AudioAttributes with audio focus and becoming noisy handling
+        AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .build();
+
+        player = new ExoPlayer.Builder(this)
+                .setAudioAttributes(audioAttributes, true)
+                .setHandleAudioBecomingNoisy(true)
+                .setWakeMode(C.WAKE_MODE_NETWORK)
+                .build();
+
+        player.addListener(new Player.Listener() {
             @Override
-            public void onPlay() {
-                BackgroundAudioPlugin.dispatchMediaAction("play");
+            public void onIsPlayingChanged(boolean isPlaying) {
+                if (isPlaying) {
+                    acquireLocks();
+                    startProgressTracker();
+                } else {
+                    stopProgressTracker();
+                    if (player.getPlaybackState() != Player.STATE_BUFFERING) {
+                        releaseLocks();
+                    }
+                }
+                BackgroundAudioPlugin.dispatchMediaAction(isPlaying ? "play" : "pause");
+                updateForegroundNotification();
             }
 
             @Override
-            public void onPause() {
-                BackgroundAudioPlugin.dispatchMediaAction("pause");
+            public void onPlaybackStateChanged(int playbackState) {
+                if (playbackState == Player.STATE_ENDED) {
+                    BackgroundAudioPlugin.dispatchMediaAction("ended");
+                } else if (playbackState == Player.STATE_READY) {
+                    long durationSec = player.getDuration() > 0 ? (player.getDuration() / 1000) : 0;
+                    BackgroundAudioPlugin.dispatchDuration(durationSec);
+                }
             }
 
             @Override
-            public void onSkipToNext() {
+            public void onPlayerError(@NonNull PlaybackException error) {
+                BackgroundAudioPlugin.dispatchMediaError(error.getMessage() != null ? error.getMessage() : "Playback error");
+            }
+        });
+
+        // Wrap ExoPlayer in a ForwardingPlayer to force Next/Previous command availability
+        ForwardingPlayer forwardingPlayer = new ForwardingPlayer(player) {
+            @NonNull
+            @Override
+            public Player.Commands getAvailableCommands() {
+                return super.getAvailableCommands().buildUpon()
+                        .add(COMMAND_SEEK_TO_NEXT)
+                        .add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        .add(COMMAND_SEEK_TO_PREVIOUS)
+                        .add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                        .build();
+            }
+
+            @Override
+            public boolean isCommandAvailable(int command) {
+                if (command == COMMAND_SEEK_TO_NEXT ||
+                    command == COMMAND_SEEK_TO_NEXT_MEDIA_ITEM ||
+                    command == COMMAND_SEEK_TO_PREVIOUS ||
+                    command == COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM) {
+                    return true;
+                }
+                return super.isCommandAvailable(command);
+            }
+
+            @Override
+            public void seekToNext() {
                 BackgroundAudioPlugin.dispatchMediaAction("next");
             }
 
             @Override
-            public void onSkipToPrevious() {
+            public void seekToNextMediaItem() {
+                BackgroundAudioPlugin.dispatchMediaAction("next");
+            }
+
+            @Override
+            public void seekToPrevious() {
                 BackgroundAudioPlugin.dispatchMediaAction("prev");
             }
 
             @Override
-            public void onSeekTo(long pos) {
-                BackgroundAudioPlugin.dispatchMediaAction("seek:" + (pos / 1000));
+            public void seekToPreviousMediaItem() {
+                BackgroundAudioPlugin.dispatchMediaAction("prev");
             }
-        });
-        mediaSession.setActive(true);
+        };
+
+        mediaSession = new MediaSession.Builder(this, forwardingPlayer)
+                .setId("SpotiFreeMediaSession")
+                .setCallback(new MediaSession.Callback() {})
+                .build();
+    }
+
+    private void acquireLocks() {
+        try {
+            if (wakeLock != null && !wakeLock.isHeld()) {
+                wakeLock.acquire();
+            }
+            if (wifiLock != null && !wifiLock.isHeld()) {
+                wifiLock.acquire();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void releaseLocks() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+            if (wifiLock != null && wifiLock.isHeld()) {
+                wifiLock.release();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void startProgressTracker() {
+        stopProgressTracker();
+        progressRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (player != null && player.isPlaying()) {
+                    long currentPosSec = player.getCurrentPosition() / 1000;
+                    BackgroundAudioPlugin.dispatchProgress(currentPosSec);
+                    mainHandler.postDelayed(this, 1000);
+                }
+            }
+        };
+        mainHandler.post(progressRunnable);
+    }
+
+    private void stopProgressTracker() {
+        if (progressRunnable != null) {
+            mainHandler.removeCallbacks(progressRunnable);
+            progressRunnable = null;
+        }
     }
 
     private void createNotificationChannel() {
@@ -111,54 +249,78 @@ public class BackgroundAudioService extends Service {
         String action = intent.getAction();
 
         switch (action) {
-            case ACTION_START:
-            case ACTION_UPDATE:
+            case ACTION_PLAY_URL:
+                String url = intent.getStringExtra("url");
                 String title = intent.getStringExtra("title");
                 String artist = intent.getStringExtra("artist");
                 String thumb = intent.getStringExtra("thumbnail");
-                boolean playing = intent.getBooleanExtra("isPlaying", true);
 
                 if (title != null) currentTitle = title;
                 if (artist != null) currentArtist = artist;
-                isPlaying = playing;
 
                 if (thumb != null && !thumb.equals(currentThumbnailUrl)) {
                     currentThumbnailUrl = thumb;
                     loadArtworkAsync(currentThumbnailUrl);
                 }
 
-                if (wakeLock != null && isPlaying && !wakeLock.isHeld()) {
-                    wakeLock.acquire();
-                } else if (wakeLock != null && !isPlaying && wakeLock.isHeld()) {
-                    wakeLock.release();
+                if (url != null && player != null) {
+                    MediaMetadata metadata = new MediaMetadata.Builder()
+                            .setTitle(currentTitle)
+                            .setArtist(currentArtist)
+                            .build();
+
+                    MediaItem mediaItem = new MediaItem.Builder()
+                            .setUri(Uri.parse(url))
+                            .setMediaMetadata(metadata)
+                            .build();
+
+                    player.setMediaItem(mediaItem);
+                    player.prepare();
+                    player.play();
                 }
 
-                updateMediaSession();
-                Notification notification = buildNotification();
-                startForeground(NOTIFICATION_ID, notification);
-                break;
-
-            case ACTION_PLAY:
-                BackgroundAudioPlugin.dispatchMediaAction("play");
+                updateForegroundNotification();
                 break;
 
             case ACTION_PAUSE:
-                BackgroundAudioPlugin.dispatchMediaAction("pause");
+                if (player != null) {
+                    player.pause();
+                }
                 break;
 
-            case ACTION_NEXT:
-                BackgroundAudioPlugin.dispatchMediaAction("next");
+            case ACTION_RESUME:
+                if (player != null) {
+                    player.play();
+                }
                 break;
 
-            case ACTION_PREV:
-                BackgroundAudioPlugin.dispatchMediaAction("prev");
+            case ACTION_SEEK:
+                long seekPositionSec = intent.getLongExtra("position", 0);
+                if (player != null) {
+                    player.seekTo(seekPositionSec * 1000);
+                }
+                break;
+
+            case ACTION_UPDATE_META:
+                String metaTitle = intent.getStringExtra("title");
+                String metaArtist = intent.getStringExtra("artist");
+                String metaThumb = intent.getStringExtra("thumbnail");
+                if (metaTitle != null) currentTitle = metaTitle;
+                if (metaArtist != null) currentArtist = metaArtist;
+                if (metaThumb != null && !metaThumb.equals(currentThumbnailUrl)) {
+                    currentThumbnailUrl = metaThumb;
+                    loadArtworkAsync(currentThumbnailUrl);
+                }
+                updateForegroundNotification();
                 break;
 
             case ACTION_STOP:
-                stopForeground(true);
-                if (wakeLock != null && wakeLock.isHeld()) {
-                    wakeLock.release();
+                stopProgressTracker();
+                if (player != null) {
+                    player.stop();
                 }
+                releaseLocks();
+                stopForeground(true);
                 stopSelf();
                 break;
         }
@@ -166,36 +328,9 @@ public class BackgroundAudioService extends Service {
         return START_STICKY;
     }
 
-    private void updateMediaSession() {
-        if (mediaSession == null) return;
-
-        PlaybackStateCompat.Builder stateBuilder = new PlaybackStateCompat.Builder()
-                .setActions(
-                        PlaybackStateCompat.ACTION_PLAY |
-                        PlaybackStateCompat.ACTION_PAUSE |
-                        PlaybackStateCompat.ACTION_PLAY_PAUSE |
-                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
-                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS |
-                        PlaybackStateCompat.ACTION_SEEK_TO
-                )
-                .setState(
-                        isPlaying ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED,
-                        PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN,
-                        1.0f
-                );
-
-        mediaSession.setPlaybackState(stateBuilder.build());
-
-        MediaMetadataCompat.Builder metaBuilder = new MediaMetadataCompat.Builder()
-                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
-                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
-                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, "SpotiFree");
-
-        if (cachedArtwork != null) {
-            metaBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, cachedArtwork);
-        }
-
-        mediaSession.setMetadata(metaBuilder.build());
+    private void updateForegroundNotification() {
+        Notification notification = buildNotification();
+        startForeground(NOTIFICATION_ID, notification);
     }
 
     private Notification buildNotification() {
@@ -205,13 +340,15 @@ public class BackgroundAudioService extends Service {
                 this, 0, contentIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        Intent prevIntent = new Intent(this, BackgroundAudioService.class).setAction(ACTION_PREV);
+        boolean isCurrentlyPlaying = player != null && player.isPlaying();
+
+        Intent prevIntent = new Intent(this, BackgroundAudioService.class).setAction("PREV_CLICK");
         PendingIntent pPrev = PendingIntent.getService(this, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-        Intent playPauseIntent = new Intent(this, BackgroundAudioService.class).setAction(isPlaying ? ACTION_PAUSE : ACTION_PLAY);
+        Intent playPauseIntent = new Intent(this, BackgroundAudioService.class).setAction(isCurrentlyPlaying ? ACTION_PAUSE : ACTION_RESUME);
         PendingIntent pPlayPause = PendingIntent.getService(this, 2, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-        Intent nextIntent = new Intent(this, BackgroundAudioService.class).setAction(ACTION_NEXT);
+        Intent nextIntent = new Intent(this, BackgroundAudioService.class).setAction("NEXT_CLICK");
         PendingIntent pNext = PendingIntent.getService(this, 3, nextIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
@@ -220,13 +357,13 @@ public class BackgroundAudioService extends Service {
                 .setContentText(currentArtist)
                 .setContentIntent(pContentIntent)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setOngoing(isPlaying)
+                .setOngoing(isCurrentlyPlaying)
                 .setOnlyAlertOnce(true)
                 .addAction(android.R.drawable.ic_media_previous, "Previous", pPrev)
-                .addAction(isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play, isPlaying ? "Pause" : "Play", pPlayPause)
+                .addAction(isCurrentlyPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                        isCurrentlyPlaying ? "Pause" : "Play", pPlayPause)
                 .addAction(android.R.drawable.ic_media_next, "Next", pNext)
                 .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
-                        .setMediaSession(mediaSession.getSessionToken())
                         .setShowActionsInCompactView(0, 1, 2));
 
         if (cachedArtwork != null) {
@@ -248,29 +385,30 @@ public class BackgroundAudioService extends Service {
                 InputStream input = connection.getInputStream();
                 cachedArtwork = BitmapFactory.decodeStream(input);
 
-                updateMediaSession();
                 NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                 if (manager != null) {
                     manager.notify(NOTIFICATION_ID, buildNotification());
                 }
-            } catch (Exception e) {
-                // Keep existing or default artwork
-            }
+            } catch (Exception ignored) {}
         }).start();
     }
 
     @Override
     public void onDestroy() {
-        if (wakeLock != null && wakeLock.isHeld()) {
-            wakeLock.release();
+        stopProgressTracker();
+        releaseLocks();
+        if (player != null) {
+            player.release();
+            player = null;
         }
         if (mediaSession != null) {
-            mediaSession.setActive(false);
             mediaSession.release();
+            mediaSession = null;
         }
         super.onDestroy();
     }
 
+    @Nullable
     @Override
     public IBinder onBind(Intent intent) {
         return null;
