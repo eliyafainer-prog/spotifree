@@ -14,9 +14,13 @@ import {
   MoveVertical,
   SlidersHorizontal,
   Heart,
-  Disc3
+  Disc3,
+  ArrowRight,
+  ArrowDownCircle,
+  Loader2
 } from 'lucide-react';
 import { TrackRow } from './TrackRow';
+import { PlaylistThumb } from './Sidebar';
 import { isSameTrack } from '../services/storage';
 
 export function PlaylistView({
@@ -38,7 +42,8 @@ export function PlaylistView({
   onToggleShuffle,
   onPlayShuffled,
   onReorderTracks,
-  onRenamePlaylist
+  onRenamePlaylist,
+  onBack
 }) {
   if (!playlist) return null;
 
@@ -151,18 +156,31 @@ export function PlaylistView({
   const isAlbum = playlist.type?.toLowerCase() === 'album';
   const isLikedView = playlist.id === 'liked';
   const isCustomPlaylist = !isLikedView;
+  const ambientCover = playlist.cover || rawTracks.find(t => t?.thumbnail)?.thumbnail || '';
+
+  const allDownloaded = rawTracks.length > 0 && rawTracks.every(t => downloadedIds?.has(t.id));
+  const anyDownloading = rawTracks.some(t => downloadingIds?.has(t.id));
+
+  const handleDownloadAll = () => {
+    if (!onDownloadTrack || rawTracks.length === 0) return;
+    rawTracks.forEach(t => {
+      if (!downloadedIds?.has(t.id) && !downloadingIds?.has(t.id)) {
+        onDownloadTrack(t);
+      }
+    });
+  };
 
   return (
     <div className="flex flex-col animate-fadeIn pb-20 -mx-4 md:-mx-6 -mt-4 md:-mt-6">
       {/* Authentic Full-Bleed Ambient Gradient Header */}
-      <div className="relative overflow-hidden pt-6 pb-5 px-4 md:px-8">
+      <div className="relative overflow-hidden pt-5 pb-5 px-4 md:px-8">
         {/* Ambient blurred background from cover artwork */}
         {isLikedView ? (
           <div className="absolute inset-0 bg-gradient-to-b from-[#5038a0] via-[#2c1f59] to-[#121212] pointer-events-none" />
-        ) : playlist.cover ? (
+        ) : ambientCover ? (
           <>
             <img
-              src={playlist.cover}
+              src={ambientCover}
               alt=""
               className="absolute inset-0 w-full h-full object-cover blur-3xl scale-150 opacity-45 saturate-150 pointer-events-none"
             />
@@ -172,8 +190,18 @@ export function PlaylistView({
           <div className="absolute inset-0 bg-gradient-to-b from-[#2a4365] via-[#1a2639] to-[#121212] pointer-events-none" />
         )}
 
-        {/* Top Find-in-Playlist Search Bar (Spotify Mobile style) */}
+        {/* Top Back Button + Find-in-Playlist Search Bar (Spotify Mobile style) */}
         <div className="relative z-10 flex items-center justify-between gap-2 mb-5">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-2 rounded-full bg-black/40 hover:bg-black/60 text-white transition-colors flex-shrink-0"
+              title="חזרה"
+            >
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          )}
+
           <div className="relative flex-1 max-w-md">
             <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-white/70 pointer-events-none" />
             <input
@@ -209,19 +237,15 @@ export function PlaylistView({
           </div>
         </div>
 
-        {/* Cover Art + Title Metadata */}
+        {/* Cover Art (Supports 2x2 Collage via PlaylistThumb!) + Title Metadata */}
         <div className="relative z-10 flex flex-col sm:flex-row items-center sm:items-end gap-5 sm:gap-6">
           <div className="w-52 h-52 sm:w-56 sm:h-56 rounded-[6px] bg-[#282828] shadow-[0_16px_48px_rgba(0,0,0,0.75)] overflow-hidden flex-shrink-0">
             {isLikedView ? (
               <div className="w-full h-full bg-gradient-to-br from-[#450af5] via-[#8e8ee5] to-[#c4efd9] flex items-center justify-center">
                 <Heart className="w-24 h-24 fill-white text-white drop-shadow-lg" />
               </div>
-            ) : playlist.cover ? (
-              <img src={playlist.cover} alt="" className="w-full h-full object-cover" />
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-[#b3b3b3] bg-[#282828]">
-                <Music className="w-20 h-20" />
-              </div>
+              <PlaylistThumb playlist={playlist} className="w-full h-full" />
             )}
           </div>
 
@@ -261,7 +285,7 @@ export function PlaylistView({
             ) : (
               <div className="flex items-center gap-2.5 w-full group">
                 <h1 className="text-2xl sm:text-4xl lg:text-6xl font-black text-white tracking-tight leading-tight line-clamp-2">
-                  {isLikedView ? 'שירים שאהבתי' : playlist.title}
+                  {isLikedView ? 'שירים שאהבתם' : playlist.title}
                 </h1>
                 {isCustomPlaylist && onRenamePlaylist && (
                   <button
@@ -280,7 +304,7 @@ export function PlaylistView({
 
             <div className="flex items-center gap-2 mt-2.5 text-xs sm:text-sm text-[#b3b3b3] flex-wrap">
               <div className="w-5 h-5 rounded-full bg-spotify-green flex items-center justify-center text-black font-black text-[10px]">
-                S
+                E
               </div>
               <span className="font-bold text-white">SpotiFree</span>
               <span>•</span>
@@ -297,8 +321,24 @@ export function PlaylistView({
 
         {/* Authentic Spotify Controls Bar (Secondary icons on right, Big Green Play + Shuffle on left in RTL) */}
         <div className="relative z-10 flex items-center justify-between mt-5 pt-1">
-          {/* Right side in RTL: Secondary Action Icons */}
-          <div className="flex items-center gap-4">
+          {/* Right side in RTL: Download All + Reorder + Delete */}
+          <div className="flex items-center gap-3.5">
+            {onDownloadTrack && rawTracks.length > 0 && (
+              <button
+                onClick={handleDownloadAll}
+                title={allDownloaded ? 'כל השירים שמורים אופליין' : 'הורד את כל הפלייליסט להאזנה אופליין'}
+                className="p-1.5 transition-transform active:scale-95"
+              >
+                {anyDownloading ? (
+                  <Loader2 className="w-6 h-6 text-spotify-green animate-spin" />
+                ) : allDownloaded ? (
+                  <ArrowDownCircle className="w-6 h-6 fill-spotify-green text-black" />
+                ) : (
+                  <ArrowDownCircle className="w-6 h-6 text-[#b3b3b3] hover:text-white transition-colors" />
+                )}
+              </button>
+            )}
+
             {onReorderTracks && rawTracks.length > 1 && (
               <button
                 onClick={() => {

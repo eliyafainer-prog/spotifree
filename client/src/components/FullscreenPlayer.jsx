@@ -15,7 +15,8 @@ import {
   Check,
   PlusCircle,
   Share2,
-  ListMusic
+  ListMusic,
+  MonitorSpeaker
 } from 'lucide-react';
 
 export function FullscreenPlayer({
@@ -36,7 +37,11 @@ export function FullscreenPlayer({
   onToggleRepeat,
   isLiked,
   onToggleLike,
-  onOpenLyrics
+  onOpenLyrics,
+  previewLyricsLines = [],
+  queue = [],
+  queueIndex = -1,
+  onPlayTrack
 }) {
   if (!isOpen || !currentTrack) return null;
 
@@ -108,8 +113,8 @@ export function FullscreenPlayer({
         </div>
       </div>
 
-      {/* Bottom Section: Metadata + Scrubber + Main Controls + Lyrics Card */}
-      <div className="relative z-10 flex flex-col w-full max-w-[380px] mx-auto">
+      {/* Bottom Section: Metadata + Scrubber + Main Controls + Live Lyrics Preview + Up Next */}
+      <div className="relative z-10 flex flex-col w-full max-w-[380px] mx-auto pb-4">
         {/* Track Title, Artist & Spotify Green Check / Plus Button */}
         <div className="flex items-center justify-between gap-4 mb-5">
           <div className="flex flex-col min-w-0 flex-1 text-right">
@@ -157,7 +162,7 @@ export function FullscreenPlayer({
         </div>
 
         {/* Main Transport Controls (LTR) */}
-        <div className="flex items-center justify-between mb-6" dir="ltr">
+        <div className="flex items-center justify-between mb-4" dir="ltr">
           <button
             onClick={onToggleShuffle}
             className={`relative p-2 transition-transform active:scale-95 ${
@@ -211,24 +216,89 @@ export function FullscreenPlayer({
           </button>
         </div>
 
-        {/* Spotify Lyrics Teaser Card at Bottom */}
+        {/* Bottom Utility Row: Devices on left, Share & Queue on right (LTR) */}
+        <div className="flex items-center justify-between text-white/75 mb-5 px-1" dir="ltr">
+          <button onClick={onOpenLyrics} className="p-1.5 hover:text-white transition-colors">
+            <MonitorSpeaker className="w-5 h-5 text-spotify-green" />
+          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => {
+                if (navigator.share) {
+                  navigator.share({ title: currentTrack.title, text: `${currentTrack.title} - ${currentTrack.artist}` }).catch(() => {});
+                }
+              }}
+              className="p-1.5 hover:text-white transition-colors"
+            >
+              <Share2 className="w-5 h-5" />
+            </button>
+            <button onClick={onOpenLyrics} className="p-1.5 hover:text-white transition-colors">
+              <ListMusic className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Authentic Spotify Purple Live Synced Lyrics Card */}
         <div
           onClick={onOpenLyrics}
-          className="w-full rounded-xl bg-white/10 hover:bg-white/15 backdrop-blur-md p-4 flex items-center justify-between cursor-pointer transition-colors border border-white/10 mb-1"
+          className="w-full rounded-2xl bg-gradient-to-b from-[#6b1169] to-[#4a0c48] p-4 flex flex-col gap-2.5 cursor-pointer transition-all shadow-xl mb-3"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-spotify-green/20 flex items-center justify-center text-spotify-green">
-              <Mic2 className="w-5 h-5" />
-            </div>
-            <div className="flex flex-col text-right">
-              <span className="text-sm font-bold text-white">מילים לשיר (Lyrics)</span>
-              <span className="text-xs text-white/70">לחץ לצפייה במילים מסונכרנות בזמן אמת</span>
-            </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-extrabold text-white tracking-wide">מילות השיר</span>
+            <span className="text-[11px] font-bold bg-black/30 text-white px-3 py-1 rounded-full">
+              הצג מילים
+            </span>
           </div>
-          <span className="text-xs font-bold bg-white/15 text-white px-3 py-1.5 rounded-full">
-            הצג מילים
-          </span>
+
+          {previewLyricsLines && previewLyricsLines.length > 0 ? (
+            <div className="flex flex-col gap-1.5 text-right py-1">
+              {previewLyricsLines.map((line, i) => (
+                <p
+                  key={i}
+                  className={`font-extrabold leading-snug transition-colors ${
+                    line.isCurrent ? 'text-white text-lg' : 'text-white/50 text-base'
+                  }`}
+                >
+                  {line.text}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1 text-right py-2">
+              <p className="text-white font-extrabold text-base">{currentTrack.title}</p>
+              <p className="text-white/70 font-bold text-xs">לחץ לצפייה במילים מסונכרנות בזמן אמת</p>
+            </div>
+          )}
         </div>
+
+        {/* Up Next in Queue Card inside Mobile Fullscreen Player */}
+        {queue && queue.length > 1 && (
+          <div className="w-full rounded-2xl bg-[#1f1f1f] p-4 flex flex-col gap-2.5">
+            <div className="flex items-center justify-between text-xs font-bold">
+              <span className="text-white">הבא בתור</span>
+              <span className="text-[#b3b3b3] truncate max-w-[160px]">{currentTrack.artist}</span>
+            </div>
+            {queue.slice(queueIndex + 1, queueIndex + 4).map((nextT, idx) => (
+              <div
+                key={nextT.id || idx}
+                onClick={() => onPlayTrack && onPlayTrack(nextT)}
+                className="flex items-center gap-3 p-1.5 rounded-md active:bg-white/10 cursor-pointer transition-colors"
+              >
+                <div className="w-10 h-10 rounded-[4px] bg-[#282828] overflow-hidden flex-shrink-0">
+                  {nextT.thumbnail ? (
+                    <img src={nextT.thumbnail} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Music className="w-4 h-4 m-3 text-[#b3b3b3]" />
+                  )}
+                </div>
+                <div className="flex flex-col min-w-0 flex-1 text-right">
+                  <span className="text-xs font-bold text-white truncate">{nextT.title}</span>
+                  <span className="text-[11px] text-[#b3b3b3] truncate">{nextT.artist}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

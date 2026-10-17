@@ -751,9 +751,21 @@ export default function App() {
                     <div className="w-[52px] h-[52px] bg-gradient-to-br from-[#450af5] via-[#8e8ee5] to-[#c4efd9] flex items-center justify-center flex-shrink-0">
                       <Heart className="w-6 h-6 fill-white text-white" />
                     </div>
-                    <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-2 leading-tight">
+                    <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-1 leading-tight">
                       שירים שאהבתם
                     </span>
+                    {likedSongs.length > 0 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePlayTrack(likedSongs[0], likedSongs, 0);
+                        }}
+                        className="hidden sm:flex w-8 h-8 rounded-full bg-spotify-green text-black items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-all hover:scale-105 ml-2 flex-shrink-0"
+                        title="נגן"
+                      >
+                        <Play className="w-4 h-4 fill-black text-black translate-x-0.5" />
+                      </button>
+                    )}
                   </div>
 
                   {/* User's Saved/Imported Playlists with 2x2 Collage Covers */}
@@ -767,9 +779,21 @@ export default function App() {
                       className="flex items-center gap-2.5 h-[52px] bg-[#282828]/90 hover:bg-[#3e3e3e] active:bg-[#3e3e3e] rounded-[4px] overflow-hidden cursor-pointer transition-colors group"
                     >
                       <PlaylistThumb playlist={pl} className="w-[52px] h-[52px]" />
-                      <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-2 leading-tight">
+                      <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-1 leading-tight">
                         {pl.title}
                       </span>
+                      {pl.tracks?.length > 0 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePlayTrack(pl.tracks[0], pl.tracks, 0);
+                          }}
+                          className="hidden sm:flex w-8 h-8 rounded-full bg-spotify-green text-black items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-all hover:scale-105 ml-2 flex-shrink-0"
+                          title="נגן פלייליסט"
+                        >
+                          <Play className="w-4 h-4 fill-black text-black translate-x-0.5" />
+                        </button>
+                      )}
                     </div>
                   ))}
 
@@ -788,9 +812,15 @@ export default function App() {
                             <Music2 className="w-5 h-5 m-4 text-[#b3b3b3]" />
                           )}
                         </div>
-                        <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-2 leading-tight">
+                        <span className="flex-1 text-right font-bold text-[13px] text-white line-clamp-2 pr-0.5 pl-1 leading-tight">
                           {t.title}
                         </span>
+                        <button
+                          className="hidden sm:flex w-8 h-8 rounded-full bg-spotify-green text-black items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-all hover:scale-105 ml-2 flex-shrink-0"
+                          title="נגן"
+                        >
+                          <Play className="w-4 h-4 fill-black text-black translate-x-0.5" />
+                        </button>
                       </div>
                     ))}
 
@@ -1143,6 +1173,7 @@ export default function App() {
                 onToggleShuffle={handleToggleShuffle}
                 onPlayShuffled={handlePlayShuffled}
                 onReorderTracks={handleReorderLiked}
+                onBack={() => setCurrentView('home')}
               />
             )}
 
@@ -1168,6 +1199,7 @@ export default function App() {
                 onPlayShuffled={handlePlayShuffled}
                 onReorderTracks={(newTracks) => handleReorderPlaylist(activePlaylist.id, newTracks)}
                 onRenamePlaylist={(newTitle) => handleRenamePlaylist(activePlaylist.id, newTitle)}
+                onBack={() => setCurrentView('home')}
               />
             )}
 
@@ -1372,6 +1404,10 @@ export default function App() {
           setIsFullscreenPlayerOpen(false);
           setIsLyricsOpen(true);
         }}
+        previewLyricsLines={previewLyricsLines}
+        queue={player.queue}
+        queueIndex={player.queueIndex}
+        onPlayTrack={handlePlayTrack}
       />
 
       {/* Synced Lyrics Modal */}
