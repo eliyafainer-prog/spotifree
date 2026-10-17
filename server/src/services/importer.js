@@ -398,12 +398,16 @@ async function resolveTrackToStreamableId(track) {
         })
       ]).catch(() => null);
 
-  // 2. High-accuracy parallel search: search both base query AND explicit studio/audio query simultaneously
+  // 2. High-accuracy search: check baseQuery first, and only run studioQuery if top candidate isn't a strong studio match
   const searchPromise = (async () => {
-    const [res1, res2] = await Promise.all([
-      searchTracks(baseQuery, 12).catch(() => []),
-      searchTracks(studioQuery, 8).catch(() => [])
-    ]);
+    const res1 = await searchTracks(baseQuery, 12).catch(() => []);
+    if (res1 && res1.length > 0) {
+      const bestBaseScore = Math.max(...res1.map(c => scoreCandidate(c, track)));
+      if (bestBaseScore >= 130) {
+        return res1;
+      }
+    }
+    const res2 = await searchTracks(studioQuery, 8).catch(() => []);
     const combined = [...(res2 || []), ...(res1 || [])];
     const seen = new Set();
     const deduped = [];
@@ -412,9 +416,6 @@ async function resolveTrackToStreamableId(track) {
         seen.add(item.id);
         deduped.push(item);
       }
-    }
-    if (deduped.length === 0) {
-      return (await searchTracks(`${track.title} ${track.artist}`.trim(), 10).catch(() => [])) || [];
     }
     return deduped;
   })();

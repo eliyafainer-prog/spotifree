@@ -186,41 +186,38 @@ export function useAudioPlayer() {
       const err = audio.error;
       console.warn('Native HTML5 Audio error:', err ? `code=${err.code} msg=${err.message}` : 'unknown error');
       const activeSession = playSessionIdRef.current;
-      const track = currentTrackRef.current;
 
-      if (!track || userPausedRef.current) {
-        setIsLoading(false);
-        return;
-      }
-
-      // When tab/app is visible, fall back immediately on the first native <audio> error to YouTube Player
-      if (document.visibilityState === 'visible') {
-        const candId = track.streamableId || track.id;
-        if (candId && /^[a-zA-Z0-9_-]{11}$/.test(candId)) {
-          playViaYouTubePlayerRef.current?.({ ...track, id: candId });
+      if (currentTrackRef.current && !userPausedRef.current && retryCountRef.current < 2) {
+        retryCountRef.current++;
+        const attempt = retryCountRef.current;
+        if (attempt === 1) {
+          // Retry 1: Re-request server stream proxy on native <audio> (preserves 100% background playback!)
+          const retryUrl = `${getPlayableAudioUrl(currentTrackRef.current)}&retry=${Date.now()}`;
+          audio.src = retryUrl;
+          audio.load();
+          audio.play().catch(() => {});
           return;
         }
-        resolveTrack(track).then(res => {
-          if (playSessionIdRef.current !== activeSession || userPausedRef.current) return;
-          if (res?.streamableId && /^[a-zA-Z0-9_-]{11}$/.test(res.streamableId)) {
-            playViaYouTubePlayerRef.current?.({ ...track, id: res.streamableId, streamableId: res.streamableId });
-          } else {
+        if (attempt === 2) {
+          // Retry 2: Try direct stream URL on native <audio> to preserve background playback
+          fetchDirectStreamUrl(currentTrackRef.current).then(directUrl => {
+            if (playSessionIdRef.current !== activeSession || userPausedRef.current) return;
+            if (directUrl && audioRef.current && activeEngineRef.current === 'audio') {
+              audioRef.current.src = directUrl;
+              audioRef.current.load();
+              audioRef.current.play().catch(() => {});
+            } else {
+              throw new Error('No direct URL');
+            }
+          }).catch(() => {
+            if (playSessionIdRef.current !== activeSession || userPausedRef.current) return;
             setIsLoading(false);
-          }
-        }).catch(() => {
-          setIsLoading(false);
-        });
-        return;
-      }
-
-      // Background mode: 1 fast retry on native <audio>
-      if (retryCountRef.current < 1) {
-        retryCountRef.current++;
-        const retryUrl = `${getPlayableAudioUrl(track)}&retry=${Date.now()}`;
-        audio.src = retryUrl;
-        audio.load();
-        audio.play().catch(() => {});
-        return;
+            if (document.visibilityState === 'visible') {
+              playViaYouTubePlayerRef.current?.(currentTrackRef.current);
+            }
+          });
+          return;
+        }
       }
       setIsLoading(false);
     };
@@ -531,39 +528,18 @@ export function useAudioPlayer() {
     let targetTracks = [];
     if (isShuffle && shuffledIndicesRef.current.length > 0) {
       const curPos = shufflePosRef.current;
-      const upcomingIndices = shuffledIndicesRef.current.slice(curPos + 1, curPos + 4);
+      const upcomingIndices = shuffledIndicesRef.current.slice(curPos + 1, curPos + 3);
       targetTracks = upcomingIndices.map(idx => q[idx]).filter(Boolean);
     } else if (currentIdx >= 0) {
-      targetTracks = q.slice(currentIdx + 1, currentIdx + 4);
+      targetTracks = q.slice(currentIdx + 1, currentIdx + 3);
     }
 
     if (targetTracks.length === 0) return;
 
-    const preloadFirstTrackAudio = (trackToPreload) => {
-      setTimeout(() => {
-        try {
-          let preloadEl = document.getElementById('spotifree-preload-audio');
-          if (!preloadEl) {
-            preloadEl = document.createElement('audio');
-            preloadEl.id = 'spotifree-preload-audio';
-            preloadEl.preload = 'auto';
-            preloadEl.muted = true;
-            preloadEl.style.display = 'none';
-            document.body.appendChild(preloadEl);
-          }
-          const nextUrl = getPlayableAudioUrl(trackToPreload);
-          if (preloadEl.getAttribute('src') !== nextUrl) {
-            preloadEl.src = nextUrl;
-            preloadEl.load();
-          }
-        } catch (e) {}
-      }, 1800);
-    };
-
     const readyTracks = [];
 
     // 1. Proactively resolve upcoming tracks so their studio YouTube videoId & artwork are cached beforehand
-    targetTracks.forEach((t, idx) => {
+    targetTracks.forEach(t => {
       const needsResolve = (!t.streamableId && (!t.id || t.id.startsWith('sp_'))) || t.hasCustomArtwork === false || t.studioResolvedV3 === false;
       if (needsResolve) {
         resolveTrack(t).then(res => {
@@ -579,16 +555,14 @@ export function useAudioPlayer() {
             }
             updateTrackInPlaylists(t);
             prefetchNextTracks([t]);
-            if (idx === 0) preloadFirstTrackAudio(t);
           }
         }).catch(() => {});
       } else {
         readyTracks.push(t);
-        if (idx === 0) preloadFirstTrackAudio(t);
       }
     });
 
-    // 2. Prefetch audio stream URLs on the backend for already-resolved tracks immediately
+    // 2. Prefetch audio stream URLs on the backend for already-resolved tracks
     if (readyTracks.length > 0) {
       prefetchNextTracks(readyTracks);
     }
