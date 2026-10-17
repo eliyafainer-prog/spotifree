@@ -2,7 +2,7 @@ const LIKED_SONGS_KEY = 'spotifree_liked_songs';
 const PLAYLISTS_KEY = 'spotifree_playlists';
 const RECENT_KEY = 'spotifree_recent_tracks';
 const PLAYBACK_STATE_KEY = 'spotifree_last_playback';
-const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v3';
+const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v4';
 
 // One-time migration: clear old non-studio streamableId on Spotify-imported tracks while keeping their cover artwork intact
 try {
@@ -12,12 +12,14 @@ try {
       return list.map(t => {
         if (!t || typeof t !== 'object') return t;
         const origId = String(t.originalId || t.id || '');
-        if (origId.startsWith('sp_') && !t.studioResolvedV3) {
+        if ((origId.startsWith('sp_') || t.source === 'spotify') && !t.studioResolvedV4) {
           return {
             ...t,
-            originalId: origId,
-            id: origId,
+            originalId: origId.startsWith('sp_') ? origId : (t.originalId || `sp_${t.spotifyId || t.title}`),
+            id: origId.startsWith('sp_') ? origId : (t.originalId || `sp_${t.spotifyId || t.title}`),
             streamableId: null,
+            studioResolvedV3: false,
+            studioResolvedV4: false,
             durationSeconds: (t.durationSeconds && t.durationSeconds <= 420) ? t.durationSeconds : 0
           };
         }
@@ -183,6 +185,12 @@ export function updateTrackInPlaylists(resolvedTrack) {
         if (isSameTrack(t, resolvedTrack)) {
           pChanged = true;
           changed = true;
+          const finalSec = (t.durationSeconds && t.durationSeconds >= 35 && t.durationSeconds <= 420)
+            ? t.durationSeconds
+            : (resolvedTrack.durationSeconds || t.durationSeconds || 0);
+          const mins = Math.floor(finalSec / 60);
+          const secs = Math.round(finalSec % 60);
+          const finalDurStr = finalSec > 0 ? `${mins}:${secs < 10 ? '0' : ''}${secs}` : (t.duration || '0:00');
           return {
             ...t,
             originalId: t.originalId || t.id,
@@ -191,9 +199,9 @@ export function updateTrackInPlaylists(resolvedTrack) {
             thumbnail: resolvedTrack.thumbnail || t.thumbnail,
             hasCustomArtwork: true,
             studioResolvedV3: true,
-            durationSeconds: (t.durationSeconds && t.durationSeconds <= 420)
-              ? t.durationSeconds
-              : (resolvedTrack.durationSeconds || t.durationSeconds)
+            studioResolvedV4: true,
+            duration: finalDurStr,
+            durationSeconds: finalSec
           };
         }
         return t;

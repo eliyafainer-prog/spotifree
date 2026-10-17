@@ -343,7 +343,7 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
 }
 
 // Persistent resolved tracks cache in localStorage for 0ms repeat playback
-const RESOLVED_CACHE_KEY = 'spotifree_resolved_v3';
+const RESOLVED_CACHE_KEY = 'spotifree_resolved_v4';
 let persistedResolveCache = {};
 try {
   const stored = localStorage.getItem(RESOLVED_CACHE_KEY);
@@ -379,12 +379,12 @@ export function getCachedTrackResolution(track) {
  * Resolve track (e.g. Spotify imported track) to streamable YouTube videoId and individual artwork
  */
 export async function resolveTrack(track, forceArtwork = false) {
-  if (!forceArtwork && track.hasCustomArtwork !== false && track.studioResolvedV3 !== false) {
+  if (!forceArtwork && track.hasCustomArtwork !== false && track.studioResolvedV4) {
     if (track.streamableId && !track.streamableId.startsWith('sp_')) {
-      return { streamableId: track.streamableId, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true };
+      return { streamableId: track.streamableId, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true, studioResolvedV4: true };
     }
     if (track.id && !track.id.startsWith('sp_')) {
-      return { streamableId: track.id, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true };
+      return { streamableId: track.id, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true, studioResolvedV4: true };
     }
   }
 
@@ -405,6 +405,7 @@ export async function resolveTrack(track, forceArtwork = false) {
   if (!res.ok) throw new Error('Failed to resolve track to streamable source');
   const data = await res.json();
   data.studioResolvedV3 = true;
+  data.studioResolvedV4 = true;
 
   if (clientResolveCache.size > 500) {
     const oldest = clientResolveCache.keys().next().value;

@@ -226,7 +226,7 @@ export default function App() {
 
     const isAlbumPlaylist = activePl.type?.toLowerCase() === 'album';
     const unverified = activePl.tracks.filter(
-      t => t.id?.startsWith('sp_') || !t.thumbnail || (!isAlbumPlaylist && t.hasCustomArtwork === false) || (!isAlbumPlaylist && t.thumbnail === activePl.cover && !t.hasCustomArtwork)
+      t => t.id?.startsWith('sp_') || !t.studioResolvedV4 || !t.thumbnail || (!isAlbumPlaylist && t.hasCustomArtwork === false) || (!isAlbumPlaylist && t.thumbnail === activePl.cover && !t.hasCustomArtwork)
     );
 
     if (unverified.length > 0) {
@@ -248,8 +248,12 @@ export default function App() {
                     streamableId: res.streamableId,
                     id: res.streamableId,
                     hasCustomArtwork: true,
+                    studioResolvedV3: true,
+                    studioResolvedV4: true,
                     thumbnail: res.thumbnail || t.thumbnail,
-                    durationSeconds: res.durationSeconds || t.durationSeconds
+                    durationSeconds: (t.durationSeconds && t.durationSeconds >= 35 && t.durationSeconds <= 420)
+                      ? t.durationSeconds
+                      : (res.durationSeconds || t.durationSeconds)
                   });
                 }
               } catch (e) {}
