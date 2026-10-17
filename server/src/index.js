@@ -101,5 +101,7 @@ const { initTunnelSupervisor } = require('./services/tunnelSupervisor');
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎵 SpotiFree Unified Server running on http://localhost:${PORT}`);
   console.log(`🌐 Available on your local network on port ${PORT}`);
-  initTunnelSupervisor();
+  if (process.env.ENABLE_LOCAL_TUNNEL === 'true') {
+    initTunnelSupervisor();
+  }
 });

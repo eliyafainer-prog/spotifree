@@ -64,10 +64,6 @@ export async function discoverActiveServer(force = false) {
         const res = await fetch(`${srv}/health`, { signal: controller.signal });
         clearTimeout(tid);
         if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          if (data && data.activeTunnel) {
-            return data.activeTunnel;
-          }
           return srv;
         }
       } catch (e) {
@@ -286,64 +282,34 @@ export async function fetchDirectStreamUrl(track) {
   if (!vid || vid.startsWith('sp_')) return null;
 
   try {
-    const res = await fetchWithFailover(`/api/stream/${encodeURIComponent(vid)}`);
+    const fallbackQuery = encodeURIComponent(`${track.artist || ''} - ${track.title || ''}`.replace(/^-\s*|\s*-$/g, '').trim());
+    const dur = Math.round(Number(track.durationSeconds) || 0);
+    const title = encodeURIComponent(track.title || '');
+    const artist = encodeURIComponent(track.artist || '');
+    const album = encodeURIComponent(track.album || '');
+    const res = await fetchWithFailover(`/api/stream/${encodeURIComponent(vid)}?q=${fallbackQuery}&dur=${dur}&title=${title}&artist=${artist}&album=${album}`);
     if (res && res.ok) {
       const data = await res.json();
       if (data.streamUrl) return data.streamUrl;
     }
-  } catch (e) {
-    console.warn('Server fetchDirectStreamUrl failed, falling back to client-side Piped API:', e.message);
-  }
-
-  // Client-side Fallback using Piped API (uses residential IP, bypasses server IP blocks)
-  const PIPED_INSTANCES = [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.tokhmi.xyz',
-    'https://pipedapi.smnz.de'
-  ];
-  
-  try {
-    const promises = PIPED_INSTANCES.map(inst => {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 2000); // 2 second max wait per instance
-      
-      return fetch(`${inst}/streams/${vid}`, { signal: controller.signal })
-        .then(async res => {
-          clearTimeout(id);
-          if (!res.ok) throw new Error(`Piped ${res.status}`);
-          const data = await res.json();
-          const audioStreams = data.audioStreams;
-          if (audioStreams && audioStreams.length > 0) {
-            const m4a = audioStreams.find(s => s.format === 'M4A' || (s.mimeType && s.mimeType.includes('mp4')));
-            if (m4a && m4a.url) return m4a.url;
-            return audioStreams[0].url;
-          }
-          throw new Error('No audio found on piped');
-        })
-        .catch(err => {
-          clearTimeout(id);
-          throw err;
-        });
-    });
-
-    const directUrl = await Promise.any(promises);
-    if (directUrl) return directUrl;
-  } catch (err) {
-    console.warn('All client-side Piped instances failed');
-  }
+  } catch (e) {}
 
   return null;
 }
 
 /**
- * Generate playable audio URL with fallback server support
+ * Generate playable audio URL with full studio track metadata
  */
 export function getPlayableAudioUrl(track, serverOverride = null) {
   const active = getActiveServerUrl();
   const base = serverOverride !== null ? serverOverride : (active !== null && active !== undefined ? active : DEFAULT_SERVERS.cloud);
   const fallbackQuery = encodeURIComponent(`${track.artist || ''} - ${track.title || ''}`.replace(/^-\s*|\s*-$/g, '').trim());
   const streamableId = encodeURIComponent(track.streamableId || track.id || 'query');
-  return `${base}/api/stream/pipe/${streamableId}?q=${fallbackQuery}`;
+  const dur = Math.round(Number(track.durationSeconds) || 0);
+  const title = encodeURIComponent(track.title || '');
+  const artist = encodeURIComponent(track.artist || '');
+  const album = encodeURIComponent(track.album || '');
+  return `${base}/api/stream/pipe/${streamableId}?q=${fallbackQuery}&dur=${dur}&title=${title}&artist=${artist}&album=${album}`;
 }
 
 /**
@@ -366,7 +332,7 @@ export async function prefetchNextTracks(tracks) {
  * Download track audio as a Blob for offline playback
  */
 export async function downloadTrackAudioBlob(track, onProgress = null) {
-  const audioUrl = getPlayableAudioUrl(track);
+  const audioUrl = `${getPlayableAudioUrl(track)}&dl=1`;
   const response = await fetch(audioUrl);
   if (!response.ok) {
     throw new Error('הורדת קובץ השמע נכשלה מהשרת.');
@@ -377,7 +343,7 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
 }
 
 // Persistent resolved tracks cache in localStorage for 0ms repeat playback
-const RESOLVED_CACHE_KEY = 'spotifree_resolved_v2';
+const RESOLVED_CACHE_KEY = 'spotifree_resolved_v3';
 let persistedResolveCache = {};
 try {
   const stored = localStorage.getItem(RESOLVED_CACHE_KEY);
@@ -413,12 +379,12 @@ export function getCachedTrackResolution(track) {
  * Resolve track (e.g. Spotify imported track) to streamable YouTube videoId and individual artwork
  */
 export async function resolveTrack(track, forceArtwork = false) {
-  if (!forceArtwork && track.hasCustomArtwork !== false) {
+  if (!forceArtwork && track.hasCustomArtwork !== false && track.studioResolvedV3 !== false) {
     if (track.streamableId && !track.streamableId.startsWith('sp_')) {
-      return { streamableId: track.streamableId, thumbnail: track.thumbnail, hasCustomArtwork: true };
+      return { streamableId: track.streamableId, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true };
     }
     if (track.id && !track.id.startsWith('sp_')) {
-      return { streamableId: track.id, thumbnail: track.thumbnail, hasCustomArtwork: true };
+      return { streamableId: track.id, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true };
     }
   }
 
@@ -438,6 +404,7 @@ export async function resolveTrack(track, forceArtwork = false) {
   });
   if (!res.ok) throw new Error('Failed to resolve track to streamable source');
   const data = await res.json();
+  data.studioResolvedV3 = true;
 
   if (clientResolveCache.size > 500) {
     const oldest = clientResolveCache.keys().next().value;

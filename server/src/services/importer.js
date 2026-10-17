@@ -227,96 +227,121 @@ async function universalImport(inputUrl) {
 }
 
 /**
- * Score how well a YouTube candidate matches the original Spotify track
- * Rewards: matching duration, official channel / topic, official audio, artist match.
- * Penalizes: live stage recordings, audience videos, fan covers, parodies, extended bootlegs.
+ * Score how well a YouTube candidate matches the original Spotify track.
+ * Enforces strict Spotify studio duration, official - Topic / verified artist channels,
+ * and rejects live stage clips (e.g. Festigal stage performances), medleys, covers, and remixes.
  */
 function scoreCandidate(cand, track) {
   let score = 0;
-  const candTitle = (cand.title || cand.originalTitle || '').toLowerCase();
-  const candAuthor = (cand.artist || cand.author?.name || '').toLowerCase();
+  const candTitle = (cand.originalTitle || cand.title || '').toLowerCase();
+  const candCleanTitle = (cand.title || '').toLowerCase();
+  const candAuthor = (cand.rawAuthor || cand.artist || cand.author?.name || '').toLowerCase();
   const targetTitle = (track.title || track.originalTitle || '').toLowerCase();
   const targetArtist = (track.artist || '').toLowerCase();
   const targetAlbum = (track.album || '').toLowerCase();
   const candSec = cand.durationSeconds || cand.seconds || 0;
   const targetSec = track.durationSeconds || 0;
+  const isTopic = Boolean(cand.isTopic || candAuthor.includes('- topic') || candAuthor.endsWith('topic'));
 
-  // 1. Duration matching (Extremely important for studio vs live/stage versions)
-  if (targetSec > 0 && candSec > 0) {
-    const diff = Math.abs(candSec - targetSec);
-    if (diff <= 3) score += 50;
-    else if (diff <= 7) score += 35;
-    else if (diff <= 15) score += 20;
-    else if (diff <= 30) score += 5;
-    else if (diff <= 60) score -= 30;
-    else if (diff <= 120) score -= 60;
-    else score -= 90; // Over 2 minutes difference is almost certainly a live concert or full show
-  }
-
-  // 2. Penalize Live / Stage / Crowd / Bootlegs (unless the track itself requested live)
-  const badWords = [
-    'מהבמה', 'במה', 'מהקהל', 'קהל', 'הופעה חיה', 'הופעה', 'לייב', 'live', 'concert',
-    'חזרות', 'מאחורי הקלעים', 'ריאקשן', 'reaction', 'קאבר', 'cover', 'קריוקי', 'karaoke',
-    'פרודיה', 'parody', 'אינסטרומנטלי', 'instrumental', 'ריאיון', 'ראיון'
-  ];
-  for (const w of badWords) {
-    if (candTitle.includes(w) && !targetTitle.includes(w) && !targetAlbum.includes(w)) {
-      score -= 60;
-    }
-  }
-
-  // 3. Official / Studio rewards
-  const goodWords = [
-    'official audio', 'אודיו רשמי', 'שיר רשמי', 'קליפ רשמי', 'official video',
-    'official music video', 'topic', 'vevo', 'הערוץ הרשמי', 'audio', 'אודיו'
-  ];
-  for (const w of goodWords) {
-    if (candTitle.includes(w) || candAuthor.includes(w)) {
-      score += 30;
-      break;
-    }
-  }
-
-  // 4. Topic channel reward (YouTube Music auto-generated official releases)
-  if (candAuthor.includes('topic')) {
-    score += 40;
-  }
-
-  // 5. Artist matching
-  if (targetArtist) {
-    const artistParts = targetArtist.split(/[,&]+/).map(a => a.trim().toLowerCase()).filter(Boolean);
-    for (const a of artistParts) {
-      if (a.length > 2 && (candAuthor.includes(a) || candTitle.includes(a))) {
-        score += 25;
-        break;
-      }
-    }
-  }
-
-  // 6. Title word matching (MANDATORY: must actually be the song requested!)
+  // 1. Title word matching (MANDATORY: must actually be the requested song!)
   const titleWords = targetTitle
-    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
     .filter(w => w.length > 1);
   let matchedWords = 0;
   for (const w of titleWords) {
-    if (candTitle.includes(w)) matchedWords++;
+    if (candTitle.includes(w) || candCleanTitle.includes(w)) matchedWords++;
   }
   const matchRatio = titleWords.length > 0 ? (matchedWords / titleWords.length) : 1;
   if (matchRatio < 0.5) {
-    return -999; // Disqualify completely wrong songs
+    return -999; // Disqualify wrong songs immediately
   }
-  score += Math.round(matchRatio * 45);
+  score += Math.round(matchRatio * 55);
 
-  // 7. Album matching (e.g. Festigal year / name)
-  if (targetAlbum && targetAlbum.length > 2) {
-    const albumWords = targetAlbum.replace(/[^\p{L}\p{N}\s]/gu, '').split(/\s+/).filter(w => w.length > 2);
-    for (const aw of albumWords) {
-      if (candTitle.includes(aw)) {
-        score += 15;
+  // 2. Duration matching against Spotify studio master (Crucial for studio vs stage/live/extended versions!)
+  if (targetSec > 0 && candSec > 0) {
+    const diff = Math.abs(candSec - targetSec);
+    if (diff <= 2) score += 95;       // Exact Spotify studio master length!
+    else if (diff <= 5) score += 75;  // Studio release within 5s
+    else if (diff <= 10) score += 45; // Close match
+    else if (diff <= 20) score += 15;
+    else if (diff <= 35) score -= 45;
+    else if (diff <= 55) score -= 110;
+    else score -= 220; // >55s difference = stage medley, full show, or short teaser
+  }
+
+  // 3. Strictly penalize Live / Stage / Festigal Stage Number / Dance Tutorial / Cover / Remix
+  const stageAndLiveWords = [
+    'מתוך המופע', 'מהמופע', 'במופע', 'המופע המלא', 'קטע מתוך', 'נאמבר',
+    'מהבמה', 'על הבמה', 'במה', 'מהקהל', 'קהל', 'הופעה חיה', 'בהופעה', 'הופעה',
+    'לייב', 'live', 'concert', 'חי באולפן', 'באולפן', 'חזרות', 'מאחורי הקלעים', 'ריאקשן', 'reaction',
+    'איך לרקוד', 'הדרכת ריקוד', 'כוריאוגרפיה', 'ילדי הפסטיגל', 'אודישן', 'מחרוזת',
+    'קאבר', 'cover', 'קריוקי', 'karaoke', 'פרודיה', 'parody',
+    'אינסטרומנטלי', 'instrumental', 'ריאיון', 'ראיון',
+    'רמיקס', 'רימיקס', 'remix', 'slowed', 'sped up', 'nightcore', '8d'
+  ];
+  for (const w of stageAndLiveWords) {
+    if (candTitle.includes(w) && !targetTitle.includes(w)) {
+      score -= 150;
+    }
+  }
+
+  // 4. YouTube Music "- Topic" channel reward (Exact Spotify distributor studio master)
+  if (isTopic) {
+    score += 85;
+  }
+
+  // 5. Verified / Official Channel & Studio Audio rewards
+  if (cand.isVerified) {
+    score += 35;
+  }
+  const officialIndicators = [
+    'official audio', 'אודיו רשמי', 'שיר רשמי', 'הערוץ הרשמי',
+    'vevo', 'official', 'רשמי', 'אודיו', 'audio'
+  ];
+  for (const w of officialIndicators) {
+    if (candTitle.includes(w) || candAuthor.includes(w)) {
+      score += 35;
+      break;
+    }
+  }
+
+  // 6. Artist & Official Page verification (Ensure it comes from the same singer/official page)
+  const isFestigalTrack = targetArtist.includes('פסטיגל') || targetAlbum.includes('פסטיגל') || targetTitle.includes('פסטיגל');
+  let artistMatched = false;
+
+  if (targetArtist) {
+    const artistParts = targetArtist
+      .split(/[,&•/]+/)
+      .map(a => a.trim().toLowerCase())
+      .filter(a => a.length > 1);
+
+    for (const a of artistParts) {
+      if (candAuthor.includes(a)) {
+        score += 55; // Uploaded by the artist's own channel / Topic page!
+        artistMatched = true;
+        break;
+      } else if (candTitle.includes(a)) {
+        score += 30;
+        artistMatched = true;
         break;
       }
     }
+  }
+
+  if (isFestigalTrack) {
+    if (candAuthor.includes('פסטיגל') || candAuthor.includes('festigal')) {
+      score += 65; // Official Festigal channel!
+      artistMatched = true;
+    } else if (candTitle.includes('פסטיגל') || candTitle.includes('festigal')) {
+      score += 25;
+      artistMatched = true;
+    }
+  }
+
+  // Penalize uploads from random unrelated channels where neither artist nor Topic nor Festigal matches
+  if (!artistMatched && !isTopic) {
+    score -= 90;
   }
 
   return score;
@@ -338,26 +363,33 @@ async function resolveTrackToStreamableId(track) {
     };
   }
 
-  const cacheKey = `${track.artist || ''}:::${track.title || ''}`.trim().toLowerCase();
+  const cacheKey = `${track.artist || ''}:::${track.title || ''}:::${track.durationSeconds || 0}`.trim().toLowerCase();
   if (resolveMemCache.has(cacheKey)) {
     return resolveMemCache.get(cacheKey);
   }
 
-  const query = track.query || `${track.artist} - ${track.title}`.trim();
+  const isFestigal = (track.album || '').includes('פסטיגל') && !(track.artist || '').includes('פסטיגל') && !(track.title || '').includes('פסטיגל');
+  const baseQuery = isFestigal
+    ? `${track.artist} - ${track.title} פסטיגל`.trim()
+    : (track.query || `${track.artist} - ${track.title}`.trim());
+
+  const hasHebrew = /[\u0590-\u05FF]/.test(baseQuery);
+  const studioQuery = hasHebrew ? `${baseQuery} אודיו` : `${baseQuery} official audio`;
+
   const needsIndividualCover = !track.hasCustomArtwork || !track.thumbnail || track.thumbnail.includes('default') || track.thumbnail.includes('spotifree');
 
   // 1. Fetch individual studio cover in parallel from Deezer & iTunes (non-blocking, fast 1400ms timeout)
   const coverPromise = !needsIndividualCover
     ? Promise.resolve(track.thumbnail)
     : Promise.any([
-        axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`, { timeout: 1400 })
+        axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(baseQuery)}`, { timeout: 1400 })
           .then(dRes => {
             const c = dRes.data?.data?.[0]?.album?.cover_big || dRes.data?.data?.[0]?.album?.cover_medium;
             if (c) return c;
             throw new Error('No Deezer cover');
           }),
         axios.get('https://itunes.apple.com/search', {
-          params: { term: query, entity: 'song', limit: 1 },
+          params: { term: baseQuery, entity: 'song', limit: 1 },
           timeout: 1400
         }).then(iRes => {
           const art = iRes.data?.results?.[0]?.artworkUrl100;
@@ -366,13 +398,25 @@ async function resolveTrackToStreamableId(track) {
         })
       ]).catch(() => null);
 
-  // 2. High-accuracy single search (with instant fallback if empty)
+  // 2. High-accuracy parallel search: search both base query AND explicit studio/audio query simultaneously
   const searchPromise = (async () => {
-    let results = await searchTracks(query, 12);
-    if (!results || results.length === 0) {
-      results = await searchTracks(`${track.title} ${track.artist}`.trim(), 10);
+    const [res1, res2] = await Promise.all([
+      searchTracks(baseQuery, 12).catch(() => []),
+      searchTracks(studioQuery, 8).catch(() => [])
+    ]);
+    const combined = [...(res2 || []), ...(res1 || [])];
+    const seen = new Set();
+    const deduped = [];
+    for (const item of combined) {
+      if (item && item.id && !seen.has(item.id)) {
+        seen.add(item.id);
+        deduped.push(item);
+      }
     }
-    return results || [];
+    if (deduped.length === 0) {
+      return (await searchTracks(`${track.title} ${track.artist}`.trim(), 10).catch(() => [])) || [];
+    }
+    return deduped;
   })();
 
   const [albumCover, allCandidates] = await Promise.all([coverPromise, searchPromise]);
@@ -395,7 +439,7 @@ async function resolveTrackToStreamableId(track) {
     streamableId: resolvedId,
     thumbnail: albumCover || ytThumb || track.thumbnail || '',
     hasCustomArtwork: true,
-    durationSeconds: topMatch.durationSeconds || track.durationSeconds || 0
+    durationSeconds: track.durationSeconds || topMatch.durationSeconds || 0
   };
 
   if (resolveMemCache.size >= MAX_RESOLVE_CACHE) {

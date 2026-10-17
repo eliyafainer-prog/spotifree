@@ -2,6 +2,59 @@ const LIKED_SONGS_KEY = 'spotifree_liked_songs';
 const PLAYLISTS_KEY = 'spotifree_playlists';
 const RECENT_KEY = 'spotifree_recent_tracks';
 const PLAYBACK_STATE_KEY = 'spotifree_last_playback';
+const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v3';
+
+// One-time migration: clear old non-studio streamableId on Spotify-imported tracks while keeping their cover artwork intact
+try {
+  if (typeof localStorage !== 'undefined' && localStorage.getItem(STUDIO_MIGRATION_KEY) !== '1') {
+    const cleanTrackList = (list) => {
+      if (!Array.isArray(list)) return list;
+      return list.map(t => {
+        if (!t || typeof t !== 'object') return t;
+        const origId = String(t.originalId || t.id || '');
+        if (origId.startsWith('sp_') && !t.studioResolvedV3) {
+          return {
+            ...t,
+            originalId: origId,
+            id: origId,
+            streamableId: null,
+            durationSeconds: (t.durationSeconds && t.durationSeconds <= 420) ? t.durationSeconds : 0
+          };
+        }
+        return t;
+      });
+    };
+
+    const rawPlaylists = localStorage.getItem(PLAYLISTS_KEY);
+    if (rawPlaylists) {
+      const parsed = JSON.parse(rawPlaylists);
+      if (Array.isArray(parsed)) {
+        const migrated = parsed.map(p => (p && Array.isArray(p.tracks)) ? { ...p, tracks: cleanTrackList(p.tracks) } : p);
+        localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(migrated));
+      }
+    }
+
+    const rawLiked = localStorage.getItem(LIKED_SONGS_KEY);
+    if (rawLiked) {
+      const parsed = JSON.parse(rawLiked);
+      if (Array.isArray(parsed)) {
+        localStorage.setItem(LIKED_SONGS_KEY, JSON.stringify(cleanTrackList(parsed)));
+      }
+    }
+
+    const rawPlayback = localStorage.getItem(PLAYBACK_STATE_KEY);
+    if (rawPlayback) {
+      const parsed = JSON.parse(rawPlayback);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.currentTrack) parsed.currentTrack = cleanTrackList([parsed.currentTrack])[0];
+        if (Array.isArray(parsed.queue)) parsed.queue = cleanTrackList(parsed.queue);
+        localStorage.setItem(PLAYBACK_STATE_KEY, JSON.stringify(parsed));
+      }
+    }
+
+    localStorage.setItem(STUDIO_MIGRATION_KEY, '1');
+  }
+} catch (e) {}
 
 export function isSameTrack(a, b) {
   if (!a || !b) return false;
@@ -137,7 +190,10 @@ export function updateTrackInPlaylists(resolvedTrack) {
             id: resolvedTrack.streamableId || resolvedTrack.id,
             thumbnail: resolvedTrack.thumbnail || t.thumbnail,
             hasCustomArtwork: true,
-            durationSeconds: resolvedTrack.durationSeconds || t.durationSeconds
+            studioResolvedV3: true,
+            durationSeconds: (t.durationSeconds && t.durationSeconds <= 420)
+              ? t.durationSeconds
+              : (resolvedTrack.durationSeconds || t.durationSeconds)
           };
         }
         return t;

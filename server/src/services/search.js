@@ -77,7 +77,9 @@ async function searchInnerTube(query, limit = 20) {
           if (!v.videoId) continue;
 
           const rawTitle = v.title?.runs?.[0]?.text || '';
-          const artistName = v.ownerText?.runs?.[0]?.text || 'Unknown Artist';
+          const rawAuthor = v.ownerText?.runs?.[0]?.text || 'Unknown Artist';
+          const isTopic = /\s*-\s*Topic$/i.test(rawAuthor);
+          const isVerified = Boolean(v.ownerBadges && v.ownerBadges.length > 0);
           const durStr = v.lengthText?.simpleText || '0:00';
           const parts = durStr.split(':').map(Number);
           let sec = 0;
@@ -94,7 +96,10 @@ async function searchInnerTube(query, limit = 20) {
             id: v.videoId,
             title: cleanTitle(rawTitle) || rawTitle,
             originalTitle: rawTitle,
-            artist: artistName.replace(/\s*-\s*Topic$/i, ''),
+            artist: rawAuthor.replace(/\s*-\s*Topic$/i, ''),
+            rawAuthor: rawAuthor,
+            isTopic: isTopic,
+            isVerified: isVerified,
             duration: durStr,
             durationSeconds: sec,
             thumbnail: thumb,
@@ -130,7 +135,9 @@ async function searchYts(query, limit = 20) {
 
     return filtered.slice(0, limit).map(v => {
       const thumbnail = v.image || v.thumbnail || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
-      const artistName = typeof v.author === 'string' ? v.author : (v.author?.name ? String(v.author.name).replace(/\s*-\s*Topic$/i, '') : 'Unknown Artist');
+      const rawAuthor = typeof v.author === 'string' ? v.author : (v.author?.name ? String(v.author.name) : 'Unknown Artist');
+      const isTopic = /\s*-\s*Topic$/i.test(rawAuthor);
+      const artistName = rawAuthor.replace(/\s*-\s*Topic$/i, '');
       const rawTitle = typeof v.title === 'string' ? v.title : (v.title?.text || String(v.title || ''));
 
       return {
@@ -138,6 +145,8 @@ async function searchYts(query, limit = 20) {
         title: cleanTitle(rawTitle) || rawTitle,
         originalTitle: rawTitle,
         artist: artistName,
+        rawAuthor: rawAuthor,
+        isTopic: isTopic,
         duration: v.timestamp || '0:00',
         durationSeconds: v.seconds || 0,
         thumbnail: thumbnail,

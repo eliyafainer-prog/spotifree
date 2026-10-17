@@ -12,12 +12,11 @@ const { setRegisteredTunnel, getRegisteredTunnel } = require('../services/tunnel
  * Health check under /api
  */
 router.get('/health', (req, res) => {
-  const tunnel = getRegisteredTunnel();
   res.json({
     status: 'ok',
     app: 'SpotiFree Server',
     version: '1.0.0',
-    activeTunnel: tunnel.url || null
+    activeTunnel: null
   });
 });
 
@@ -168,8 +167,14 @@ router.get('/debug-extract', async (req, res) => {
 router.get('/stream/:id', async (req, res) => {
   const { id } = req.params;
   const fallbackQuery = req.query.q || null;
+  const meta = {
+    durationSeconds: Number(req.query.dur) || 0,
+    title: req.query.title || '',
+    artist: req.query.artist || '',
+    album: req.query.album || ''
+  };
   try {
-    const streamUrl = await getAudioStreamUrl(id, fallbackQuery);
+    const streamUrl = await getAudioStreamUrl(id, fallbackQuery, true, meta);
     res.json({ streamUrl, proxyUrl: `/api/stream/pipe/${id}${fallbackQuery ? `?q=${encodeURIComponent(fallbackQuery)}` : ''}` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -182,7 +187,13 @@ router.get('/stream/:id', async (req, res) => {
 router.get('/stream/pipe/:id', (req, res) => {
   const { id } = req.params;
   const fallbackQuery = req.query.q || null;
-  pipeStream(id, req, res, fallbackQuery);
+  const meta = {
+    durationSeconds: Number(req.query.dur) || 0,
+    title: req.query.title || '',
+    artist: req.query.artist || '',
+    album: req.query.album || ''
+  };
+  pipeStream(id, req, res, fallbackQuery, meta);
 });
 
 /**
