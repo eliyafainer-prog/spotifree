@@ -141,7 +141,12 @@ export function useAudioPlayer() {
 
     const handleDurationChange = () => {
       if (activeEngineRef.current === 'audio' && audio.duration && isFinite(audio.duration) && audio.duration > 0) {
-        setDuration(audio.duration);
+        const knownDur = currentTrackRef.current?.durationSeconds || 0;
+        if (audio.duration < 35 && knownDur > 40) {
+          setDuration(knownDur);
+        } else {
+          setDuration(audio.duration);
+        }
       }
     };
 
@@ -187,19 +192,22 @@ export function useAudioPlayer() {
       console.warn('Native HTML5 Audio error:', err ? `code=${err.code} msg=${err.message}` : 'unknown error');
       const activeSession = playSessionIdRef.current;
 
-      if (currentTrackRef.current && !userPausedRef.current && retryCountRef.current < 2) {
+      if (currentTrackRef.current && !userPausedRef.current && retryCountRef.current < 3) {
         retryCountRef.current++;
         const attempt = retryCountRef.current;
-        if (attempt === 1) {
-          // Retry 1: Re-request server stream proxy on native <audio> (preserves 100% background playback!)
-          const retryUrl = `${getPlayableAudioUrl(currentTrackRef.current)}&retry=${Date.now()}`;
-          audio.src = retryUrl;
-          audio.load();
-          audio.play().catch(() => {});
+        if (attempt <= 2) {
+          // Retry 1 & 2: Re-request server stream proxy on native <audio> (preserves 100% background playback & zero ads!)
+          setTimeout(() => {
+            if (playSessionIdRef.current !== activeSession || userPausedRef.current || !audioRef.current) return;
+            const retryUrl = `${getPlayableAudioUrl(currentTrackRef.current)}&retry=${Date.now()}`;
+            audioRef.current.src = retryUrl;
+            audioRef.current.load();
+            audioRef.current.play().catch(() => {});
+          }, attempt * 350);
           return;
         }
-        if (attempt === 2) {
-          // Retry 2: Try direct stream URL on native <audio> to preserve background playback
+        if (attempt === 3) {
+          // Retry 3: Try direct stream URL on native <audio> to preserve background playback
           fetchDirectStreamUrl(currentTrackRef.current).then(directUrl => {
             if (playSessionIdRef.current !== activeSession || userPausedRef.current) return;
             if (directUrl && audioRef.current && activeEngineRef.current === 'audio') {
@@ -207,14 +215,11 @@ export function useAudioPlayer() {
               audioRef.current.load();
               audioRef.current.play().catch(() => {});
             } else {
-              throw new Error('No direct URL');
+              setIsLoading(false);
             }
           }).catch(() => {
             if (playSessionIdRef.current !== activeSession || userPausedRef.current) return;
             setIsLoading(false);
-            if (document.visibilityState === 'visible') {
-              playViaYouTubePlayerRef.current?.(currentTrackRef.current);
-            }
           });
           return;
         }

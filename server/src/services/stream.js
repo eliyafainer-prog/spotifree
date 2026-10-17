@@ -107,9 +107,11 @@ async function refreshSoundCloudClientId() {
  * Score a SoundCloud track candidate for studio accuracy, duration proximity, and artist match
  */
 function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
-  if (!item || item.snipped) return -999;
+  if (!item || item.snipped || item.policy === 'SNIP' || item.policy === 'BLOCK') return -999;
   const dur = Math.round((item.duration || 0) / 1000);
-  if (dur <= 40 || dur > 660) return -999;
+  const fullDur = Math.round((item.full_duration || item.duration || 0) / 1000);
+  if (dur <= 45 || dur > 660) return -999;
+  if (fullDur > dur + 5) return -999; // Reject truncated / Go+ preview tracks!
 
   const transcodings = item.media?.transcodings || [];
   const validTranscodings = transcodings.filter(t => t && t.url && !t.url.includes('preview') && !t.snipped);
@@ -118,6 +120,15 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
   const title = String(item.title || '').toLowerCase();
   const username = String(item.user?.username || '').toLowerCase();
   const combined = `${title} ${username}`;
+
+  // Disqualify podcasts, radio promos, jingles, or ad tracks
+  const adOrPodcastWords = [
+    'podcast', 'פודקאסט', 'פרק ', 'שידור', 'פרסומת', 'חסות', 'ג\'ינגל', 'ג׳ינגל',
+    'jingle', 'commercial', 'promo', 'פרומו', 'teaser', 'טיזר', 'trailer', 'טריילר'
+  ];
+  for (const aw of adOrPodcastWords) {
+    if (combined.includes(aw)) return -999;
+  }
 
   const targetDur = Number(meta?.durationSeconds) || 0;
   const rawTargetTitle = String(meta?.title || '').toLowerCase().trim();
@@ -128,20 +139,18 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
 
   // 1. Core title word match
   const titleCheck = coreTitle || rawTargetTitle;
-  if (titleCheck) {
-    const tWords = titleCheck.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
-    if (tWords.length > 0) {
-      const matched = tWords.filter(w => title.includes(w)).length;
-      const ratio = matched / tWords.length;
-      if (ratio < 0.5) return -999;
-      score += Math.round(ratio * 85);
-    }
+  const tWords = titleCheck ? titleCheck.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1) : [];
+  if (tWords.length > 0) {
+    const matched = tWords.filter(w => title.includes(w)).length;
+    const ratio = matched / tWords.length;
+    if (ratio < 0.6) return -999;
+    score += Math.round(ratio * 85);
   } else if (queryLower) {
     const qWords = queryLower.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
     if (qWords.length > 0) {
       const matched = qWords.filter(w => combined.includes(w)).length;
       const ratio = matched / qWords.length;
-      if (ratio < 0.45) return -999;
+      if (ratio < 0.5) return -999;
       score += Math.round(ratio * 70);
     }
   }
@@ -159,11 +168,11 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
     score += 30;
   }
 
-  // 3. Penalize non-studio versions (Remix / Live / Stage / Cover / Slowed / Karaoke)
+  // 3. Penalize non-studio versions (Remix / Live / Stage / Cover / Slowed / Karaoke / Mashup)
   const badWords = [
     'remix', 'rework', 'bootleg', 'edit', 'remake', 'cover', 'slowed',
-    'reverb', 'sped up', 'nightcore', 'live', 'instrumental', 'karaoke',
-    'רמיקס', 'רימיקס', 'קאבר', 'לייב', 'הופעה', 'בהופעה', 'מהבמה',
+    'reverb', 'sped up', 'nightcore', 'live', 'instrumental', 'karaoke', 'mashup', 'mash up',
+    'רמיקס', 'רימיקס', 'קאבר', 'לייב', 'הופעה', 'בהופעה', 'מהבמה', 'מאשאפ',
     'מתוך המופע', 'מהמופע', 'במופע', 'חי באולפן', 'באולפן', 'קריוקי', 'מחרוזת'
   ];
   for (const bw of badWords) {
@@ -172,7 +181,7 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
     }
   }
 
-  // 4. Artist & Uploader match
+  // 4. Artist & Uploader verification
   if (targetArtist) {
     const aWords = targetArtist
       .replace(/[,&•/]+/g, ' ')
@@ -181,10 +190,17 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
     if (aWords.length > 0) {
       if (aWords.some(w => username.includes(w))) {
         score += 65; // Official artist / uploader match!
-      } else if (aWords.some(w => title.includes(w))) {
+      } else if (aWords.some(w => title.includes(w)) || (combined.includes('פסטיגל') && (targetArtist.includes('פסטיגל') || String(meta?.album || '').includes('פסטיגל')))) {
         score += 45;
       } else {
-        score -= 40;
+        // Artist not mentioned in username or title: only allow if candidate title has no unrelated artist/song words!
+        const candTitleClean = title.replace(/\.(mp3|m4a|wav)$/i, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
+        const candWords = candTitleClean.split(/\s+/).filter(w => w.length > 1 && w !== 'פסטיגל');
+        const extraWords = candWords.filter(cw => !tWords.some(tw => cw.includes(tw) || tw.includes(cw)));
+        if (extraWords.length > 0) {
+          return -999; // Rejects songs by other artists with a shared title word (e.g. "דנה ברגר לומדת לעוף")
+        }
+        score -= 25;
       }
     }
   }
@@ -269,6 +285,7 @@ async function extractSoundCloudDirect(rawQuery, meta = {}) {
     .replace(/\s*[\(\[][^)\]]*[\)\]]/g, '')
     .split(' - ')[0]
     .trim();
+  const isFestigal = String(meta?.album || '').includes('פסטיגל') || String(meta?.artist || '').includes('פסטיגל');
 
   let primaryQuery = rawQuery || '';
   if (primaryArtist && coreTitle && !coreTitle.toLowerCase().includes(primaryArtist.toLowerCase())) {
@@ -287,15 +304,16 @@ async function extractSoundCloudDirect(rawQuery, meta = {}) {
     .filter(x => x.score > -500)
     .sort((a, b) => b.score - a.score);
 
-  // If artist+title search returned no strong studio match (e.g. uploader only wrote the song title), search coreTitle!
-  if ((!scored.length || scored[0].score < 175) && coreTitle && coreTitle.toLowerCase() !== cleanPrimary.toLowerCase()) {
-    const cleanTitleOnly = coreTitle.replace(/[^\p{L}\p{N}\s\-']/gu, ' ').replace(/\s+/g, ' ').trim();
-    if (cleanTitleOnly) {
-      const items2 = await searchSoundCloudApi(cleanTitleOnly, 10).catch(() => []);
+  // Secondary fallback query if artist+title had no strong studio match
+  if ((!scored.length || scored[0].score < 175) && coreTitle) {
+    const secondaryRaw = isFestigal && !coreTitle.includes('פסטיגל') ? `${coreTitle} פסטיגל` : coreTitle;
+    const cleanSecondary = secondaryRaw.replace(/[^\p{L}\p{N}\s\-']/gu, ' ').replace(/\s+/g, ' ').trim();
+    if (cleanSecondary && cleanSecondary.toLowerCase() !== cleanPrimary.toLowerCase()) {
+      const items2 = await searchSoundCloudApi(cleanSecondary, 10).catch(() => []);
       const seenIds = new Set(scored.map(x => x.item.id));
       for (const it of items2) {
         if (!seenIds.has(it.id)) {
-          const s = scoreSoundCloudCandidate(it, cleanTitleOnly.toLowerCase(), meta);
+          const s = scoreSoundCloudCandidate(it, cleanSecondary.toLowerCase(), meta);
           if (s > -500) scored.push({ item: it, score: s });
         }
       }
@@ -494,64 +512,137 @@ async function prefetchTracks(tracks) {
 }
 
 /**
+ * Patch init.mp4 mvhd, tkhd, elst, and mdhd boxes with the full track duration
+ * so HTML5 <audio> immediately knows the exact full song duration instead of 10s!
+ */
+function patchInitMp4Duration(buf, totalSec) {
+  if (!totalSec || totalSec <= 0) return buf;
+  let mvhdTs = 1000;
+  const containers = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'mvex', 'edts', 'dinf']);
+
+  function walk(start, end) {
+    let offset = start;
+    while (offset + 8 <= end) {
+      const size = buf.readUInt32BE(offset);
+      if (size < 8 || offset + size > end) break;
+      const type = buf.slice(offset + 4, offset + 8).toString('ascii');
+      if (type === 'mvhd' || type === 'mdhd') {
+        const ver = buf[offset + 8];
+        if (ver === 0 && offset + 28 <= end) {
+          const ts = buf.readUInt32BE(offset + 20);
+          if (ts > 0) {
+            if (type === 'mvhd') mvhdTs = ts;
+            buf.writeUInt32BE(Math.round(totalSec * ts), offset + 24);
+          }
+        }
+      } else if (type === 'tkhd') {
+        const ver = buf[offset + 8];
+        if (ver === 0 && offset + 32 <= end) {
+          buf.writeUInt32BE(Math.round(totalSec * mvhdTs), offset + 28);
+        }
+      } else if (type === 'elst') {
+        const ver = buf[offset + 8];
+        if (ver === 0 && offset + 20 <= end) {
+          const count = buf.readUInt32BE(offset + 12);
+          if (count >= 1) {
+            buf.writeUInt32BE(Math.round(totalSec * mvhdTs), offset + 16);
+          }
+        }
+      }
+      if (containers.has(type)) {
+        walk(offset + 8, offset + size);
+      }
+      offset += size;
+    }
+  }
+
+  try {
+    walk(0, buf.length);
+  } catch (e) {}
+  return buf;
+}
+
+/**
+ * Strip styp and sidx boxes from the beginning of .m4s segments so <audio>
+ * never mistakes a 10s segment index (sidx) for the total song duration!
+ */
+function stripStypSidx(buf) {
+  try {
+    let offset = 0;
+    while (offset + 8 <= buf.length) {
+      const size = buf.readUInt32BE(offset);
+      if (size < 8 || offset + size > buf.length) break;
+      const type = buf.slice(offset + 4, offset + 8).toString('ascii');
+      if (type === 'moof' || type === 'ftyp') {
+        return offset > 0 ? buf.slice(offset) : buf;
+      }
+      offset += size;
+    }
+  } catch (e) {}
+  return buf;
+}
+
+/**
  * Zero-process Pure Node.js HLS fMP4 / MP3 Stream Concatenator
- * Streams init.mp4 + .m4s (or .mp3) segments sequentially using ~64KB RAM without spawning ffmpeg!
+ * Streams full-length fMP4 (with patched moov duration and stripped sidx) or MP3 segments using ~200KB RAM!
  */
 async function pipeHlsInNode(m3u8Url, req, res) {
   let aborted = false;
-  let currentSegStream = null;
 
   req.on('close', () => {
     aborted = true;
-    if (currentSegStream && typeof currentSegStream.destroy === 'function') {
-      currentSegStream.destroy();
-    }
   });
 
   const m3u8Res = await axios.get(m3u8Url, { timeout: 3500, httpsAgent });
   const lines = String(m3u8Res.data || '').split('\n');
-  const segmentUrls = [];
+  let mapUrl = null;
+  const mediaUrls = [];
+  let totalDurationSec = 0;
 
   for (const line of lines) {
     const trimmed = line.trim();
+    const infMatch = trimmed.match(/#EXTINF:([0-9.]+)/);
+    if (infMatch && infMatch[1]) {
+      totalDurationSec += parseFloat(infMatch[1]) || 0;
+    }
     const mapMatch = trimmed.match(/#EXT-X-MAP:URI="([^"]+)"/);
     if (mapMatch && mapMatch[1]) {
-      segmentUrls.push(mapMatch[1]);
+      mapUrl = mapMatch[1];
     } else if (trimmed.startsWith('http')) {
-      segmentUrls.push(trimmed);
+      mediaUrls.push(trimmed);
     }
   }
 
-  if (segmentUrls.length === 0) {
+  if (mediaUrls.length === 0) {
     throw new Error('Empty HLS playlist');
   }
 
-  const isMp3 = segmentUrls[0].includes('.mp3') || m3u8Url.includes('mp3');
+  const isMp3 = !mapUrl && (mediaUrls[0].includes('.mp3') || m3u8Url.includes('mp3'));
   res.statusCode = 200;
   res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'audio/mp4');
   res.setHeader('Cache-Control', 'public, max-age=14400');
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
-  for (const segUrl of segmentUrls) {
+  // 1. If fMP4 (init.mp4 map present), fetch and patch init.mp4 with full track duration
+  if (mapUrl && !aborted && !res.writableEnded) {
+    const initRes = await axios.get(mapUrl, { responseType: 'arraybuffer', timeout: 5000, httpsAgent });
+    const patchedInit = patchInitMp4Duration(Buffer.from(initRes.data), totalDurationSec);
+    if (!aborted && !res.writableEnded) {
+      res.write(patchedInit);
+    }
+  }
+
+  // 2. Stream each media segment sequentially (stripping styp/sidx on fMP4 .m4s segments)
+  for (const segUrl of mediaUrls) {
     if (aborted || res.writableEnded) break;
-    await new Promise((resolve, reject) => {
-      axios({
-        method: 'GET',
-        url: segUrl,
-        responseType: 'stream',
-        httpsAgent,
-        timeout: 8000
-      }).then(segRes => {
-        if (aborted || res.writableEnded) {
-          segRes.data.destroy();
-          return resolve();
-        }
-        currentSegStream = segRes.data;
-        segRes.data.on('end', resolve);
-        segRes.data.on('error', reject);
-        segRes.data.pipe(res, { end: false });
-      }).catch(reject);
-    });
+    const segRes = await axios.get(segUrl, { responseType: 'arraybuffer', timeout: 8000, httpsAgent });
+    if (aborted || res.writableEnded) break;
+    const rawBuf = Buffer.from(segRes.data);
+    const cleanBuf = isMp3 ? rawBuf : stripStypSidx(rawBuf);
+    const canContinue = res.write(cleanBuf);
+    if (!canContinue && !aborted && !res.writableEnded) {
+      await new Promise(resolve => res.once('drain', resolve));
+    }
   }
 
   if (!aborted && !res.writableEnded) {
