@@ -175,8 +175,20 @@ export async function isTrackDownloaded(trackOrId) {
   return !!track;
 }
 
+const OFFLINE_ORDER_KEY = 'spotifree_offline_custom_order';
+
 /**
- * Get all downloaded offline tracks
+ * Save custom track order for Offline mode
+ */
+export function saveOfflineTracksOrder(tracks = []) {
+  try {
+    const ids = tracks.map(t => t?.id).filter(Boolean);
+    localStorage.setItem(OFFLINE_ORDER_KEY, JSON.stringify(ids));
+  } catch (e) {}
+}
+
+/**
+ * Get all downloaded offline tracks (preserving custom order if reordered by user)
  */
 export async function getAllOfflineTracks() {
   try {
@@ -187,8 +199,25 @@ export async function getAllOfflineTracks() {
       const request = store.getAll();
 
       request.onsuccess = () => {
-        const results = request.result || [];
-        resolve(results.sort((a, b) => b.downloadedAt - a.downloadedAt));
+        const results = (request.result || []).sort((a, b) => b.downloadedAt - a.downloadedAt);
+        try {
+          const rawOrder = localStorage.getItem(OFFLINE_ORDER_KEY);
+          if (rawOrder) {
+            const orderIds = JSON.parse(rawOrder);
+            if (Array.isArray(orderIds) && orderIds.length > 0) {
+              const orderMap = new Map(orderIds.map((id, idx) => [id, idx]));
+              results.sort((a, b) => {
+                const idxA = orderMap.has(a.id) ? orderMap.get(a.id) : -1;
+                const idxB = orderMap.has(b.id) ? orderMap.get(b.id) : -1;
+                if (idxA === -1 && idxB === -1) return b.downloadedAt - a.downloadedAt;
+                if (idxA === -1) return -1;
+                if (idxB === -1) return 1;
+                return idxA - idxB;
+              });
+            }
+          }
+        } catch (e) {}
+        resolve(results);
       };
       request.onerror = () => reject(request.error);
     });

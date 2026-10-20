@@ -22,7 +22,8 @@ import {
   Check,
   FolderSearch,
   Bell,
-  Users
+  Users,
+  ListPlus
 } from 'lucide-react';
 
 import { useAudioPlayer } from './hooks/useAudioPlayer';
@@ -530,6 +531,20 @@ export default function App() {
     if (playlist) {
       setSelectedPlaylistId(playlist.id);
       setCurrentView('playlist');
+    }
+  };
+
+  const handleCreatePlaylistFromOffline = (title, initialTracks = []) => {
+    const { updated, playlist } = createCustomPlaylist(
+      title,
+      'נוצר מתוך שירים שהורדו לאופליין',
+      initialTracks
+    );
+    setPlaylists(updated);
+    if (playlist) {
+      setSelectedPlaylistId(playlist.id);
+      setCurrentView('playlist');
+      showToast(`✓ הפלייליסט "${playlist.title}" נוצר ממצב אופליין (${initialTracks.length} שירים)`);
     }
   };
 
@@ -1102,26 +1117,38 @@ export default function App() {
                               ) : (
                                 <Music2 className="w-10 h-10 m-auto text-[#b3b3b3]" />
                               )}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDownloadTrack(track);
-                                }}
-                                title={isSavedOffline ? 'שמור אופליין ✓' : 'הורד להאזנה אופליין'}
-                                className={`absolute top-2 left-2 w-7 h-7 rounded-full bg-black/65 backdrop-blur-sm flex items-center justify-center transition-opacity ${
-                                  isSavedOffline || isSavingOffline
-                                    ? 'opacity-100'
-                                    : 'opacity-0 group-hover:opacity-100'
-                                }`}
-                              >
-                                {isSavingOffline ? (
-                                  <Loader2 className="w-3.5 h-3.5 text-spotify-green animate-spin" />
-                                ) : isSavedOffline ? (
-                                  <ArrowDownCircle className="w-4 h-4 fill-spotify-green text-black" />
-                                ) : (
-                                  <ArrowDownCircle className="w-4 h-4 text-white hover:text-spotify-green" />
-                                )}
-                              </button>
+                              <div className=" absolute top-2 left-2 flex items-center gap-1">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDownloadTrack(track);
+                                  }}
+                                  title={isSavedOffline ? 'שמור אופליין ✓' : 'הורד להאזנה אופליין'}
+                                  className={`w-7 h-7 rounded-full bg-black/65 backdrop-blur-sm flex items-center justify-center transition-opacity ${
+                                    isSavedOffline || isSavingOffline
+                                      ? 'opacity-100'
+                                      : 'opacity-85 sm:opacity-0 sm:group-hover:opacity-100'
+                                  }`}
+                                >
+                                  {isSavingOffline ? (
+                                    <Loader2 className="w-3.5 h-3.5 text-spotify-green animate-spin" />
+                                  ) : isSavedOffline ? (
+                                    <ArrowDownCircle className="w-4 h-4 fill-spotify-green text-black" />
+                                  ) : (
+                                    <ArrowDownCircle className="w-4 h-4 text-white hover:text-spotify-green" />
+                                  )}
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenAddToPlaylist(track);
+                                  }}
+                                  title="הוסף לפלייליסט או צור פלייליסט"
+                                  className="w-7 h-7 rounded-full bg-black/65 backdrop-blur-sm flex items-center justify-center text-white hover:text-spotify-green opacity-85 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                                >
+                                  <ListPlus className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                               <button
                                 className={`absolute bottom-2 right-2 w-11 h-11 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-xl transition-all duration-200 hover:scale-105 ${
                                   active
@@ -1195,26 +1222,38 @@ export default function App() {
                                 ) : (
                                   <Music2 className="w-10 h-10 m-auto text-[#b3b3b3]" />
                                 )}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDownloadTrack(track);
-                                  }}
-                                  title={isSavedOffline ? 'שמור אופליין ✓' : 'הורד להאזנה אופליין'}
-                                  className={`absolute top-2 left-2 w-7 h-7 rounded-full bg-black/65 backdrop-blur-sm flex items-center justify-center transition-opacity ${
-                                    isSavedOffline || isSavingOffline
-                                      ? 'opacity-100'
-                                      : 'opacity-0 group-hover:opacity-100'
-                                  }`}
-                                >
-                                  {isSavingOffline ? (
-                                    <Loader2 className="w-3.5 h-3.5 text-spotify-green animate-spin" />
-                                  ) : isSavedOffline ? (
-                                    <ArrowDownCircle className="w-4 h-4 fill-spotify-green text-black" />
-                                  ) : (
-                                    <ArrowDownCircle className="w-4 h-4 text-white hover:text-spotify-green" />
-                                  )}
-                                </button>
+                                <div className="absolute top-2 left-2 flex items-center gap-1">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDownloadTrack(track);
+                                    }}
+                                    title={isSavedOffline ? 'שמור אופליין ✓' : 'הורד להאזנה אופליין'}
+                                    className={`w-7 h-7 rounded-full bg-black/65 backdrop-blur-sm flex items-center justify-center transition-opacity ${
+                                      isSavedOffline || isSavingOffline
+                                        ? 'opacity-100'
+                                        : 'opacity-85 sm:opacity-0 sm:group-hover:opacity-100'
+                                    }`}
+                                  >
+                                    {isSavingOffline ? (
+                                      <Loader2 className="w-3.5 h-3.5 text-spotify-green animate-spin" />
+                                    ) : isSavedOffline ? (
+                                      <ArrowDownCircle className="w-4 h-4 fill-spotify-green text-black" />
+                                    ) : (
+                                      <ArrowDownCircle className="w-4 h-4 text-white hover:text-spotify-green" />
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleOpenAddToPlaylist(track);
+                                    }}
+                                    title="הוסף לפלייליסט או צור פלייליסט"
+                                    className="w-7 h-7 rounded-full bg-black/65 backdrop-blur-sm flex items-center justify-center text-white hover:text-spotify-green opacity-85 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                                  >
+                                    <ListPlus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                                 <button
                                   className={`absolute bottom-2 right-2 w-11 h-11 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-xl transition-all duration-200 hover:scale-105 ${
                                     active
@@ -1503,7 +1542,9 @@ export default function App() {
               <OfflineView
                 currentTrack={player.currentTrack}
                 isPlaying={player.isPlaying}
+                isLoading={player.isLoading}
                 onPlayTrack={handlePlayTrack}
+                onTogglePlay={player.togglePlay}
                 likedSongs={likedSongs}
                 onToggleLike={handleToggleLike}
                 onTrackDeleted={refreshDownloads}
@@ -1511,9 +1552,18 @@ export default function App() {
                 onToggleShuffle={handleToggleShuffle}
                 onPlayShuffled={handlePlayShuffled}
                 downloadedCount={downloadedTracksCount}
+                downloadedIds={downloadedIds}
                 activeDownloads={activeDownloadTracks}
                 queuedDownloadsCount={downloadQueueRef.current.length}
                 downloadProgress={downloadProgress}
+                playlists={playlists}
+                onOpenAddToPlaylist={handleOpenAddToPlaylist}
+                onCreatePlaylistFromOffline={handleCreatePlaylistFromOffline}
+                onSelectPlaylist={(id) => {
+                  setSelectedPlaylistId(id);
+                  setCurrentView('playlist');
+                }}
+                onBack={() => setCurrentView('home')}
               />
             )}
 
@@ -1555,8 +1605,8 @@ export default function App() {
               )}
             </div>
 
-            {/* Song Title & Artist on Right + Green Checkmark on Left (Exact Match to Image 1) */}
-            <div className="flex items-center justify-between gap-3">
+            {/* Song Title & Artist on Right + Offline & Playlist & Like Actions on Left */}
+            <div className="flex items-center justify-between gap-2">
               <div className="flex flex-col min-w-0 flex-1 text-right">
                 <span className="text-xl font-extrabold text-white truncate hover:underline cursor-pointer">
                   {player.currentTrack.title}
@@ -1566,19 +1616,43 @@ export default function App() {
                 </span>
               </div>
 
-              <button
-                onClick={() => handleToggleLike(player.currentTrack)}
-                className="flex-shrink-0 transition-transform active:scale-125"
-                title={isCurrentLiked ? 'הסר משירים שאהבתם' : 'הוסף לשירים שאהבתם'}
-              >
-                {isCurrentLiked ? (
-                  <span className="w-6 h-6 rounded-full bg-spotify-green text-black flex items-center justify-center shadow">
-                    <Check className="w-3.5 h-3.5 stroke-[3.5]" />
-                  </span>
-                ) : (
-                  <PlusCircle className="w-6 h-6 text-[#b3b3b3] hover:text-white" />
-                )}
-              </button>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <button
+                  onClick={() => handleDownloadTrack(player.currentTrack)}
+                  className="p-1 text-[#b3b3b3] hover:text-spotify-green transition-transform active:scale-95"
+                  title={isTrackInIdSet(player.currentTrack, downloadedIds) ? 'שמור באופליין ✓' : 'הורד לאופליין'}
+                >
+                  {isTrackInIdSet(player.currentTrack, downloadingIds) || isTrackInIdSet(player.currentTrack, queuedDownloadIds) ? (
+                    <Loader2 className="w-5 h-5 text-spotify-green animate-spin" />
+                  ) : isTrackInIdSet(player.currentTrack, downloadedIds) ? (
+                    <ArrowDownCircle className="w-5 h-5 fill-spotify-green text-black" />
+                  ) : (
+                    <ArrowDownCircle className="w-5 h-5" />
+                  )}
+                </button>
+
+                <button
+                  onClick={() => handleOpenAddToPlaylist(player.currentTrack)}
+                  className="p-1 text-[#b3b3b3] hover:text-spotify-green transition-transform active:scale-95"
+                  title="הוסף לפלייליסט"
+                >
+                  <ListPlus className="w-5 h-5" />
+                </button>
+
+                <button
+                  onClick={() => handleToggleLike(player.currentTrack)}
+                  className="transition-transform active:scale-125"
+                  title={isCurrentLiked ? 'הסר משירים שאהבתם' : 'הוסף לשירים שאהבתם'}
+                >
+                  {isCurrentLiked ? (
+                    <span className="w-6 h-6 rounded-full bg-spotify-green text-black flex items-center justify-center shadow">
+                      <Check className="w-3.5 h-3.5 stroke-[3.5]" />
+                    </span>
+                  ) : (
+                    <PlusCircle className="w-6 h-6 text-[#b3b3b3] hover:text-white" />
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* Purple Live Lyrics Preview Card ("תצוגה מקדימה של מילות השיר" — Exact Match to Image 1!) */}
@@ -1666,6 +1740,13 @@ export default function App() {
         onToggleRepeat={player.toggleRepeat}
         isLiked={isCurrentLiked}
         onToggleLike={handleToggleLike}
+        isDownloaded={isTrackInIdSet(player.currentTrack, downloadedIds)}
+        isDownloading={
+          isTrackInIdSet(player.currentTrack, downloadingIds) ||
+          isTrackInIdSet(player.currentTrack, queuedDownloadIds)
+        }
+        onDownloadTrack={handleDownloadTrack}
+        onOpenAddToPlaylist={handleOpenAddToPlaylist}
         onOpenLyrics={() => setIsLyricsOpen(true)}
         onOpenFullscreen={() => setIsFullscreenPlayerOpen(true)}
         showNowPlayingPanel={showNowPlayingPanel}
@@ -1699,6 +1780,13 @@ export default function App() {
         onToggleRepeat={player.toggleRepeat}
         isLiked={isCurrentLiked}
         onToggleLike={handleToggleLike}
+        isDownloaded={isTrackInIdSet(player.currentTrack, downloadedIds)}
+        isDownloading={
+          isTrackInIdSet(player.currentTrack, downloadingIds) ||
+          isTrackInIdSet(player.currentTrack, queuedDownloadIds)
+        }
+        onDownloadTrack={handleDownloadTrack}
+        onOpenAddToPlaylist={handleOpenAddToPlaylist}
         onOpenLyrics={() => {
           setIsFullscreenPlayerOpen(false);
           setIsLyricsOpen(true);

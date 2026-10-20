@@ -209,8 +209,8 @@ export function TrackRow({
         </div>
 
         {/* Left side in RTL: Spotify Action Controls */}
-        <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-          {/* Desktop Download Button */}
+        <div className="flex items-center gap-1 sm:gap-2.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+          {/* Direct Download to Offline Button (Visible on both Mobile & Desktop) */}
           {onDownload && (
             <button
               onClick={() => {
@@ -225,10 +225,10 @@ export function TrackRow({
                   ? 'ממתין בתור להורדה'
                   : 'הורד להאזנה אופליין'
               }
-              className={`hidden sm:inline-flex p-1.5 transition-all items-center justify-center gap-1 ${
+              className={`inline-flex p-1.5 transition-all items-center justify-center gap-1 ${
                 isDownloading || isQueuedDownload || isDownloaded
                   ? 'opacity-100'
-                  : 'opacity-0 group-hover:opacity-100'
+                  : 'opacity-80 sm:opacity-60 sm:group-hover:opacity-100 hover:opacity-100'
               }`}
             >
               {isDownloading ? (
@@ -241,8 +241,19 @@ export function TrackRow({
               ) : isDownloaded ? (
                 <ArrowDownCircle className="w-4 h-4 fill-spotify-green text-black" />
               ) : (
-                <ArrowDownCircle className="w-4 h-4 text-[#b3b3b3] hover:text-white transition-colors" />
+                <ArrowDownCircle className="w-4 h-4 text-[#b3b3b3] hover:text-spotify-green transition-colors" />
               )}
+            </button>
+          )}
+
+          {/* Direct Add to Playlist / Create Playlist Button (Visible on both Mobile & Desktop) */}
+          {onOpenAddToPlaylist && (
+            <button
+              onClick={() => onOpenAddToPlaylist(track)}
+              title="הוסף לפלייליסט או צור פלייליסט"
+              className="inline-flex p-1.5 text-[#b3b3b3] hover:text-spotify-green opacity-80 sm:opacity-60 sm:group-hover:opacity-100 hover:opacity-100 transition-all"
+            >
+              <ListPlus className="w-4 h-4" />
             </button>
           )}
 
@@ -253,7 +264,7 @@ export function TrackRow({
             className={`p-1.5 transition-transform active:scale-125 ${
               isLiked
                 ? 'text-spotify-green inline-flex'
-                : 'text-[#b3b3b3] hover:text-white hidden sm:inline-flex sm:opacity-0 sm:group-hover:opacity-100'
+                : 'text-[#b3b3b3] hover:text-white hidden sm:inline-flex sm:opacity-60 sm:group-hover:opacity-100'
             }`}
           >
             {isLiked ? (
@@ -265,23 +276,12 @@ export function TrackRow({
             )}
           </button>
 
-          {/* Desktop Add to Playlist */}
-          {onOpenAddToPlaylist && (
-            <button
-              onClick={() => onOpenAddToPlaylist(track)}
-              title="הוסף לפלייליסט"
-              className="hidden sm:inline-flex p-1.5 text-[#b3b3b3] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <ListPlus className="w-4 h-4" />
-            </button>
-          )}
-
-          {/* Desktop Remove from Playlist */}
+          {/* Desktop Remove from Playlist / Offline */}
           {onRemoveFromPlaylist && (
             <button
               onClick={() => onRemoveFromPlaylist(track)}
-              title="הסר מהפלייליסט"
-              className="hidden sm:inline-flex p-1.5 text-[#b3b3b3] hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+              title="הסר מהרשימה"
+              className="hidden sm:inline-flex p-1.5 text-[#b3b3b3] hover:text-red-400 opacity-60 group-hover:opacity-100 transition-opacity"
             >
               <Trash2 className="w-4 h-4" />
             </button>

@@ -58,6 +58,12 @@ try {
   }
 } catch (e) {}
 
+export function sanitizeTrackForStorage(track) {
+  if (!track || typeof track !== 'object') return track;
+  const { audioBlob, ...rest } = track;
+  return rest;
+}
+
 export function isSameTrack(a, b) {
   if (!a || !b) return false;
   if (a.id && b.id && a.id === b.id) return true;
@@ -96,13 +102,14 @@ export function saveLikedSongs(tracks) {
 
 export function toggleLikeSong(track) {
   if (!track) return { updated: getLikedSongs(), isLiked: false };
+  const cleanTrack = sanitizeTrackForStorage(track);
   const current = getLikedSongs();
-  const exists = current.some(t => isSameTrack(t, track));
+  const exists = current.some(t => isSameTrack(t, cleanTrack));
   let updated;
   if (exists) {
-    updated = current.filter(t => !isSameTrack(t, track));
+    updated = current.filter(t => !isSameTrack(t, cleanTrack));
   } else {
-    updated = [track, ...current];
+    updated = [cleanTrack, ...current];
   }
   saveLikedSongs(updated);
   return { updated, isLiked: !exists };
@@ -240,6 +247,7 @@ export function isTrackInPlaylist(playlist, track) {
 
 export function addTrackToPlaylist(playlistId, track) {
   try {
+    const cleanTrack = sanitizeTrackForStorage(track);
     const playlists = getPlaylists();
     const index = playlists.findIndex(p => p.id === playlistId);
     if (index === -1) return { updated: playlists, success: false, reason: 'Playlist not found' };
@@ -247,15 +255,15 @@ export function addTrackToPlaylist(playlistId, track) {
     const playlist = { ...playlists[index] };
     const existingTracks = playlist.tracks || [];
 
-    if (isTrackInPlaylist(playlist, track)) {
+    if (isTrackInPlaylist(playlist, cleanTrack)) {
       return { updated: playlists, success: false, alreadyExists: true };
     }
 
-    const newTracks = [...existingTracks, track];
+    const newTracks = [...existingTracks, cleanTrack];
     playlist.tracks = newTracks;
     playlist.trackCount = newTracks.length;
-    if (!playlist.cover && track.thumbnail) {
-      playlist.cover = track.thumbnail;
+    if (!playlist.cover && cleanTrack.thumbnail) {
+      playlist.cover = cleanTrack.thumbnail;
     }
 
     const updated = [...playlists];
@@ -292,17 +300,21 @@ export function removeTrackFromPlaylist(playlistId, trackId) {
   }
 }
 
-export function createCustomPlaylist(title, description = '') {
+export function createCustomPlaylist(title, description = '', initialTracks = []) {
   try {
     const playlists = getPlaylists();
+    const cleanTracks = Array.isArray(initialTracks)
+      ? initialTracks.filter(Boolean).map(sanitizeTrackForStorage)
+      : [];
+    const firstCover = cleanTracks.find(t => t?.thumbnail)?.thumbnail || '';
     const newPlaylist = {
       id: 'custom_' + Date.now(),
       title: title.trim(),
       description: description.trim(),
       type: 'playlist',
-      cover: '',
-      tracks: [],
-      trackCount: 0,
+      cover: firstCover,
+      tracks: cleanTracks,
+      trackCount: cleanTracks.length,
       createdAt: new Date().toISOString()
     };
 

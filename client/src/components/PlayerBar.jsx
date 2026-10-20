@@ -18,7 +18,9 @@ import {
   Check,
   PlusCircle,
   MonitorSpeaker,
-  PanelLeft
+  PanelLeft,
+  ArrowDownCircle,
+  ListPlus
 } from 'lucide-react';
 
 // Rich Spotify Mini-Player palette (matches Image 3 deep wine/plum/indigo/teal tones)
@@ -63,6 +65,10 @@ export function PlayerBar({
   onToggleRepeat,
   isLiked,
   onToggleLike,
+  isDownloaded = false,
+  isDownloading = false,
+  onDownloadTrack,
+  onOpenAddToPlaylist,
   onOpenLyrics,
   onOpenFullscreen,
   showNowPlayingPanel = true,
@@ -125,15 +131,33 @@ export function PlayerBar({
           </div>
         </div>
 
-        {/* Right Side in Mini-Player (Image 3): Device/Lyrics Icon + Green Check + Play/Pause */}
-        <div className="relative z-10 flex items-center gap-2.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-          <button
-            onClick={onOpenLyrics}
-            className="p-1.5 text-white/90 active:scale-95 transition-transform"
-            title="מילים לשיר"
-          >
-            <MonitorSpeaker className="w-5 h-5" />
-          </button>
+        {/* Right Side in Mini-Player (Image 3): Offline Download + Add to Playlist + Green Check + Play/Pause */}
+        <div className="relative z-10 flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+          {onDownloadTrack && (
+            <button
+              onClick={() => !isDownloaded && !isDownloading && onDownloadTrack(currentTrack)}
+              className="p-1.5 text-white/90 active:scale-95 transition-transform"
+              title={isDownloaded ? 'שמור אופליין ✓' : 'הורד לאופליין'}
+            >
+              {isDownloading ? (
+                <Loader2 className="w-5 h-5 text-spotify-green animate-spin" />
+              ) : isDownloaded ? (
+                <ArrowDownCircle className="w-5 h-5 fill-spotify-green text-black" />
+              ) : (
+                <ArrowDownCircle className="w-5 h-5 text-white/90" />
+              )}
+            </button>
+          )}
+
+          {onOpenAddToPlaylist && (
+            <button
+              onClick={() => onOpenAddToPlaylist(currentTrack)}
+              className="p-1.5 text-white/90 active:scale-95 transition-transform"
+              title="הוסף לפלייליסט"
+            >
+              <ListPlus className="w-5 h-5" />
+            </button>
+          )}
 
           <button
             onClick={() => onToggleLike(currentTrack)}
@@ -215,6 +239,32 @@ export function PlayerBar({
               <PlusCircle className="w-4 h-4 text-[#b3b3b3] hover:text-white" />
             )}
           </button>
+
+          {onDownloadTrack && (
+            <button
+              onClick={() => !isDownloaded && !isDownloading && onDownloadTrack(currentTrack)}
+              title={isDownloaded ? 'שמור להאזנה אופליין ✓' : 'הורד להאזנה אופליין'}
+              className="p-1.5 transition-transform active:scale-95 flex-shrink-0"
+            >
+              {isDownloading ? (
+                <Loader2 className="w-4 h-4 text-spotify-green animate-spin" />
+              ) : isDownloaded ? (
+                <ArrowDownCircle className="w-4 h-4 fill-spotify-green text-black" />
+              ) : (
+                <ArrowDownCircle className="w-4 h-4 text-[#b3b3b3] hover:text-spotify-green transition-colors" />
+              )}
+            </button>
+          )}
+
+          {onOpenAddToPlaylist && (
+            <button
+              onClick={() => onOpenAddToPlaylist(currentTrack)}
+              title="הוסף לפלייליסט או צור פלייליסט"
+              className="p-1.5 text-[#b3b3b3] hover:text-spotify-green transition-colors flex-shrink-0"
+            >
+              <ListPlus className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* Center: Playback Controls & Scrubber (LTR) */}

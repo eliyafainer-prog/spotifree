@@ -16,7 +16,10 @@ import {
   PlusCircle,
   Share2,
   ListMusic,
-  MonitorSpeaker
+  MonitorSpeaker,
+  ArrowDownCircle,
+  ListPlus,
+  Loader2
 } from 'lucide-react';
 
 export function FullscreenPlayer({
@@ -37,6 +40,10 @@ export function FullscreenPlayer({
   onToggleRepeat,
   isLiked,
   onToggleLike,
+  isDownloaded = false,
+  isDownloading = false,
+  onDownloadTrack,
+  onOpenAddToPlaylist,
   onOpenLyrics,
   previewLyricsLines = [],
   queue = [],
@@ -126,19 +133,47 @@ export function FullscreenPlayer({
             </p>
           </div>
 
-          <button
-            onClick={() => onToggleLike(currentTrack)}
-            className="p-1.5 transition-transform active:scale-125 flex-shrink-0"
-            aria-label={isLiked ? 'הסר משירים שאהבתי' : 'הוסף לשירים שאהבתי'}
-          >
-            {isLiked ? (
-              <span className="w-7 h-7 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-md">
-                <Check className="w-4 h-4 stroke-[3.5]" />
-              </span>
-            ) : (
-              <PlusCircle className="w-7 h-7 text-white/80 hover:text-white" />
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {onDownloadTrack && (
+              <button
+                onClick={() => !isDownloaded && !isDownloading && onDownloadTrack(currentTrack)}
+                className="p-1.5 transition-transform active:scale-95"
+                title={isDownloaded ? 'שמור אופליין ✓' : 'הורד לאופליין'}
+              >
+                {isDownloading ? (
+                  <Loader2 className="w-6 h-6 text-spotify-green animate-spin" />
+                ) : isDownloaded ? (
+                  <ArrowDownCircle className="w-6 h-6 fill-spotify-green text-black" />
+                ) : (
+                  <ArrowDownCircle className="w-6 h-6 text-white/80 hover:text-spotify-green" />
+                )}
+              </button>
             )}
-          </button>
+
+            {onOpenAddToPlaylist && (
+              <button
+                onClick={() => onOpenAddToPlaylist(currentTrack)}
+                className="p-1.5 text-white/80 hover:text-spotify-green transition-transform active:scale-95"
+                title="הוסף לפלייליסט"
+              >
+                <ListPlus className="w-6 h-6" />
+              </button>
+            )}
+
+            <button
+              onClick={() => onToggleLike(currentTrack)}
+              className="p-1.5 transition-transform active:scale-125"
+              aria-label={isLiked ? 'הסר משירים שאהבתי' : 'הוסף לשירים שאהבתי'}
+            >
+              {isLiked ? (
+                <span className="w-7 h-7 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-md">
+                  <Check className="w-4 h-4 stroke-[3.5]" />
+                </span>
+              ) : (
+                <PlusCircle className="w-7 h-7 text-white/80 hover:text-white" />
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Scrubber Bar (LTR) */}
