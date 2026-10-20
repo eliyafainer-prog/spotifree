@@ -22,6 +22,7 @@ import {
 import { TrackRow } from './TrackRow';
 import { PlaylistThumb } from './Sidebar';
 import { isSameTrack } from '../services/storage';
+import { isTrackInIdSet } from '../services/offlineStorage';
 
 export function PlaylistView({
   playlist,
@@ -35,7 +36,10 @@ export function PlaylistView({
   onDeletePlaylist,
   downloadedIds = new Set(),
   downloadingIds = new Set(),
+  queuedDownloadIds = new Set(),
+  downloadProgress = {},
   onDownloadTrack,
+  onDownloadBatch,
   onOpenAddToPlaylist,
   onRemoveTrackFromPlaylist,
   shuffleMode = 'off',
@@ -158,16 +162,26 @@ export function PlaylistView({
   const isCustomPlaylist = !isLikedView;
   const ambientCover = playlist.cover || rawTracks.find(t => t?.thumbnail)?.thumbnail || '';
 
-  const allDownloaded = rawTracks.length > 0 && rawTracks.every(t => downloadedIds?.has(t.id));
-  const anyDownloading = rawTracks.some(t => downloadingIds?.has(t.id));
+  const downloadedCount = useMemo(
+    () => rawTracks.filter(t => isTrackInIdSet(t, downloadedIds)).length,
+    [rawTracks, downloadedIds]
+  );
+  const allDownloaded = rawTracks.length > 0 && downloadedCount === rawTracks.length;
+  const anyDownloading = rawTracks.some(
+    t => isTrackInIdSet(t, downloadingIds) || isTrackInIdSet(t, queuedDownloadIds)
+  );
 
   const handleDownloadAll = () => {
-    if (!onDownloadTrack || rawTracks.length === 0) return;
-    rawTracks.forEach(t => {
-      if (!downloadedIds?.has(t.id) && !downloadingIds?.has(t.id)) {
-        onDownloadTrack(t);
-      }
-    });
+    if (rawTracks.length === 0) return;
+    const pending = rawTracks.filter(
+      t => !isTrackInIdSet(t, downloadedIds) && !isTrackInIdSet(t, downloadingIds) && !isTrackInIdSet(t, queuedDownloadIds)
+    );
+    if (pending.length === 0) return;
+    if (onDownloadBatch) {
+      onDownloadBatch(pending);
+    } else if (onDownloadTrack) {
+      pending.forEach(t => onDownloadTrack(t));
+    }
   };
 
   return (
@@ -326,15 +340,40 @@ export function PlaylistView({
             {onDownloadTrack && rawTracks.length > 0 && (
               <button
                 onClick={handleDownloadAll}
-                title={allDownloaded ? 'כל השירים שמורים אופליין' : 'הורד את כל הפלייליסט להאזנה אופליין'}
-                className="p-1.5 transition-transform active:scale-95"
+                title={
+                  allDownloaded
+                    ? 'כל השירים שמורים אופליין'
+                    : anyDownloading
+                    ? `מוריד פלייליסט לאופליין (${downloadedCount}/${rawTracks.length})`
+                    : 'הורד את כל הפלייליסט להאזנה אופליין'
+                }
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full transition-all active:scale-95 ${
+                  allDownloaded
+                    ? 'bg-spotify-green/15 text-spotify-green border border-spotify-green/30'
+                    : anyDownloading
+                    ? 'bg-spotify-green/15 text-spotify-green border border-spotify-green/40'
+                    : 'bg-white/5 hover:bg-white/10 text-[#b3b3b3] hover:text-white border border-white/10'
+                }`}
               >
                 {anyDownloading ? (
-                  <Loader2 className="w-6 h-6 text-spotify-green animate-spin" />
+                  <>
+                    <Loader2 className="w-5 h-5 text-spotify-green animate-spin" />
+                    <span className="text-xs font-bold text-spotify-green">
+                      מוריד ({downloadedCount}/{rawTracks.length})
+                    </span>
+                  </>
                 ) : allDownloaded ? (
-                  <ArrowDownCircle className="w-6 h-6 fill-spotify-green text-black" />
+                  <>
+                    <ArrowDownCircle className="w-5 h-5 fill-spotify-green text-black" />
+                    <span className="text-xs font-bold text-spotify-green">שמור אופליין ({rawTracks.length})</span>
+                  </>
                 ) : (
-                  <ArrowDownCircle className="w-6 h-6 text-[#b3b3b3] hover:text-white transition-colors" />
+                  <>
+                    <ArrowDownCircle className="w-5 h-5" />
+                    <span className="text-xs font-semibold">
+                      {downloadedCount > 0 ? `הורד הכל (${downloadedCount}/${rawTracks.length})` : 'הורד לאופליין'}
+                    </span>
+                  </>
                 )}
               </button>
             )}
@@ -460,8 +499,15 @@ export function PlaylistView({
               onPlay={(t) => onPlayTrack(t, processedTracks, idx)}
               isLiked={likedSongs.some(s => isSameTrack(s, track))}
               onToggleLike={onToggleLike}
-              isDownloaded={downloadedIds?.has(track.id)}
-              isDownloading={downloadingIds?.has(track.id)}
+              isDownloaded={isTrackInIdSet(track, downloadedIds)}
+              isDownloading={isTrackInIdSet(track, downloadingIds)}
+              isQueuedDownload={isTrackInIdSet(track, queuedDownloadIds)}
+              downloadProgress={
+                downloadProgress[track.id] ||
+                downloadProgress[track.streamableId] ||
+                downloadProgress[track.originalId] ||
+                0
+              }
               onDownload={onDownloadTrack}
               onOpenAddToPlaylist={onOpenAddToPlaylist}
               onRemoveFromPlaylist={

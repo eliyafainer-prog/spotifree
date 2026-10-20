@@ -199,15 +199,15 @@ const clientResolveCache = new Map();
 /**
  * Search tracks with client-side caching & instant failover
  */
-export async function searchTracks(query) {
+export async function searchTracks(query, limit = 60) {
   if (!query || !query.trim()) return [];
-  const key = query.trim().toLowerCase();
+  const key = `${query.trim().toLowerCase()}:::${limit}`;
 
   if (clientSearchCache.has(key)) {
     return clientSearchCache.get(key);
   }
 
-  const res = await fetchWithFailover(`/api/search?q=${encodeURIComponent(query.trim())}`);
+  const res = await fetchWithFailover(`/api/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`);
   if (!res.ok) throw new Error('חיפוש שירים נכשל');
   const data = await res.json();
   const tracks = data.tracks || [];
@@ -222,13 +222,24 @@ export async function searchTracks(query) {
 }
 
 /**
+ * Get full home catalog (trending tracks + curated multi-genre sections)
+ */
+export async function getHomeCatalog() {
+  const res = await fetchWithFailover('/api/trending');
+  if (!res.ok) throw new Error('Failed to fetch catalog');
+  const data = await res.json();
+  return {
+    tracks: data.tracks || [],
+    sections: data.sections || []
+  };
+}
+
+/**
  * Get trending tracks
  */
 export async function getTrendingTracks() {
-  const res = await fetchWithFailover('/api/trending');
-  if (!res.ok) throw new Error('Failed to fetch trending');
-  const data = await res.json();
-  return data.tracks || [];
+  const catalog = await getHomeCatalog();
+  return catalog.tracks || [];
 }
 
 /**
@@ -329,17 +340,68 @@ export async function prefetchNextTracks(tracks) {
 }
 
 /**
- * Download track audio as a Blob for offline playback
+ * Download track audio as a Blob for offline playback with real-time progress & auto-retry
  */
 export async function downloadTrackAudioBlob(track, onProgress = null) {
-  const audioUrl = `${getPlayableAudioUrl(track)}&dl=1`;
-  const response = await fetch(audioUrl);
-  if (!response.ok) {
-    throw new Error('הורדת קובץ השמע נכשלה מהשרת.');
+  let lastErr = null;
+  const estimatedBytes = Math.max(2200000, (Number(track?.durationSeconds) || 180) * 18000);
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const baseAudioUrl = getPlayableAudioUrl(track);
+      const audioUrl = `${baseAudioUrl}&dl=1&attempt=${attempt}`;
+      const response = await fetch(audioUrl);
+      if (!response.ok) {
+        throw new Error(`Status ${response.status}`);
+      }
+
+      const contentType = response.headers.get('content-type') || 'audio/mp4';
+      const contentLengthHeader = response.headers.get('content-length');
+      const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : estimatedBytes;
+
+      if (response.body && typeof response.body.getReader === 'function') {
+        const reader = response.body.getReader();
+        const chunks = [];
+        let receivedBytes = 0;
+
+        if (onProgress) onProgress(2, 0, totalBytes);
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            receivedBytes += value.byteLength;
+            if (onProgress) {
+              const pct = Math.min(99, Math.max(3, Math.round((receivedBytes / totalBytes) * 100)));
+              onProgress(pct, receivedBytes, totalBytes);
+            }
+          }
+        }
+
+        const blob = new Blob(chunks, { type: contentType });
+        if (blob.size < 15000) {
+          throw new Error('Incomplete audio file received');
+        }
+        if (onProgress) onProgress(100, receivedBytes, receivedBytes);
+        return blob;
+      } else {
+        const blob = await response.blob();
+        if (blob.size < 15000) {
+          throw new Error('Incomplete audio file received');
+        }
+        if (onProgress) onProgress(100, blob.size, blob.size);
+        return blob;
+      }
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 800));
+      }
+    }
   }
 
-  const blob = await response.blob();
-  return blob;
+  throw lastErr || new Error('הורדת קובץ השמע נכשלה מהשרת.');
 }
 
 // Persistent resolved tracks cache in localStorage for 0ms repeat playback

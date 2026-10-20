@@ -10,7 +10,7 @@ function cleanTitle(title) {
     ? title
     : (title.text || (Array.isArray(title.runs) ? title.runs.map(r => r.text || '').join('') : String(title)));
   return str
-    .replace(/\s*[\(\[](official\s*(music\s*)?video|official\s*audio|lyrics?|visualizer|hd|4k|audio)[\)\]]/gi, '')
+    .replace(/\s*[\(\[](official\s*(music\s*)?video|official\s*audio|lyrics?|visualizer|hd|4k|audio|קליפ\s*רשמי|אודיו\s*רשמי)[\)\]]/gi, '')
     .replace(/\s*[\(\[]ft\.?.*?[\)\]]/gi, '')
     .trim();
 }
@@ -39,9 +39,9 @@ function setCachedSearch(key, data) {
 }
 
 /**
- * 1. Ultra-fast direct YouTube InnerTube Search API (1-1.2s response, never throttled)
+ * 1. Ultra-fast direct YouTube InnerTube Search API (~0.8-1.2s response, up to 40 results)
  */
-async function searchInnerTube(query, limit = 20) {
+async function searchInnerTube(query, limit = 40) {
   try {
     const response = await axios.post(
       'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
@@ -59,7 +59,7 @@ async function searchInnerTube(query, limit = 20) {
       {
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         },
         timeout: 4500
       }
@@ -86,14 +86,15 @@ async function searchInnerTube(query, limit = 20) {
           if (parts.length === 2) sec = (parts[0] || 0) * 60 + (parts[1] || 0);
           else if (parts.length === 3) sec = (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
 
-          // Skip long DJ mixes / full albums (> 10 mins) for fast music playback
-          if (sec > 600) continue;
+          // Skip ultra-short teasers (< 40s) and long DJ mixes / full albums (> 11 mins)
+          if ((sec > 0 && sec < 40) || sec > 660) continue;
 
           const thumbs = v.thumbnail?.thumbnails || [];
           const thumb = thumbs.length > 0 ? thumbs[thumbs.length - 1].url : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
 
           results.push({
             id: v.videoId,
+            streamableId: v.videoId,
             title: cleanTitle(rawTitle) || rawTitle,
             originalTitle: rawTitle,
             artist: rawAuthor.replace(/\s*-\s*Topic$/i, ''),
@@ -104,6 +105,7 @@ async function searchInnerTube(query, limit = 20) {
             durationSeconds: sec,
             thumbnail: thumb,
             views: v.viewCountText?.simpleText || '',
+            source: 'youtube',
             url: `https://youtube.com/watch?v=${v.videoId}`
           });
 
@@ -120,17 +122,17 @@ async function searchInnerTube(query, limit = 20) {
 }
 
 /**
- * 2. Secondary fallback: yt-search library
+ * 2. Secondary fallback: yt-search library (up to 40 results)
  */
-async function searchYts(query, limit = 20) {
+async function searchYts(query, limit = 40) {
   try {
     const r = await Promise.race([
       yts(query),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('yts timeout')), 6000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('yts timeout')), 5500))
     ]);
 
     const videos = r?.videos || [];
-    let filtered = videos.filter(v => !v.seconds || v.seconds < 600);
+    let filtered = videos.filter(v => !v.seconds || (v.seconds >= 40 && v.seconds <= 660));
     if (filtered.length === 0) filtered = videos;
 
     return filtered.slice(0, limit).map(v => {
@@ -142,6 +144,7 @@ async function searchYts(query, limit = 20) {
 
       return {
         id: v.videoId,
+        streamableId: v.videoId,
         title: cleanTitle(rawTitle) || rawTitle,
         originalTitle: rawTitle,
         artist: artistName,
@@ -151,6 +154,7 @@ async function searchYts(query, limit = 20) {
         durationSeconds: v.seconds || 0,
         thumbnail: thumbnail,
         views: v.views,
+        source: 'youtube',
         url: v.url
       };
     });
@@ -160,50 +164,133 @@ async function searchYts(query, limit = 20) {
 }
 
 /**
- * 3. Fast emergency fallback: iTunes Search API (guaranteed 200ms response)
+ * 3. Deezer Official Studio Catalog Search (~200ms response, rich Hebrew & Global catalog)
  */
-async function searchItunes(query, limit = 20) {
+async function searchDeezer(query, limit = 30) {
   try {
-    const res = await axios.get('https://itunes.apple.com/search', {
-      params: {
-        term: query,
-        entity: 'song',
-        limit: limit
-      },
-      timeout: 3000
+    const res = await axios.get('https://api.deezer.com/search', {
+      params: { q: query, limit },
+      timeout: 2800
     });
+    const items = res.data?.data || [];
+    return items
+      .filter(t => t && t.duration >= 45 && t.duration <= 600)
+      .map((t, idx) => {
+        const durSec = Number(t.duration) || 0;
+        const mins = Math.floor(durSec / 60);
+        const secs = durSec % 60;
+        const artwork = t.album?.cover_big || t.album?.cover_medium || t.artist?.picture_big || '';
+        const title = String(t.title || 'Unknown Title').trim();
+        const artist = String(t.artist?.name || 'Unknown Artist').trim();
 
-    const items = res.data?.results || [];
-    return items.map((t, idx) => {
-      const durSec = Math.round((t.trackTimeMillis || 0) / 1000);
-      const mins = Math.floor(durSec / 60);
-      const secs = durSec % 60;
-      const artwork = (t.artworkUrl100 || '').replace('100x100bb', '600x600bb');
-
-      return {
-        id: `it_${t.trackId || idx}`,
-        title: t.trackName || 'Unknown Title',
-        originalTitle: t.trackName || 'Unknown Title',
-        artist: t.artistName || 'Unknown Artist',
-        album: t.collectionName || 'Single',
-        duration: `${mins}:${secs < 10 ? '0' : ''}${secs}`,
-        durationSeconds: durSec,
-        thumbnail: artwork,
-        source: 'itunes',
-        query: `${t.artistName} - ${t.trackName}`
-      };
-    });
+        return {
+          id: `sp_dz_${t.id || idx}`,
+          title,
+          originalTitle: title,
+          artist,
+          album: t.album?.title || 'Single',
+          duration: `${mins}:${secs < 10 ? '0' : ''}${secs}`,
+          durationSeconds: durSec,
+          thumbnail: artwork,
+          hasCustomArtwork: Boolean(artwork),
+          source: 'deezer',
+          query: `${artist} - ${title}`
+        };
+      });
   } catch (e) {
     return [];
   }
 }
 
 /**
- * Main Search Function with layered instant fallbacks
+ * 4. iTunes Official Catalog Search (~250ms response)
  */
-async function searchTracks(query, limit = 20) {
+async function searchItunes(query, limit = 30) {
+  try {
+    const res = await axios.get('https://itunes.apple.com/search', {
+      params: {
+        term: query,
+        entity: 'song',
+        country: 'IL',
+        limit: limit
+      },
+      timeout: 2800
+    });
+
+    const items = res.data?.results || [];
+    return items
+      .filter(t => t && (t.trackTimeMillis || 0) >= 45000 && (t.trackTimeMillis || 0) <= 600000)
+      .map((t, idx) => {
+        const durSec = Math.round((t.trackTimeMillis || 0) / 1000);
+        const mins = Math.floor(durSec / 60);
+        const secs = durSec % 60;
+        const artwork = (t.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+
+        return {
+          id: `sp_it_${t.trackId || idx}`,
+          title: t.trackName || 'Unknown Title',
+          originalTitle: t.trackName || 'Unknown Title',
+          artist: t.artistName || 'Unknown Artist',
+          album: t.collectionName || 'Single',
+          duration: `${mins}:${secs < 10 ? '0' : ''}${secs}`,
+          durationSeconds: durSec,
+          thumbnail: artwork,
+          hasCustomArtwork: Boolean(artwork),
+          source: 'itunes',
+          query: `${t.artistName} - ${t.trackName}`
+        };
+      });
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Deduplicate and merge multi-source tracks while preserving all distinct videos & studio songs
+ */
+function mergeAndDeduplicateTracks(lists, limit = 60) {
+  const seenIds = new Set();
+  const seenSignatures = new Set();
+  const merged = [];
+
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (!item || !item.id) continue;
+      if (seenIds.has(item.id)) continue;
+
+      const normTitle = String(item.title || '')
+        .toLowerCase()
+        .replace(/\s*[\(\[][^)\]]*[\)\]]/g, '')
+        .replace(/[^\p{L}\p{N}]/gu, '');
+      const normArtist = String(item.artist || '')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]/gu, '');
+      const sig = `${normArtist}:::${normTitle}`;
+
+      // For catalog entries (sp_dz_ / sp_it_), skip if an identical artist+title video is already present
+      if (String(item.id).startsWith('sp_') && normTitle && seenSignatures.has(sig)) {
+        continue;
+      }
+
+      seenIds.add(item.id);
+      if (normTitle) seenSignatures.add(sig);
+      merged.push(item);
+
+      if (merged.length >= limit) return merged;
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Main Search Function with multi-source aggregation (YouTube InnerTube + Deezer + yt-search + iTunes)
+ */
+async function searchTracks(query, limit = 60) {
   if (!query || !query.trim()) return [];
-  const normalizedKey = query.trim().toLowerCase();
+  const trimmed = query.trim();
+  const normalizedKey = `${trimmed.toLowerCase()}:::${limit}`;
 
   // 1. Instant in-memory cache hit (0ms)
   const cached = getCachedSearch(normalizedKey);
@@ -211,18 +298,31 @@ async function searchTracks(query, limit = 20) {
     return cached.slice(0, limit);
   }
 
-  // 2. Ultra-fast InnerTube API (1s)
-  let results = await searchInnerTube(query.trim(), limit);
-
-  // 3. Fallback to yts
-  if (results.length === 0) {
-    results = await searchYts(query.trim(), limit);
+  // For small internal resolution queries (limit <= 15), keep ultra-fast single-source YouTube lookup
+  if (limit <= 15) {
+    let fastResults = await searchInnerTube(trimmed, limit);
+    if (fastResults.length === 0) {
+      fastResults = await searchYts(trimmed, limit);
+    }
+    if (fastResults.length > 0) {
+      setCachedSearch(normalizedKey, fastResults);
+    }
+    return fastResults;
   }
 
-  // 4. Emergency fallback to iTunes
-  if (results.length === 0) {
-    results = await searchItunes(query.trim(), limit);
+  // 2. Full user search / category browse: query YouTube InnerTube + Deezer + iTunes in parallel for a huge, rich catalog!
+  const [ytInner, deezerRes, itunesRes] = await Promise.all([
+    searchInnerTube(trimmed, 40),
+    searchDeezer(trimmed, 25),
+    searchItunes(trimmed, 20)
+  ]);
+
+  let ytsRes = [];
+  if (ytInner.length < 15) {
+    ytsRes = await searchYts(trimmed, 35);
   }
+
+  const results = mergeAndDeduplicateTracks([ytInner, ytsRes, deezerRes, itunesRes], limit);
 
   if (results.length > 0) {
     setCachedSearch(normalizedKey, results);
@@ -231,24 +331,117 @@ async function searchTracks(query, limit = 20) {
   return results;
 }
 
+// Cached rich home catalog (refreshes every 30 minutes)
+let cachedHomeCatalog = null;
+let cachedHomeCatalogTime = 0;
+const HOME_CATALOG_TTL = 1000 * 60 * 30;
+
+const CATALOG_SECTION_DEFS = [
+  {
+    id: 'israeli_hits',
+    title: 'להיטי ישראל — הכי חמים עכשיו',
+    subtitle: 'השירים והקליפים הכי מושמעים בישראל',
+    queries: [
+      'עומר אדם נועה קירל אושר כהן פאר טסי',
+      'עדן חסון אודיה יסמין מועלם כפיר צפריר'
+    ]
+  },
+  {
+    id: 'hiphop_groove',
+    title: 'היפ-הופ, ראפ וגרוב ישראלי',
+    subtitle: 'טונה, רביד פלוטניק, נס וסטילה ועוד',
+    queries: [
+      'רביד פלוטניק טונה שחר סאול',
+      'נס וסטילה הדג נחש פול טראנק'
+    ]
+  },
+  {
+    id: 'mizrahit',
+    title: 'ים-תיכוני ומזרחית',
+    subtitle: 'קלאסיקות ולהיטים חדשים מהז׳אנר הים-תיכוני',
+    queries: [
+      'אייל גולן עדן בן זקן משה פרץ איתי לוי',
+      'שרית חדד דודו אהרון ליאור נרקיס זוהר ארגוב'
+    ]
+  },
+  {
+    id: 'festigal_nostalgia',
+    title: 'קלאסיקות פסטיגל ונוסטלגיה ישראלית',
+    subtitle: 'השירים הגדולים של הפסטיגל והמוזיקה הישראלית',
+    queries: [
+      'הראל סקעת רן דנקר פסטיגל שירים',
+      'שלמה ארצי אריק איינשטיין כוורת משינה'
+    ]
+  },
+  {
+    id: 'global_pop',
+    title: 'להיטים בינלאומיים — Global Top Hits',
+    subtitle: 'הלהיטים הגדולים בעולם ברגע זה',
+    queries: [
+      'The Weeknd Dua Lipa Bruno Mars Billie Eilish',
+      'Taylor Swift Sabrina Carpenter Post Malone Coldplay'
+    ]
+  },
+  {
+    id: 'party_electronic',
+    title: 'מסיבה, דאנס ואנרגיה גבוהה',
+    subtitle: 'ביטים, אלקטרוני ומוזיקה לאימונים',
+    queries: [
+      'David Guetta Calvin Harris Tiesto Avicii',
+      'Travis Scott Drake Kendrick Lamar Metro Boomin'
+    ]
+  }
+];
+
 /**
- * Get trending / popular tracks for home feed
+ * Build rich multi-section catalog & expanded trending tracks (100+ tracks across 6 categories)
+ */
+async function getHomeCatalog() {
+  if (cachedHomeCatalog && (Date.now() - cachedHomeCatalogTime < HOME_CATALOG_TTL)) {
+    return cachedHomeCatalog;
+  }
+
+  const sectionPromises = CATALOG_SECTION_DEFS.map(async (def) => {
+    const queryLists = await Promise.all(
+      def.queries.map(q =>
+        Promise.all([
+          searchInnerTube(q, 18),
+          searchDeezer(q, 12)
+        ]).then(([yt, dz]) => mergeAndDeduplicateTracks([yt, dz], 22))
+      )
+    );
+    const tracks = mergeAndDeduplicateTracks(queryLists, 24);
+    return {
+      id: def.id,
+      title: def.title,
+      subtitle: def.subtitle,
+      tracks
+    };
+  });
+
+  const sections = await Promise.all(sectionPromises);
+  const allTrending = mergeAndDeduplicateTracks(sections.map(s => s.tracks), 60);
+
+  cachedHomeCatalog = {
+    tracks: allTrending,
+    sections: sections.filter(s => s.tracks && s.tracks.length > 0)
+  };
+  cachedHomeCatalogTime = Date.now();
+
+  return cachedHomeCatalog;
+}
+
+/**
+ * Get trending / popular tracks for home feed (returns 60+ tracks)
  */
 async function getTrendingTracks() {
-  const trendingQueries = [
-    'top hits 2026',
-    'billboard hot 100',
-    'popular songs',
-    'להיטים ישראלים 2026'
-  ];
-  const q = trendingQueries[Math.floor(Math.random() * trendingQueries.length)];
-  const tracks = await searchTracks(q, 30);
-  const singleTracks = tracks.filter(t => !t.durationSeconds || (t.durationSeconds >= 90 && t.durationSeconds <= 420));
-  return singleTracks.length >= 10 ? singleTracks.slice(0, 24) : tracks.slice(0, 24);
+  const catalog = await getHomeCatalog();
+  return catalog.tracks;
 }
 
 module.exports = {
   searchTracks,
   getTrendingTracks,
+  getHomeCatalog,
   cleanTitle
 };

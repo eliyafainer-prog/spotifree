@@ -28,6 +28,8 @@ export function TrackRow({
   onToggleLike,
   isDownloaded = false,
   isDownloading = false,
+  isQueuedDownload = false,
+  downloadProgress = 0,
   onDownload,
   onOpenAddToPlaylist,
   onRemoveFromPlaylist,
@@ -174,9 +176,17 @@ export function TrackRow({
               {track.title}
             </span>
             <div className="flex items-center gap-1.5 min-w-0 mt-0.5">
-              {/* Spotify Green Downloaded Arrow Badge */}
+              {/* Spotify Green Downloaded Arrow Badge / Live Progress */}
               {isDownloading ? (
-                <Loader2 className="w-3.5 h-3.5 text-spotify-green animate-spin flex-shrink-0" />
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-spotify-green flex-shrink-0">
+                  <Loader2 className="w-3.5 h-3.5 text-spotify-green animate-spin" />
+                  {downloadProgress > 0 && <span>{downloadProgress}%</span>}
+                </span>
+              ) : isQueuedDownload ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-spotify-green/80 flex-shrink-0">
+                  <Loader2 className="w-3 h-3 text-spotify-green/80 animate-spin" />
+                  <span>בתור</span>
+                </span>
               ) : isDownloaded ? (
                 <ArrowDownCircle className="w-3.5 h-3.5 fill-spotify-green text-black flex-shrink-0" />
               ) : null}
@@ -204,17 +214,30 @@ export function TrackRow({
           {onDownload && (
             <button
               onClick={() => {
-                if (!isDownloaded && !isDownloading) onDownload(track);
+                if (!isDownloaded && !isDownloading && !isQueuedDownload) onDownload(track);
               }}
-              title={isDownloaded ? 'שמור להאזנה אופליין' : 'הורד להאזנה אופליין'}
-              className={`hidden sm:inline-flex p-1.5 transition-all items-center justify-center ${
-                isDownloading || isDownloaded
+              title={
+                isDownloaded
+                  ? 'שמור להאזנה אופליין'
+                  : isDownloading
+                  ? `מוריד... ${downloadProgress || 0}%`
+                  : isQueuedDownload
+                  ? 'ממתין בתור להורדה'
+                  : 'הורד להאזנה אופליין'
+              }
+              className={`hidden sm:inline-flex p-1.5 transition-all items-center justify-center gap-1 ${
+                isDownloading || isQueuedDownload || isDownloaded
                   ? 'opacity-100'
                   : 'opacity-0 group-hover:opacity-100'
               }`}
             >
               {isDownloading ? (
-                <Loader2 className="w-4 h-4 text-spotify-green animate-spin" />
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-spotify-green">
+                  <Loader2 className="w-4 h-4 text-spotify-green animate-spin" />
+                  {downloadProgress > 0 && <span>{downloadProgress}%</span>}
+                </span>
+              ) : isQueuedDownload ? (
+                <Loader2 className="w-4 h-4 text-spotify-green/70 animate-spin" />
               ) : isDownloaded ? (
                 <ArrowDownCircle className="w-4 h-4 fill-spotify-green text-black" />
               ) : (
@@ -336,13 +359,25 @@ export function TrackRow({
               {onDownload && (
                 <button
                   onClick={() => {
-                    if (!isDownloaded && !isDownloading) onDownload(track);
+                    if (!isDownloaded && !isDownloading && !isQueuedDownload) onDownload(track);
                     setMenuOpen(false);
                   }}
                   className="flex items-center gap-4 py-3 px-2 rounded-lg active:bg-white/10 text-white text-sm font-medium"
                 >
-                  <ArrowDownCircle className={`w-5 h-5 ${isDownloaded ? 'text-spotify-green' : 'text-[#b3b3b3]'}`} />
-                  <span>{isDownloaded ? 'שמור במכשיר להאזנה אופליין ✓' : 'הורד להאזנה אופליין'}</span>
+                  {isDownloading || isQueuedDownload ? (
+                    <Loader2 className="w-5 h-5 text-spotify-green animate-spin" />
+                  ) : (
+                    <ArrowDownCircle className={`w-5 h-5 ${isDownloaded ? 'text-spotify-green' : 'text-[#b3b3b3]'}`} />
+                  )}
+                  <span>
+                    {isDownloaded
+                      ? 'שמור במכשיר להאזנה אופליין ✓'
+                      : isDownloading
+                      ? `מוריד למכשיר... (${downloadProgress || 0}%)`
+                      : isQueuedDownload
+                      ? 'ממתין בתור להורדה...'
+                      : 'הורד להאזנה אופליין'}
+                  </span>
                 </button>
               )}
 

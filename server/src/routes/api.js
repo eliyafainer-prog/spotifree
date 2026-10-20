@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const { searchTracks, getTrendingTracks } = require('../services/search');
+const { searchTracks, getTrendingTracks, getHomeCatalog } = require('../services/search');
 const { getAudioStreamUrl, pipeStream } = require('../services/stream');
 const { getLyrics } = require('../services/lyrics');
 const { universalImport, resolveTrackToStreamableId } = require('../services/importer');
@@ -55,8 +55,10 @@ router.get('/search', async (req, res) => {
   }
 
   try {
-    const tracks = await searchTracks(q);
+    const limit = Math.min(100, Math.max(10, Number(req.query.limit) || 60));
+    const tracks = await searchTracks(q, limit);
     res.json({ tracks });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -67,8 +69,9 @@ router.get('/search', async (req, res) => {
  */
 router.get('/trending', async (req, res) => {
   try {
-    const tracks = await getTrendingTracks();
-    res.json({ tracks });
+    const catalog = await getHomeCatalog();
+    res.json({ tracks: catalog.tracks || [], sections: catalog.sections || [] }); // trending
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

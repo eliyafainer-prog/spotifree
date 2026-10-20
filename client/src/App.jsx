@@ -27,7 +27,7 @@ import {
 
 import { useAudioPlayer } from './hooks/useAudioPlayer';
 import { useMediaSession } from './hooks/useMediaSession';
-import { searchTracks, getTrendingTracks, getLyrics, downloadTrackAudioBlob, prefetchNextTracks, resolveTrack } from './services/api';
+import { searchTracks, getTrendingTracks, getHomeCatalog, getLyrics, downloadTrackAudioBlob, prefetchNextTracks, resolveTrack } from './services/api';
 import {
   getLikedSongs,
   toggleLikeSong,
@@ -45,7 +45,7 @@ import {
   isSameTrack
 } from './services/storage';
 import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
-import { saveTrackOffline, getAllOfflineTracks } from './services/offlineStorage';
+import { saveTrackOffline, getAllOfflineTracks, buildDownloadedIdSet, isTrackInIdSet } from './services/offlineStorage';
 
 import { Sidebar, PlaylistThumb } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
@@ -62,16 +62,26 @@ import { ServerSettingsModal } from './components/ServerSettingsModal';
 import { ForegroundService } from '@capawesome-team/capacitor-android-foreground-service';
 
 const BROWSE_CATEGORIES = [
-  { title: 'להיטים ישראליים', query: 'להיטים ישראליים עומר אדם נועה קירל', color: 'bg-[#e13300]' },
-  { title: 'פופ עולמי', query: 'Top Pop Hits 2025 The Weeknd Dua Lipa', color: 'bg-[#7358ff]' },
-  { title: 'ים-תיכוני ומזרחית', query: 'מזרחית ים תיכוני אייל גולן עדן בן זקן', color: 'bg-[#1e3264]' },
-  { title: 'היפ-הופ וראפ', query: 'Hip Hop Rap Hits טונה רביד פלוטניק', color: 'bg-[#bc5900]' },
-  { title: 'מסיבה ודאנס', query: 'Party Dance Hits Electronic', color: 'bg-[#e8115b]' },
-  { title: 'אימונים וכושר', query: 'Workout Gym Motivation Hits', color: 'bg-[#148a08]' },
-  { title: 'רוק קלאסי', query: 'Classic Rock Greatest Hits', color: 'bg-[#e91429]' },
-  { title: 'שירים שקטים ורגועים', query: 'שירים שקטים בעברית Chill Acoustic', color: 'bg-[#0d73ec]' },
-  { title: 'נוסטלגיה ישראלית', query: 'קלאסיקות ישראליות אריק איינשטיין שלמה ארצי', color: 'bg-[#8d67ab]' },
-  { title: 'להיטי ויראלי וטיקטוק', query: 'TikTok Viral Hits 2025', color: 'bg-[#dc148c]' }
+  { title: 'להיטים ישראליים', query: 'להיטים ישראליים עומר אדם נועה קירל פאר טסי', color: 'bg-[#e13300]' },
+  { title: 'פופ עולמי', query: 'Top Pop Hits The Weeknd Dua Lipa Bruno Mars', color: 'bg-[#7358ff]' },
+  { title: 'ים-תיכוני ומזרחית', query: 'מזרחית ים תיכוני אייל גולן עדן בן זקן משה פרץ', color: 'bg-[#1e3264]' },
+  { title: 'היפ-הופ וראפ ישראלי', query: 'היפ הופ ישראלי טונה רביד פלוטניק יסמין מועלם', color: 'bg-[#bc5900]' },
+  { title: 'קלאסיקות פסטיגל', query: 'פסטיגל שירים רשמיים מרגי נועה קירל אליאנה תדהר', color: 'bg-[#d84000]' },
+  { title: 'מסיבה ודאנס', query: 'Party Dance Hits Electronic Club Mix', color: 'bg-[#e8115b]' },
+  { title: 'אימונים וכושר', query: 'Workout Gym Motivation High Energy Hits', color: 'bg-[#148a08]' },
+  { title: 'רוק ישראלי', query: 'רוק ישראלי משינה היהודים מוניקה סקס אביב גפן', color: 'bg-[#b02897]' },
+  { title: 'שירים שקטים ורגועים', query: 'שירים שקטים בעברית עידן רייכל חנן בן ארי אקוסטי', color: 'bg-[#0d73ec]' },
+  { title: 'נוסטלגיה ישראלית', query: 'קלאסיקות ישראליות אריק איינשטיין שלמה ארצי כוורת', color: 'bg-[#8d67ab]' },
+  { title: 'להיטי שנות ה-2000', query: 'Throwback 2000s Hits Pop R&B Classics', color: 'bg-[#503750]' },
+  { title: 'להיטי ויראלי וטיקטוק', query: 'TikTok Viral Hits Trending Songs', color: 'bg-[#dc148c]' },
+  { title: 'היפ-הופ וראפ עולמי', query: 'Hip Hop Rap Drake Travis Scott Kendrick Lamar', color: 'bg-[#ba5d07]' },
+  { title: 'רוק קלאסי ואגדות', query: 'Classic Rock Queen Led Zeppelin Nirvana Oasis', color: 'bg-[#e91429]' },
+  { title: 'לטיני ורגאטון', query: 'Reggaeton Latin Hits Bad Bunny Karol G', color: 'bg-[#e1118c]' },
+  { title: 'אלקטרוני וטכנו', query: 'Electronic House Melodic Techno Calvin Harris Fred again', color: 'bg-[#006450]' },
+  { title: 'R&B וסול', query: 'R&B Soul SZA Frank Ocean Chris Brown Rihanna', color: 'bg-[#27856a]' },
+  { title: 'מזרחית של פעם', query: 'מזרחית נוסטלגיה זוהר ארגוב חיים משה שרית חדד', color: 'bg-[#477d95]' },
+  { title: 'נסיעה ליליות', query: 'Night Drive Synthwave Chill Pop Hits', color: 'bg-[#1e3264]' },
+  { title: 'קיץ וחוף הים', query: 'Summer Beach Vibes Hits פופ קיץ ישראלי', color: 'bg-[#f59b23]' }
 ];
 
 export default function App() {
@@ -109,8 +119,10 @@ export default function App() {
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Trending tracks for Home view
+  // Trending tracks & multi-shelf catalog for Home view
   const [trendingTracks, setTrendingTracks] = useState([]);
+  const [catalogSections, setCatalogSections] = useState([]);
+  const [showAllTrending, setShowAllTrending] = useState(false);
   const [isTrendingLoading, setIsTrendingLoading] = useState(false);
 
   // Modals & Panels
@@ -148,14 +160,29 @@ export default function App() {
     showToast('🔀 השמעה אקראית מופעלת');
   }, [player, showToast]);
 
-  // Offline Downloads state
+  // Offline Downloads state & Smart Concurrency-Limited Queue (Max 2 parallel downloads)
   const [downloadedIds, setDownloadedIds] = useState(new Set());
+  const [downloadedTracksCount, setDownloadedTracksCount] = useState(0);
   const [downloadingIds, setDownloadingIds] = useState(new Set());
+  const [queuedDownloadIds, setQueuedDownloadIds] = useState(new Set());
+  const [activeDownloadTracks, setActiveDownloadTracks] = useState([]);
+  const [downloadProgress, setDownloadProgress] = useState({});
+
+  const downloadQueueRef = useRef([]);
+  const activeWorkersRef = useRef(0);
+  const downloadedIdsRef = useRef(new Set());
+  const downloadingIdsRef = useRef(new Set());
+  const queuedIdsRef = useRef(new Set());
+
+  const getTrackKeys = (t) => [t?.id, t?.streamableId, t?.originalId].filter(Boolean);
 
   const refreshDownloads = useCallback(async () => {
     try {
       const tracks = await getAllOfflineTracks();
-      setDownloadedIds(new Set(tracks.map(t => t.id)));
+      const idSet = buildDownloadedIdSet(tracks);
+      downloadedIdsRef.current = idSet;
+      setDownloadedIds(idSet);
+      setDownloadedTracksCount(tracks.length);
     } catch (e) {
       console.error(e);
     }
@@ -165,25 +192,138 @@ export default function App() {
     refreshDownloads();
   }, [refreshDownloads]);
 
-  const handleDownloadTrack = async (track) => {
-    if (!track || downloadedIds.has(track.id) || downloadingIds.has(track.id)) return;
+  const processDownloadQueue = useCallback(() => {
+    const MAX_CONCURRENT = 2;
 
-    setDownloadingIds(prev => new Set([...prev, track.id]));
-    try {
-      const blob = await downloadTrackAudioBlob(track);
-      await saveTrackOffline(track, blob);
-      setDownloadedIds(prev => new Set([...prev, track.id]));
-      showToast('✓ השיר נשמר להאזנה אופליין');
-    } catch (err) {
-      console.error('Download failed:', err);
-    } finally {
-      setDownloadingIds(prev => {
-        const next = new Set(prev);
-        next.delete(track.id);
-        return next;
-      });
+    while (activeWorkersRef.current < MAX_CONCURRENT && downloadQueueRef.current.length > 0) {
+      const nextTrack = downloadQueueRef.current.shift();
+      if (!nextTrack) continue;
+
+      const initialKeys = getTrackKeys(nextTrack);
+      initialKeys.forEach(k => queuedIdsRef.current.delete(k));
+      setQueuedDownloadIds(new Set(queuedIdsRef.current));
+
+      if (isTrackInIdSet(nextTrack, downloadedIdsRef.current) || isTrackInIdSet(nextTrack, downloadingIdsRef.current)) {
+        continue;
+      }
+
+      activeWorkersRef.current += 1;
+      initialKeys.forEach(k => downloadingIdsRef.current.add(k));
+      setDownloadingIds(new Set(downloadingIdsRef.current));
+      setActiveDownloadTracks(prev => [...prev.filter(x => x.id !== nextTrack.id), nextTrack]);
+
+      const updateProgressForKeys = (keys, pct) => {
+        setDownloadProgress(prev => {
+          const next = { ...prev };
+          keys.forEach(k => { next[k] = pct; });
+          return next;
+        });
+      };
+
+      updateProgressForKeys(initialKeys, 3);
+
+      (async () => {
+        let targetTrack = { ...nextTrack };
+        let allKeys = [...initialKeys];
+
+        try {
+          // If the track is an unresolved Spotify stub (sp_...), resolve it to the exact studio audio first
+          const currentStreamId = targetTrack.streamableId || targetTrack.id || '';
+          if (!currentStreamId || currentStreamId.startsWith('sp_')) {
+            try {
+              const resolved = await resolveTrack(targetTrack, true);
+              if (resolved && resolved.streamableId) {
+                targetTrack = {
+                  ...targetTrack,
+                  originalId: targetTrack.originalId || targetTrack.id,
+                  streamableId: resolved.streamableId,
+                  id: resolved.streamableId,
+                  thumbnail: resolved.thumbnail || targetTrack.thumbnail,
+                  hasCustomArtwork: true,
+                  studioResolvedV3: true,
+                  studioResolvedV4: true
+                };
+                updateTrackInPlaylists(targetTrack);
+                setPlaylists(getPlaylists());
+                allKeys = [...new Set([...allKeys, ...getTrackKeys(targetTrack)])];
+                allKeys.forEach(k => downloadingIdsRef.current.add(k));
+                setDownloadingIds(new Set(downloadingIdsRef.current));
+              }
+            } catch (e) {}
+          }
+
+          const blob = await downloadTrackAudioBlob(targetTrack, (pct) => {
+            updateProgressForKeys(allKeys, pct);
+          });
+
+          await saveTrackOffline(targetTrack, blob);
+
+          allKeys.forEach(k => downloadedIdsRef.current.add(k));
+          setDownloadedIds(new Set(downloadedIdsRef.current));
+          setDownloadedTracksCount(prev => prev + 1);
+
+          if (downloadQueueRef.current.length === 0 && activeWorkersRef.current <= 1) {
+            showToast(`✓ "${targetTrack.title}" נשמר להאזנה אופליין`);
+          }
+        } catch (err) {
+          console.error('Download failed:', err);
+          showToast(`⚠️ הורדת "${targetTrack.title}" נכשלה, נסה שוב`);
+        } finally {
+          allKeys.forEach(k => downloadingIdsRef.current.delete(k));
+          setDownloadingIds(new Set(downloadingIdsRef.current));
+          setActiveDownloadTracks(prev => prev.filter(x => x.id !== nextTrack.id && x.id !== targetTrack.id));
+          setDownloadProgress(prev => {
+            const next = { ...prev };
+            allKeys.forEach(k => { delete next[k]; });
+            return next;
+          });
+          activeWorkersRef.current = Math.max(0, activeWorkersRef.current - 1);
+          processDownloadQueue();
+        }
+      })();
     }
-  };
+  }, [showToast]);
+
+  const handleDownloadTrack = useCallback((track) => {
+    if (!track) return;
+    if (
+      isTrackInIdSet(track, downloadedIdsRef.current) ||
+      isTrackInIdSet(track, downloadingIdsRef.current) ||
+      isTrackInIdSet(track, queuedIdsRef.current)
+    ) {
+      return;
+    }
+
+    const keys = getTrackKeys(track);
+    keys.forEach(k => queuedIdsRef.current.add(k));
+    setQueuedDownloadIds(new Set(queuedIdsRef.current));
+    downloadQueueRef.current.push(track);
+    showToast(`⬇️ מוריד את "${track.title}" לאופליין...`);
+    processDownloadQueue();
+  }, [processDownloadQueue, showToast]);
+
+  const handleDownloadBatch = useCallback((tracksList) => {
+    if (!Array.isArray(tracksList) || tracksList.length === 0) return;
+    const toQueue = tracksList.filter(
+      t =>
+        t &&
+        !isTrackInIdSet(t, downloadedIdsRef.current) &&
+        !isTrackInIdSet(t, downloadingIdsRef.current) &&
+        !isTrackInIdSet(t, queuedIdsRef.current)
+    );
+    if (toQueue.length === 0) {
+      showToast('✓ כל השירים כבר שמורים אופליין');
+      return;
+    }
+
+    toQueue.forEach(t => {
+      getTrackKeys(t).forEach(k => queuedIdsRef.current.add(k));
+      downloadQueueRef.current.push(t);
+    });
+    setQueuedDownloadIds(new Set(queuedIdsRef.current));
+    showToast(`⬇️ מוריד ${toQueue.length} שירים להאזנה אופליין...`);
+    processDownloadQueue();
+  }, [processDownloadQueue, showToast]);
 
   useMediaSession({
     currentTrack: player.currentTrack,
@@ -200,16 +340,19 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
     setIsTrendingLoading(true);
-    getTrendingTracks()
-      .then(tracks => {
+    getHomeCatalog()
+      .then(catalog => {
         if (isMounted) {
+          const tracks = catalog.tracks || [];
+          const sections = catalog.sections || [];
           setTrendingTracks(tracks);
+          setCatalogSections(sections);
           if (tracks.length > 0) {
             prefetchNextTracks(tracks.slice(0, 5));
           }
         }
       })
-      .catch(err => console.error('Failed to load trending:', err))
+      .catch(err => console.error('Failed to load home catalog:', err))
       .finally(() => {
         if (isMounted) setIsTrendingLoading(false);
       });
@@ -592,7 +735,7 @@ export default function App() {
           setCurrentView={setCurrentView}
           playlists={playlists}
           likedCount={likedSongs.length}
-          downloadedCount={downloadedIds.size}
+          downloadedCount={downloadedTracksCount}
           openImportModal={() => setIsImportModalOpen(true)}
           onCreatePlaylist={() => handleCreatePlaylist(`פלייליסט מס׳ ${playlists.length + 1} שלי`)}
           selectedPlaylistId={selectedPlaylistId}
@@ -919,25 +1062,126 @@ export default function App() {
                   </section>
                 )}
 
+                {/* Curated Multi-Genre Catalog Shelves (120+ Songs across 6 Shelves) */}
+                {homeFilter !== 'playlists' && catalogSections.length > 0 && catalogSections.map((section) => (
+                  <section key={section.id} className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        {section.subtitle && (
+                          <p className="text-xs text-[#b3b3b3] mb-0.5">{section.subtitle}</p>
+                        )}
+                        <h2 className="font-extrabold text-[20px] sm:text-[22px] text-white tracking-tight">
+                          {section.title}
+                        </h2>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSearchQuery(section.title.split('—')[0].trim());
+                          setCurrentView('search');
+                        }}
+                        className="text-xs font-bold text-[#b3b3b3] hover:text-white hover:underline cursor-pointer"
+                      >
+                        הצג הכל ({section.tracks?.length || 0})
+                      </button>
+                    </div>
+                    <div className="flex overflow-x-auto gap-4 no-scrollbar pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
+                      {(section.tracks || []).map((track, idx) => {
+                        const active = isSameTrack(player.currentTrack, track);
+                        const isSavedOffline = isTrackInIdSet(track, downloadedIds);
+                        const isSavingOffline = isTrackInIdSet(track, downloadingIds) || isTrackInIdSet(track, queuedDownloadIds);
+                        return (
+                          <div
+                            key={`${section.id}_${track.id || idx}`}
+                            onClick={() => handlePlayTrack(track, section.tracks, idx)}
+                            onMouseEnter={() => prefetchNextTracks([track])}
+                            className="w-[152px] sm:w-[172px] flex-shrink-0 sm:p-2.5 rounded-md sm:hover:bg-[#181818] flex flex-col gap-1.5 group cursor-pointer transition-all duration-200"
+                          >
+                            <div className="relative aspect-square w-full rounded-[6px] overflow-hidden bg-[#282828] shadow-md">
+                              {track.thumbnail ? (
+                                <img src={track.thumbnail} alt="" loading="lazy" className="w-full h-full object-cover" />
+                              ) : (
+                                <Music2 className="w-10 h-10 m-auto text-[#b3b3b3]" />
+                              )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDownloadTrack(track);
+                                }}
+                                title={isSavedOffline ? 'שמור אופליין ✓' : 'הורד להאזנה אופליין'}
+                                className={`absolute top-2 left-2 w-7 h-7 rounded-full bg-black/65 backdrop-blur-sm flex items-center justify-center transition-opacity ${
+                                  isSavedOffline || isSavingOffline
+                                    ? 'opacity-100'
+                                    : 'opacity-0 group-hover:opacity-100'
+                                }`}
+                              >
+                                {isSavingOffline ? (
+                                  <Loader2 className="w-3.5 h-3.5 text-spotify-green animate-spin" />
+                                ) : isSavedOffline ? (
+                                  <ArrowDownCircle className="w-4 h-4 fill-spotify-green text-black" />
+                                ) : (
+                                  <ArrowDownCircle className="w-4 h-4 text-white hover:text-spotify-green" />
+                                )}
+                              </button>
+                              <button
+                                className={`absolute bottom-2 right-2 w-11 h-11 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-xl transition-all duration-200 hover:scale-105 ${
+                                  active
+                                    ? 'opacity-100 translate-y-0'
+                                    : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
+                                }`}
+                              >
+                                {active && player.isLoading ? (
+                                  <Loader2 className="w-5 h-5 animate-spin text-black" />
+                                ) : active && player.isPlaying ? (
+                                  <Pause className="w-5 h-5 fill-black text-black" />
+                                ) : (
+                                  <Play className="w-5 h-5 fill-black text-black translate-x-0.5" />
+                                )}
+                              </button>
+                            </div>
+                            <div className="flex flex-col min-w-0 text-right mt-0.5">
+                              <span className={`font-bold text-[13px] truncate ${active ? 'text-spotify-green' : 'text-white'}`}>
+                                {track.title}
+                              </span>
+                              <span className="text-xs text-[#b3b3b3] truncate">{track.artist}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ))}
+
                 {/* Section 3: תחנות מומלצות ולהיטים חמים (Matches Image 1) */}
                 {homeFilter !== 'playlists' && (
                   <section className="flex flex-col gap-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-xs text-[#b3b3b3] mb-0.5">מוזיקה ללא הפסקה על סמך האמנים והשירים האהובים עליכם.</p>
-                        <h2 className="font-extrabold text-[22px] text-white tracking-tight">תחנות מומלצות ולהיטים</h2>
+                        <h2 className="font-extrabold text-[22px] text-white tracking-tight">
+                          מאגר שירים ולהיטים מומלצים ({trendingTracks.length})
+                        </h2>
                       </div>
+                      {trendingTracks.length > 20 && (
+                        <button
+                          onClick={() => setShowAllTrending(prev => !prev)}
+                          className="text-xs font-bold text-spotify-green hover:underline"
+                        >
+                          {showAllTrending ? 'הצג פחות' : `הצג את כל ${trendingTracks.length} השירים`}
+                        </button>
+                      )}
                     </div>
 
                     {isTrendingLoading ? (
                       <div className="flex items-center justify-center p-12 text-[#b3b3b3] gap-3">
                         <Loader2 className="w-6 h-6 animate-spin text-spotify-green" />
-                        <span className="text-sm">טוען שירים...</span>
+                        <span className="text-sm">טוען מאגר שירים עשיר...</span>
                       </div>
                     ) : (
                       <div className="flex overflow-x-auto sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 no-scrollbar pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
-                        {trendingTracks.map((track, idx) => {
+                        {(showAllTrending ? trendingTracks : trendingTracks.slice(0, 25)).map((track, idx) => {
                           const active = isSameTrack(player.currentTrack, track);
+                          const isSavedOffline = isTrackInIdSet(track, downloadedIds);
+                          const isSavingOffline = isTrackInIdSet(track, downloadingIds) || isTrackInIdSet(track, queuedDownloadIds);
                           return (
                             <div
                               key={track.id || idx}
@@ -951,6 +1195,26 @@ export default function App() {
                                 ) : (
                                   <Music2 className="w-10 h-10 m-auto text-[#b3b3b3]" />
                                 )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDownloadTrack(track);
+                                  }}
+                                  title={isSavedOffline ? 'שמור אופליין ✓' : 'הורד להאזנה אופליין'}
+                                  className={`absolute top-2 left-2 w-7 h-7 rounded-full bg-black/65 backdrop-blur-sm flex items-center justify-center transition-opacity ${
+                                    isSavedOffline || isSavingOffline
+                                      ? 'opacity-100'
+                                      : 'opacity-0 group-hover:opacity-100'
+                                  }`}
+                                >
+                                  {isSavingOffline ? (
+                                    <Loader2 className="w-3.5 h-3.5 text-spotify-green animate-spin" />
+                                  ) : isSavedOffline ? (
+                                    <ArrowDownCircle className="w-4 h-4 fill-spotify-green text-black" />
+                                  ) : (
+                                    <ArrowDownCircle className="w-4 h-4 text-white hover:text-spotify-green" />
+                                  )}
+                                </button>
                                 <button
                                   className={`absolute bottom-2 right-2 w-11 h-11 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-xl transition-all duration-200 hover:scale-105 ${
                                     active
@@ -989,27 +1253,48 @@ export default function App() {
                 {isSearching ? (
                   <div className="flex items-center justify-center p-12 text-[#b3b3b3] gap-3">
                     <Loader2 className="w-6 h-6 animate-spin text-spotify-green" />
-                    <span className="text-sm">מחפש...</span>
+                    <span className="text-sm">מחפש במאגר המורחב (YouTube, Deezer, iTunes)...</span>
                   </div>
                 ) : searchResults.length > 0 ? (
-                  <div className="flex flex-col">
-                    {searchResults.map((track, idx) => (
-                      <TrackRow
-                        key={track.id || idx}
-                        index={idx}
-                        track={track}
-                        isCurrentTrack={isSameTrack(player.currentTrack, track)}
-                        isPlaying={player.isPlaying}
-                        isLoading={player.isLoading}
-                        onPlay={(t) => handlePlayTrack(t, searchResults, idx)}
-                        isLiked={likedSongs.some(s => isSameTrack(s, track))}
-                        onToggleLike={handleToggleLike}
-                        isDownloaded={downloadedIds?.has(track.id)}
-                        isDownloading={downloadingIds?.has(track.id)}
-                        onDownload={handleDownloadTrack}
-                        onOpenAddToPlaylist={handleOpenAddToPlaylist}
-                      />
-                    ))}
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between px-2 py-1">
+                      <span className="text-xs font-bold text-[#b3b3b3]">
+                        נמצאו {searchResults.length} תוצאות במאגר
+                      </span>
+                      <button
+                        onClick={() => handlePlayTrack(searchResults[0], searchResults, 0)}
+                        className="text-xs font-bold text-spotify-green hover:underline flex items-center gap-1"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-spotify-green" />
+                        <span>נגן את כל התוצאות</span>
+                      </button>
+                    </div>
+                    <div className="flex flex-col">
+                      {searchResults.map((track, idx) => (
+                        <TrackRow
+                          key={track.id || idx}
+                          index={idx}
+                          track={track}
+                          isCurrentTrack={isSameTrack(player.currentTrack, track)}
+                          isPlaying={player.isPlaying}
+                          isLoading={player.isLoading}
+                          onPlay={(t) => handlePlayTrack(t, searchResults, idx)}
+                          isLiked={likedSongs.some(s => isSameTrack(s, track))}
+                          onToggleLike={handleToggleLike}
+                          isDownloaded={isTrackInIdSet(track, downloadedIds)}
+                          isDownloading={isTrackInIdSet(track, downloadingIds)}
+                          isQueuedDownload={isTrackInIdSet(track, queuedDownloadIds)}
+                          downloadProgress={
+                            downloadProgress[track.id] ||
+                            downloadProgress[track.streamableId] ||
+                            downloadProgress[track.originalId] ||
+                            0
+                          }
+                          onDownload={handleDownloadTrack}
+                          onOpenAddToPlaylist={handleOpenAddToPlaylist}
+                        />
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <div className="flex flex-col gap-3 mt-1">
@@ -1095,7 +1380,7 @@ export default function App() {
                       <div className="flex flex-col min-w-0 flex-1 text-right">
                         <span className="text-base font-semibold text-white truncate">הורדות אופליין</span>
                         <span className="text-[13px] text-[#b3b3b3] truncate mt-0.5">
-                          שמורים במכשיר • {downloadedIds.size} שירים
+                          שמורים במכשיר • {downloadedTracksCount} שירים
                         </span>
                       </div>
                     </div>
@@ -1171,7 +1456,10 @@ export default function App() {
                 onToggleLike={handleToggleLike}
                 downloadedIds={downloadedIds}
                 downloadingIds={downloadingIds}
+                queuedDownloadIds={queuedDownloadIds}
+                downloadProgress={downloadProgress}
                 onDownloadTrack={handleDownloadTrack}
+                onDownloadBatch={handleDownloadBatch}
                 onOpenAddToPlaylist={handleOpenAddToPlaylist}
                 shuffleMode={player.shuffleMode}
                 onToggleShuffle={handleToggleShuffle}
@@ -1195,7 +1483,10 @@ export default function App() {
                 onDeletePlaylist={handleDeletePlaylist}
                 downloadedIds={downloadedIds}
                 downloadingIds={downloadingIds}
+                queuedDownloadIds={queuedDownloadIds}
+                downloadProgress={downloadProgress}
                 onDownloadTrack={handleDownloadTrack}
+                onDownloadBatch={handleDownloadBatch}
                 onOpenAddToPlaylist={handleOpenAddToPlaylist}
                 onRemoveTrackFromPlaylist={handleRemoveTrackFromPlaylist}
                 shuffleMode={player.shuffleMode}
@@ -1219,6 +1510,10 @@ export default function App() {
                 shuffleMode={player.shuffleMode}
                 onToggleShuffle={handleToggleShuffle}
                 onPlayShuffled={handlePlayShuffled}
+                downloadedCount={downloadedTracksCount}
+                activeDownloads={activeDownloadTracks}
+                queuedDownloadsCount={downloadQueueRef.current.length}
+                downloadProgress={downloadProgress}
               />
             )}
 
@@ -1459,6 +1754,53 @@ export default function App() {
         onClose={() => setIsServerModalOpen(false)}
         showToast={showToast}
       />
+
+      {/* Floating Live Offline Download Progress Pill */}
+      {(activeDownloadTracks.length > 0 || queuedDownloadIds.size > 0) && currentView !== 'offline' && (
+        <div
+          onClick={() => setCurrentView('offline')}
+          className="fixed bottom-32 md:bottom-24 right-4 z-[90] bg-[#182820]/95 backdrop-blur-md border border-spotify-green/40 rounded-xl px-3.5 py-2.5 shadow-2xl cursor-pointer hover:bg-[#1e3329] transition-all flex flex-col gap-1.5 w-64 sm:w-72"
+        >
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-1.5 text-spotify-green font-bold truncate">
+              <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+              <span className="truncate">
+                {activeDownloadTracks[0] ? `מוריד: ${activeDownloadTracks[0].title}` : 'מכין הורדה לאופליין...'}
+              </span>
+            </div>
+            <span className="text-[11px] font-mono font-bold text-spotify-green flex-shrink-0 mr-1">
+              {activeDownloadTracks[0]
+                ? `${
+                    downloadProgress[activeDownloadTracks[0].id] ||
+                    downloadProgress[activeDownloadTracks[0].streamableId] ||
+                    downloadProgress[activeDownloadTracks[0].originalId] ||
+                    5
+                  }%`
+                : ''}
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-spotify-green transition-all duration-200 rounded-full"
+              style={{
+                width: `${
+                  activeDownloadTracks[0]
+                    ? downloadProgress[activeDownloadTracks[0].id] ||
+                      downloadProgress[activeDownloadTracks[0].streamableId] ||
+                      downloadProgress[activeDownloadTracks[0].originalId] ||
+                      5
+                    : 5
+                }%`
+              }}
+            />
+          </div>
+          {downloadQueueRef.current.length > 0 && (
+            <span className="text-[10px] text-[#b3b3b3] text-right">
+              עוד {downloadQueueRef.current.length} שירים ממתינים בתור להורדה • לחץ לצפייה
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Spotify Bottom Toast Notification */}
       {toastMessage && (
