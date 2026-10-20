@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowDownCircle,
   Trash2,
@@ -562,23 +563,25 @@ export function OfflineView({
         )}
       </div>
 
-      {/* ==================== CREATE PLAYLIST FROM OFFLINE MODAL ==================== */}
-      {isCreateModalOpen && (
+      {/* ==================== CREATE PLAYLIST FROM OFFLINE MODAL (Portaled to document.body) ==================== */}
+      {isCreateModalOpen && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn"
+          className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn select-none"
           onClick={() => setIsCreateModalOpen(false)}
+          dir="rtl"
         >
           <div
-            className="bg-[#242424] rounded-2xl p-5 sm:p-6 w-full max-w-md border border-white/10 shadow-2xl flex flex-col max-h-[85vh] text-right"
+            className="bg-[#242424] rounded-2xl p-5 sm:p-6 w-full max-w-md border border-white/15 shadow-2xl flex flex-col max-h-[85vh] text-right"
             onClick={(e) => e.stopPropagation()}
             dir="rtl"
           >
-            <div className="flex items-center justify-between pb-3.5 border-b border-white/10">
+            <div className="flex items-center justify-between pb-3.5 border-b border-white/10 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <ListPlus className="w-5 h-5 text-spotify-green" />
                 <h2 className="text-lg font-extrabold text-white">יצירת פלייליסט ממצב אופליין</h2>
               </div>
               <button
+                type="button"
                 onClick={() => setIsCreateModalOpen(false)}
                 className="p-1 text-[#b3b3b3] hover:text-white"
               >
@@ -586,8 +589,8 @@ export function OfflineView({
               </button>
             </div>
 
-            <form onSubmit={handleConfirmCreatePlaylist} className="flex flex-col gap-4 mt-4 flex-1 overflow-hidden">
-              <div className="flex flex-col gap-1.5">
+            <form onSubmit={handleConfirmCreatePlaylist} className="flex flex-col gap-4 mt-4 min-h-0 flex-1 overflow-hidden">
+              <div className="flex flex-col gap-1.5 flex-shrink-0">
                 <label className="text-xs font-bold text-[#b3b3b3]">שם הפלייליסט</label>
                 <input
                   type="text"
@@ -600,8 +603,8 @@ export function OfflineView({
               </div>
 
               {tracks.length > 0 && (
-                <div className="flex flex-col flex-1 overflow-hidden gap-2">
-                  <div className="flex items-center justify-between text-xs">
+                <div className="flex flex-col min-h-0 flex-1 overflow-hidden gap-2">
+                  <div className="flex items-center justify-between text-xs flex-shrink-0">
                     <span className="font-bold text-white">
                       בחר שירים מהאופליין ({selectedTrackIds.size} מתוך {tracks.length})
                     </span>
@@ -620,14 +623,14 @@ export function OfflineView({
                     </button>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto flex flex-col gap-1 pr-1 no-scrollbar border border-white/10 rounded-xl p-2 bg-[#181818]">
+                  <div className="max-h-[38vh] min-h-[120px] overflow-y-auto flex flex-col gap-1 pr-1 no-scrollbar border border-white/10 rounded-xl p-2 bg-[#181818]">
                     {tracks.map((t) => {
                       const checked = selectedTrackIds.has(t.id);
                       return (
                         <div
                           key={t.id}
                           onClick={() => toggleSelectTrack(t.id)}
-                          className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors ${
+                          className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors flex-shrink-0 ${
                             checked ? 'bg-spotify-green/15 border border-spotify-green/30' : 'hover:bg-white/5'
                           }`}
                         >
@@ -659,7 +662,7 @@ export function OfflineView({
                 </div>
               )}
 
-              <div className="flex items-center gap-2 pt-2">
+              <div className="flex items-center gap-2 pt-2 flex-shrink-0">
                 <button
                   type="submit"
                   className="flex-1 bg-spotify-green hover:bg-spotify-green-hover text-black font-extrabold text-sm py-3 rounded-full shadow-lg transition-transform active:scale-95"
@@ -676,7 +679,8 @@ export function OfflineView({
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

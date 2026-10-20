@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Play,
   Pause,
@@ -303,14 +304,15 @@ export function TrackRow({
         </div>
       </div>
 
-      {/* Spotify Mobile Bottom Sheet Track Menu */}
-      {menuOpen && (
+      {/* Spotify Mobile Bottom Sheet Track Menu (Portaled to document.body so it is never trapped inside scroll containers) */}
+      {menuOpen && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end justify-center sm:hidden animate-fadeIn"
+          className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-end justify-center sm:hidden animate-fadeIn select-none"
           onClick={() => setMenuOpen(false)}
+          dir="rtl"
         >
           <div
-            className="w-full bg-[#282828] rounded-t-2xl p-5 pb-8 flex flex-col gap-4 animate-slideUp"
+            className="w-full bg-[#282828] rounded-t-2xl p-5 pb-8 flex flex-col gap-4 animate-slideUp text-right"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="w-10 h-1 bg-white/25 rounded-full mx-auto mb-1" />
@@ -352,7 +354,7 @@ export function TrackRow({
                   className="flex items-center gap-4 py-3 px-2 rounded-lg active:bg-white/10 text-white text-sm font-medium"
                 >
                   <ListPlus className="w-5 h-5 text-[#b3b3b3]" />
-                  <span>הוסף לפלייליסט אחר</span>
+                  <span>הוסף לפלייליסט / צור פלייליסט</span>
                 </button>
               )}
 
@@ -390,12 +392,13 @@ export function TrackRow({
                   className="flex items-center gap-4 py-3 px-2 rounded-lg active:bg-white/10 text-red-400 text-sm font-medium"
                 >
                   <Trash2 className="w-5 h-5" />
-                  <span>הסר מפלייליסט זה</span>
+                  <span>הסר מרשימה זו</span>
                 </button>
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

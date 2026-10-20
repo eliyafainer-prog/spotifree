@@ -32,11 +32,11 @@ export function AddToPlaylistModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn select-none"
+      className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn select-none"
       onClick={onClose}
     >
       <div
-        className="bg-spotify-elevated rounded-2xl p-6 w-full max-w-md border border-white/10 shadow-2xl relative flex flex-col max-h-[85vh] animate-scaleUp text-right"
+        className="bg-[#242424] rounded-2xl p-5 sm:p-6 w-full max-w-md border border-white/15 shadow-2xl relative flex flex-col max-h-[85vh] text-right"
         onClick={(e) => e.stopPropagation()}
         dir="rtl"
       >
@@ -108,7 +108,7 @@ export function AddToPlaylistModal({
         )}
 
         {/* Playlists List */}
-        <div className="flex-1 overflow-y-auto flex flex-col gap-1 pr-1 custom-scrollbar">
+        <div className="max-h-[38vh] min-h-[120px] overflow-y-auto flex flex-col gap-1 pr-1 no-scrollbar">
           {playlists.length === 0 ? (
             <div className="p-8 text-center text-spotify-subtext text-xs">
               אין עדיין פלייליסטים. צור את הפלייליסט הראשון שלך למעלה!
