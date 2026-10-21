@@ -285,7 +285,8 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
     'קאבר', 'cover', 'קריוקי', 'karaoke', 'פרודיה', 'parody', 'משאפ', 'מאשאפ', 'mashup', 'mash up',
     'אינסטרומנטלי', 'instrumental', 'ריאיון', 'ראיון', 'הצצה ל', 'מתוך פרק', 'בטקס ',
     'רמיקס', 'רימיקס', 'remix', 'slowed', 'sped up', 'nightcore', '8d',
-    '#myפסטיגל', 'my פסטיגל', 'my festigal', 'חידוש', 'מחווה', 'גיבוי', 'תרגום'
+    '#myפסטיגל', 'my פסטיגל', 'my festigal', 'חידוש', 'מחווה', 'גיבוי', 'תרגום',
+    'מגיב', 'מגיבה', 'תגובה', 'reacts', 'edits', 'אדיט', 'speed up', 'spedup', 'מואץ', 'גרסה מהירה', 'bass boost', 'tiktok', 'טיקטוק'
   ];
   for (const w of stageAndLiveWords) {
     if (candTitle.includes(w) && !rawTargetTitle.includes(w) && !targetAlbum.includes(w)) {
@@ -537,5 +538,6 @@ module.exports = {
   importSpotify,
   importYouTubePlaylist,
   universalImport,
-  resolveTrackToStreamableId
+  resolveTrackToStreamableId,
+  scoreCandidate
 };

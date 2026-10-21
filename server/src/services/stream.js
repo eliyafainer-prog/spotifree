@@ -780,5 +780,6 @@ async function pipeStream(videoId, req, res, fallbackQuery = null, meta = null) 
 module.exports = {
   getAudioStreamUrl,
   pipeStream,
-  prefetchTracks
+  prefetchTracks,
+  scoreSoundCloudCandidate
 };

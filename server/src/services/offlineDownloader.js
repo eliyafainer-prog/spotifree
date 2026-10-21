@@ -113,15 +113,81 @@ async function fetchYoutubeOembed(videoId) {
 }
 
 /**
- * Smart Offline Candidate Scorer:
- * Ensures full-length studio audio while tolerating Hebrew/English transliterated artist usernames
- * (e.g. Spotify artist "נועה קירל" vs SoundCloud username "Noa Kirel") so valid songs never fail!
+ * Strict Offline Candidate Matcher.
+ * Only accepts the ORIGINAL song by the SAME artist:
+ *  - every title word must appear as a whole word in the candidate title (not inside another word, e.g. "כל" ≠ "הכלל")
+ *  - the candidate title must not carry another song's name (extra content words are rejected)
+ *  - the artist must appear in the uploader name or title
+ *  - covers / remixes / reactions / edits / sped-up / live versions are rejected outright
  */
-function scoreOfflineCandidate(item, meta = {}, oembed = null) {
+const HEB_PREFIXES = ['ו', 'ה', 'ב', 'ל', 'מ', 'ש', 'כ', 'וה', 'וב', 'ול', 'שה', 'מה', 'וש'];
+const FILLER_WORDS = new Set([
+  'official', 'audio', 'video', 'music', 'lyrics', 'lyric', 'hd', 'hq', '4k', 'prod', 'by', 'feat', 'ft', 'featuring',
+  'with', 'and', 'x', 'the', 'mp3', 'topic', 'new', 'single', 'version', 'original', 'mix', 'clip', 'visualizer',
+  'אודיו', 'רשמי', 'רשמית', 'קליפ', 'מילים', 'עם', 'בהשתתפות', 'מארח', 'מארחת', 'את', 'של', 'הפקה', 'סינגל', 'חדש', 'השיר', 'שיר', 'גרסה', 'מקורית'
+]);
+const REJECT_WORDS = [
+  'remix', 'rmx', 'rework', 'bootleg', 'edit', 'edits', 'remake', 'cover', 'slowed', 'reverb', 'sped up', 'speed up', 'spedup',
+  'nightcore', 'karaoke', 'instrumental', 'mashup', 'mash up', 'live', 'reaction', 'reacts', 'tiktok', '8d', 'bass boost',
+  'רמיקס', 'רימיקס', 'קאבר', 'קריוקי', 'בהופעה', 'הופעה', 'מהבמה', 'לייב', 'מאשאפ', 'משאפ', 'מחרוזת', 'מגיב', 'מגיבה', 'תגובה',
+  'אדיט', 'מואץ', 'מהיר', 'טיקטוק', 'פרודיה', 'חידוש', 'בביצוע', 'אינסטרומנטלי', 'גרסת', 'podcast', 'פודקאסט', 'פרסומת'
+];
+
+function tokenize(str) {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/\.(mp3|m4a|wav)$/i, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 0);
+}
+
+function wordMatches(token, word) {
+  if (token === word) return true;
+  for (const p of HEB_PREFIXES) {
+    if (token === p + word) return true;
+  }
+  return false;
+}
+
+function hasWord(tokens, word) {
+  return tokens.some(t => wordMatches(t, word));
+}
+
+function hasPhrase(tokens, phraseTokens) {
+  if (phraseTokens.length === 0) return false;
+  for (let i = 0; i + phraseTokens.length <= tokens.length; i++) {
+    let ok = true;
+    for (let j = 0; j < phraseTokens.length; j++) {
+      if (!wordMatches(tokens[i + j], phraseTokens[j])) { ok = false; break; }
+    }
+    if (ok) return true;
+  }
+  return false;
+}
+
+function getCoreTitle(rawTitle) {
+  const t = String(rawTitle || '')
+    .replace(/\\/g, ' ')
+    .replace(/\s*[\(\[][^)\]]*[\)\]]/g, '')
+    .trim();
+  return t.includes(' - ') ? t.split(' - ')[0].trim() : t;
+}
+
+function getArtistNames(rawArtist, aliases = []) {
+  return [
+    ...String(rawArtist || '').split(/[,&•/]+/),
+    ...aliases
+  ]
+    .map(a => tokenize(a).filter(w => !['פסטיגל', 'משתתפי', 'הפסטיגל', 'topic', 'official', 'הערוץ', 'הרשמי'].includes(w)))
+    .filter(a => a.length > 0);
+}
+
+function scoreOfflineCandidate(item, meta = {}, artistAliases = []) {
   if (!item || item.snipped || item.policy === 'SNIP' || item.policy === 'BLOCK') return -999;
   const dur = Math.round((item.duration || 0) / 1000);
   const fullDur = Math.round((item.full_duration || item.duration || 0) / 1000);
-  if (dur <= 42 || dur > 720) return -999;
+  if (dur <= 45 || dur > 720) return -999;
   if (fullDur > dur + 5) return -999;
 
   const transcodings = (item.media?.transcodings || []).filter(
@@ -129,221 +195,152 @@ function scoreOfflineCandidate(item, meta = {}, oembed = null) {
   );
   if (transcodings.length === 0) return -999;
 
-  const title = String(item.title || '').toLowerCase();
+  const rawCandTitle = String(item.title || '').toLowerCase();
   const username = String(item.user?.username || '').toLowerCase();
-  const combined = `${title} ${username}`;
+  const rawTargetTitle = String(meta?.title || '').toLowerCase();
 
-  const adWords = [
-    'podcast', 'פודקאסט', 'פרק ', 'פרסומת', 'חסות', 'jingle', 'commercial', 'teaser', 'trailer'
-  ];
-  for (const aw of adWords) {
-    if (combined.includes(aw)) return -999;
+  // 1. Reject non-original versions (unless the requested title itself asks for it)
+  for (const bw of REJECT_WORDS) {
+    const inCand = bw.includes(' ') ? rawCandTitle.includes(bw) : hasWord(tokenize(rawCandTitle), bw);
+    if (inCand && !rawTargetTitle.includes(bw)) return -999;
   }
+
+  // Candidate title without bracketed extras like "(Prod. By Triangle)"
+  const candTokens = tokenize(rawCandTitle.replace(/\s*[\(\[][^)\]]*[\)\]]/g, ' '));
+  const userTokens = tokenize(username);
+  const titleWords = tokenize(getCoreTitle(meta?.title)).filter(w => w.length > 1 || /\p{N}/u.test(w));
+  if (titleWords.length === 0) return -999;
+
+  // 2. Title: every word must appear as a whole word (allow 1 miss only for long titles of 5+ words)
+  const matched = titleWords.filter(w => hasWord(candTokens, w)).length;
+  const allowedMisses = titleWords.length >= 5 ? 1 : 0;
+  if (titleWords.length - matched > allowedMisses) return -999;
+
+  // 3. Artist must be present in uploader name or in the title
+  const artistNames = getArtistNames(meta?.artist, artistAliases);
+  let artistInUser = false;
+  let artistInTitle = false;
+  for (const name of artistNames) {
+    if (hasPhrase(userTokens, name) || username.replace(/\s+/g, '').includes(name.join(''))) artistInUser = true;
+    if (hasPhrase(candTokens, name)) artistInTitle = true;
+  }
+  if (artistNames.length > 0 && !artistInUser && !artistInTitle) return -999;
+
+  // 4. No other song's name glued in: leftover content words (not title / artist / filler) are not allowed
+  const artistWordSet = new Set(artistNames.flat());
+  const leftovers = candTokens.filter(t =>
+    !titleWords.some(w => wordMatches(t, w)) &&
+    ![...artistWordSet].some(w => wordMatches(t, w)) &&
+    !FILLER_WORDS.has(t) &&
+    !/^\d+$/.test(t) &&
+    t.length > 1
+  );
+  if (leftovers.length > 1) return -999;
+
+  let score = 200 - leftovers.length * 40;
+  if (artistInUser) score += 90;           // official artist page
+  else if (artistInTitle) score += 30;     // someone else uploaded it
+
+  if (item.user?.verified) score += 40;
+  const followers = Number(item.user?.followers_count) || 0;
+  if (followers >= 10000) score += 30;
+  else if (followers >= 1000) score += 15;
+  else if (!artistInUser && followers < 100) score -= 40; // random small uploader
 
   const targetDur = Number(meta?.durationSeconds) || 0;
-  const rawTargetTitle = String(meta?.title || '').toLowerCase().trim();
-  const cleanTargetTitle = rawTargetTitle
-    .replace(/\\/g, ' ')
-    .replace(/\s*[\(\[][^)\]]*[\)\]]/g, '')
-    .split(' - ')
-    .pop()
-    .trim() || rawTargetTitle;
-
-  const targetArtist = String(meta?.artist || '').toLowerCase().trim();
-  const oembedAuthor = String(oembed?.author || '').toLowerCase().trim();
-  const oembedTitle = String(oembed?.title || '').toLowerCase().trim();
-
-  // Extract meaningful words from target title (and oembed title if available)
-  const titleWords = cleanTargetTitle
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 1);
-
-  const oembedWords = oembedTitle
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 1);
-
-  let score = 100;
-
-  if (titleWords.length > 0) {
-    const matchedPrimary = titleWords.filter(w => combined.includes(w)).length;
-    const ratioPrimary = matchedPrimary / titleWords.length;
-
-    let ratioOembed = 0;
-    if (oembedWords.length > 0) {
-      const matchedOembed = oembedWords.filter(w => combined.includes(w)).length;
-      ratioOembed = matchedOembed / oembedWords.length;
-    }
-
-    const bestRatio = Math.max(ratioPrimary, ratioOembed);
-    if (bestRatio < 0.45) return -999;
-    score += Math.round(bestRatio * 90);
-  }
-
-  // Duration proximity against Spotify/YouTube target duration
   if (targetDur > 40) {
     const diff = Math.abs(dur - targetDur);
-    if (diff <= 4) score += 150;
-    else if (diff <= 10) score += 110;
-    else if (diff <= 18) score += 65;
-    else if (diff <= 30) score += 20;
-    else if (diff <= 45) score -= 45;
-    else score -= 140;
-  } else if (dur >= 100 && dur <= 340) {
-    score += 35;
+    if (diff <= 4) score += 120;
+    else if (diff <= 10) score += 70;
+    else if (diff <= 20) score += 10;
+    else if (diff <= 35) score -= 80;
+    else return -999; // far from the original length = different version
   }
 
-  // Penalize non-studio versions unless requested in target title
-  const badWords = [
-    'remix', 'rework', 'bootleg', 'cover', 'slowed', 'reverb', 'sped up',
-    'nightcore', 'karaoke', 'instrumental', 'רמיקס', 'רימיקס', 'קאבר', 'קריוקי', 'בהופעה', 'מהבמה'
-  ];
-  for (const bw of badWords) {
-    if (title.includes(bw) && !rawTargetTitle.includes(bw)) {
-      score -= 130;
-    }
-  }
-
-  // Artist match (checks both Spotify artist and YouTube oEmbed channel/author for bilingual match!)
-  const artistTokens = `${targetArtist} ${oembedAuthor}`
-    .replace(/[,&•/\-()]+/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 1 && !['topic', 'official', 'music', 'פסטיגל', 'משתתפי'].includes(w));
-
-  if (artistTokens.length > 0) {
-    if (artistTokens.some(w => username.includes(w))) {
-      score += 75;
-    } else if (artistTokens.some(w => title.includes(w))) {
-      score += 55;
-    } else if (targetDur > 40 && Math.abs(dur - targetDur) <= 8) {
-      // Exact studio duration match even when uploader username is in English/transliterated!
-      score += 35;
-    } else {
-      score -= 35;
-    }
-  }
-
-  if (transcodings.some(t => t.format?.protocol === 'progressive')) {
-    score += 25;
-  }
-
+  if (transcodings.some(t => t.format?.protocol === 'progressive')) score += 10;
   return score;
 }
 
+async function fetchCatalogArtistAliases(meta = {}) {
+  const coreTitle = getCoreTitle(meta?.title);
+  const primaryArtist = String(meta?.artist || '').split(/[,&•]/)[0].trim();
+  if (!coreTitle || !primaryArtist) return [];
+  const aliases = new Set();
+  const titleTokens = tokenize(coreTitle);
+  try {
+    const r = await axios.get('https://api.deezer.com/search', {
+      params: { q: `${primaryArtist} ${coreTitle}`, limit: 5 },
+      timeout: 2500,
+      httpsAgent
+    });
+    for (const d of r.data?.data || []) {
+      const dTokens = tokenize(d.title);
+      if (titleTokens.every(w => hasWord(dTokens, w)) && d.artist?.name) aliases.add(d.artist.name);
+    }
+  } catch (e) {}
+  return [...aliases];
+}
+
 /**
- * Multi-query SoundCloud + Piped/Invidious fallback extractor specifically for Offline Downloads
+ * Offline download source finder (same engine as normal playback first, then strict multi-query SoundCloud search)
  */
 async function findOfflineStreamUrl(videoId, fallbackQuery, meta = {}) {
-  // 1. Try primary stream engine first (0ms if cached, or standard studio match)
+  // 1. Primary stream engine (identical to normal playback)
   try {
     const primaryUrl = await getAudioStreamUrl(videoId, fallbackQuery, true, meta);
     if (primaryUrl) return primaryUrl;
   } catch (e) {}
 
-  // 2. Bilingual / Multi-Query SoundCloud Studio Fallback
+  // 2. Strict multi-query SoundCloud search (original song, same artist only)
+  const coreTitle = getCoreTitle(meta?.title);
+  const primaryArtist = String(meta?.artist || '').split(/[,&•]/)[0].trim();
+  if (!coreTitle) throw new Error('לא נמצא מקור שמע להורדה עבור שיר זה');
+
+  const artistAliases = await fetchCatalogArtistAliases(meta);
+
+  // YouTube oEmbed is used only to learn an English artist alias, and only if that video really is this song
   const oembed = await fetchYoutubeOembed(videoId);
-  const rawTitle = String(meta?.title || '').trim();
-  const rawArtist = String(meta?.artist || '').trim();
-  const primaryArtist = rawArtist.split(/[,&•]/)[0].trim();
-
-  const cleanTitle = rawTitle
-    .replace(/\\/g, ' ')
-    .replace(/\s*[\(\[][^)\]]*[\)\]]/g, '')
-    .trim();
-
-  const shortTitle = cleanTitle.includes(' - ')
-    ? cleanTitle.split(' - ').pop().trim()
-    : cleanTitle;
+  if (oembed) {
+    const oTokens = tokenize(oembed.title);
+    const titleTokens = tokenize(coreTitle).filter(w => w.length > 1);
+    const sameSong = titleTokens.length > 0 && titleTokens.every(w => hasWord(oTokens, w));
+    const badVideo = REJECT_WORDS.some(bw => hasWord(oTokens, bw));
+    if (sameSong && !badVideo && oembed.author) artistAliases.push(oembed.author);
+  }
 
   const queries = [
-    primaryArtist && shortTitle ? `${primaryArtist} ${shortTitle}` : '',
-    shortTitle,
-    cleanTitle,
-    oembed ? `${oembed.author} ${oembed.title}`.trim() : '',
-    oembed ? oembed.title : '',
-    fallbackQuery || ''
+    primaryArtist ? `${primaryArtist} ${coreTitle}` : '',
+    ...artistAliases.map(a => `${a} ${coreTitle}`),
+    coreTitle
   ]
     .map(q => q.replace(/[^\p{L}\p{N}\s\-']/gu, ' ').replace(/\s+/g, ' ').trim())
     .filter(Boolean);
 
-  const uniqueQueries = [...new Set(queries)];
-  const allCandidates = new Map();
-  const rawPool = new Map();
-
-  for (const q of uniqueQueries.slice(0, 5)) {
+  const candidates = new Map();
+  for (const q of [...new Set(queries)].slice(0, 4)) {
     const items = await searchScTracks(q, 20);
     for (const it of items) {
-      if (it && it.id) {
-        if (!rawPool.has(it.id)) rawPool.set(it.id, it);
-        if (!allCandidates.has(it.id)) {
-          const s = scoreOfflineCandidate(it, meta, oembed);
-          if (s > 30) {
-            allCandidates.set(it.id, { item: it, score: s });
-          }
-        }
-      }
+      if (!it || !it.id || candidates.has(it.id)) continue;
+      const s = scoreOfflineCandidate(it, meta, artistAliases);
+      if (s > 0) candidates.set(it.id, { item: it, score: s });
     }
-    const bestSoFar = [...allCandidates.values()].sort((a, b) => b.score - a.score)[0];
-    if (bestSoFar && bestSoFar.score >= 220) break;
+    const best = [...candidates.values()].sort((a, b) => b.score - a.score)[0];
+    if (best && best.score >= 300) break;
   }
 
-  const sortedCandidates = [...allCandidates.values()].sort((a, b) => b.score - a.score);
-  for (const cand of sortedCandidates.slice(0, 5)) {
+  const sorted = [...candidates.values()].sort((a, b) => b.score - a.score);
+  for (const cand of sorted.slice(0, 4)) {
     const streamUrl = await resolveScStreamUrl(cand.item, false);
-    if (streamUrl) return streamUrl;
-  }
-
-  // 3. Relaxed Full-Length SoundCloud Fallback (accepts remixes/covers/live versions when studio upload is missing or geo-locked)
-  const cleanWords = shortTitle
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 1);
-
-  const relaxedPool = [...rawPool.values()]
-    .filter(it => {
-      const dur = Math.round((it.duration || 0) / 1000);
-      const fullDur = Math.round((it.full_duration || it.duration || 0) / 1000);
-      if (it.snipped || dur <= 42 || dur > 720 || fullDur > dur + 5) return false;
-      const t = `${it.title || ''} ${it.user?.username || ''}`.toLowerCase();
-      if (cleanWords.length === 0) return true;
-      return cleanWords.some(w => t.includes(w));
-    })
-    .sort((a, b) => {
-      const targetDur = Number(meta?.durationSeconds) || 195;
-      const diffA = Math.abs(Math.round((a.duration || 0) / 1000) - targetDur);
-      const diffB = Math.abs(Math.round((b.duration || 0) / 1000) - targetDur);
-      return diffA - diffB;
-    });
-
-  for (const item of relaxedPool.slice(0, 4)) {
-    const streamUrl = await resolveScStreamUrl(item, false);
-    if (streamUrl) return streamUrl;
-  }
-
-  // 4. Fallback to Piped audio streams if videoId is a valid 11-char YouTube ID
-  if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    const pipedInstances = [
-      'https://pipedapi.kavin.rocks',
-      'https://pipedapi.tokhmi.xyz',
-      'https://pipedapi.moomoo.me'
-    ];
-    for (const inst of pipedInstances) {
-      try {
-        const res = await axios.get(`${inst}/streams/${videoId}`, { timeout: 3500, httpsAgent });
-        const audioStreams = res.data?.audioStreams || [];
-        const bestAudio =
-          audioStreams.find(a => a.mimeType?.includes('audio/mp4') && a.url) ||
-          audioStreams.find(a => a.url);
-        if (bestAudio?.url) return bestAudio.url;
-      } catch (e) {}
+    if (streamUrl) {
+      console.log(`[OfflineDownload] "${meta?.artist} - ${meta?.title}" -> SC "${cand.item.user?.username} :: ${cand.item.title}" (${cand.score})`);
+      return streamUrl;
     }
   }
 
-  // Intentionally no 30s-preview fallback: saving a clip as a "downloaded" song is worse than an honest failure.
-  throw new Error('לא נמצא מקור שמע להורדה עבור שיר זה');
+  // No 30s previews, covers, remixes or unrelated songs: an honest failure is better than a wrong song.
+  throw new Error('לא נמצאה גרסה מקורית מלאה של השיר להורדה');
 }
+
 
 function patchInitMp4Duration(buf, totalSec) {
   if (!totalSec || totalSec <= 0) return buf;
@@ -538,5 +535,6 @@ async function pipeOfflineDownload(videoId, req, res, fallbackQuery = null, meta
 
 module.exports = {
   findOfflineStreamUrl,
-  pipeOfflineDownload
+  pipeOfflineDownload,
+  scoreOfflineCandidate
 };
