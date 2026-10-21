@@ -250,19 +250,43 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
   }
 
   // 1. Core Title word matching (MANDATORY: must actually be the requested song!)
+  const stopWords = new Set(['כל', 'כך', 'של', 'את', 'עם', 'זה', 'על', 'אל', 'מן', 'זה', 'מה', 'לא', 'כי', 'גם', 'the', 'in', 'of', 'and', 'to', 'a', 'an']);
   const titleWords = coreTargetTitle
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
     .filter(w => w.length > 1);
+
+  // Extract core non-stop words (e.g. for "רוקד כל כך יפה", important words are "רוקד" and "יפה")
+  const importantTitleWords = titleWords.filter(w => !stopWords.has(w));
+  const wordsToTest = importantTitleWords.length > 0 ? importantTitleWords : titleWords;
+
+  const candTokens = new Set(candTitle.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/));
+  const candCleanTokens = new Set(candCleanTitle.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/));
+
   let matchedWords = 0;
-  for (const w of titleWords) {
-    if (candTitle.includes(w) || candCleanTitle.includes(w)) matchedWords++;
+  for (const w of wordsToTest) {
+    if (candTokens.has(w) || candCleanTokens.has(w) || (w.length >= 4 && (candTitle.includes(w) || candCleanTitle.includes(w)))) {
+      matchedWords++;
+    }
   }
-  const matchRatio = titleWords.length > 0 ? (matchedWords / titleWords.length) : 1;
+
+  // If none of the important title words matched, it's definitely a completely different song!
+  if (wordsToTest.length > 0 && matchedWords === 0) {
+    return -999;
+  }
+
+  const matchRatio = wordsToTest.length > 0 ? (matchedWords / wordsToTest.length) : 1;
   if (matchRatio < 0.6) {
     return -999; // Disqualify wrong songs immediately
   }
-  score += Math.round(matchRatio * 60);
+  score += Math.round(matchRatio * 90);
+
+  // If candidate title has prominent words that are completely absent from target title, penalize it
+  const candNonStopTokens = [...candCleanTokens].filter(w => w.length > 2 && !stopWords.has(w));
+  const extraUnknownWords = candNonStopTokens.filter(cw => !titleWords.some(tw => cw === tw || (cw.length >= 4 && tw.includes(cw))));
+  if (extraUnknownWords.length >= 2 && !candAuthor.includes(extraUnknownWords[0])) {
+    score -= 120; // Another song or extra unrelated content in title
+  }
 
   // 2. Duration matching against Spotify studio master (Crucial for studio vs stage/live/extended versions!)
   if (targetSec > 0 && candSec > 0) {
@@ -428,15 +452,30 @@ async function resolveTrackToStreamableId(track) {
         .catch(() => [])
     ]);
 
+    function isCatalogTitleMatch(candTitle, tgtTitle) {
+      if (!candTitle || !tgtTitle) return false;
+      const clean1 = String(candTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '').trim();
+      const clean2 = String(tgtTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '').trim();
+      if (clean1 === clean2) return true;
+
+      const words1 = String(candTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
+      const words2 = String(tgtTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
+
+      if (words1.length === 0 || words2.length === 0) return false;
+      if (words1.length === 1 || words2.length === 1) {
+        return clean1 === clean2;
+      }
+      const matched = words1.filter(w => words2.includes(w)).length;
+      return (matched / Math.max(words1.length, words2.length)) >= 0.75;
+    }
+
     let bestCover = !needsIndividualCover ? track.thumbnail : null;
     let catalogDuration = Number(track.durationSeconds) || 0;
     const artistAliases = [];
 
-    const coreLower = cleanTrackTitle.replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').toLowerCase().trim();
-
     for (const d of deezerItems) {
-      const dTitle = String(d.title || '').toLowerCase();
-      if (coreLower && (dTitle.includes(coreLower) || coreLower.includes(dTitle))) {
+      const dTitle = String(d.title || '');
+      if (isCatalogTitleMatch(dTitle, cleanTrackTitle)) {
         if (d.artist?.name) artistAliases.push(d.artist.name);
         if (!bestCover) {
           bestCover = d.album?.cover_big || d.album?.cover_medium || null;
@@ -454,9 +493,9 @@ async function resolveTrackToStreamableId(track) {
     }
 
     for (const it of itunesItems) {
-      const itTitle = String(it.trackName || '').toLowerCase();
+      const itTitle = String(it.trackName || '');
       const itDur = Math.round((it.trackTimeMillis || 0) / 1000);
-      if (coreLower && (itTitle.includes(coreLower) || coreLower.includes(itTitle))) {
+      if (isCatalogTitleMatch(itTitle, cleanTrackTitle)) {
         if (it.artistName) artistAliases.push(it.artistName);
         const art = it.artworkUrl100 ? it.artworkUrl100.replace('100x100bb', '600x600bb') : null;
         if (!bestCover && art) bestCover = art;

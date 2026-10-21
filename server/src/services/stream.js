@@ -138,17 +138,23 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
   let score = 100;
 
   // 1. Core title word match
+  const stopWords = new Set(['כל', 'כך', 'של', 'את', 'עם', 'זה', 'על', 'אל', 'מן', 'זה', 'מה', 'לא', 'כי', 'גם', 'the', 'in', 'of', 'and', 'to', 'a', 'an']);
   const titleCheck = coreTitle || rawTargetTitle;
   const tWords = titleCheck ? titleCheck.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1) : [];
-  if (tWords.length > 0) {
-    const matched = tWords.filter(w => title.includes(w)).length;
-    const ratio = matched / tWords.length;
+  const importantWords = tWords.filter(w => !stopWords.has(w));
+  const wordsToTest = importantWords.length > 0 ? importantWords : tWords;
+
+  const candTitleTokens = new Set(title.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/));
+
+  if (wordsToTest.length > 0) {
+    const matched = wordsToTest.filter(w => candTitleTokens.has(w) || (w.length >= 4 && title.includes(w))).length;
+    const ratio = matched / wordsToTest.length;
     if (ratio < 0.6) return -999;
-    score += Math.round(ratio * 85);
+    score += Math.round(ratio * 95);
   } else if (queryLower) {
-    const qWords = queryLower.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
+    const qWords = queryLower.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1 && !stopWords.has(w));
     if (qWords.length > 0) {
-      const matched = qWords.filter(w => combined.includes(w)).length;
+      const matched = qWords.filter(w => candTitleTokens.has(w) || (w.length >= 4 && combined.includes(w))).length;
       const ratio = matched / qWords.length;
       if (ratio < 0.5) return -999;
       score += Math.round(ratio * 70);
@@ -457,6 +463,23 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
     // 2. Fallback: Invidious direct stream if videoId is available
     if (!streamUrl && isVideoId) {
       streamUrl = await fetchFromInvidious(videoId);
+    }
+
+    // 3. Fallback: If not a direct video ID or SoundCloud failed, resolve to YouTube videoId and fetch stream
+    if (!streamUrl && (!isVideoId || !streamUrl)) {
+      try {
+        const { resolveTrackToStreamableId } = require('./importer');
+        const resolved = await resolveTrackToStreamableId({
+          id: videoId,
+          title: effectiveMeta.title,
+          artist: effectiveMeta.artist,
+          album: effectiveMeta.album,
+          durationSeconds: effectiveMeta.durationSeconds
+        });
+        if (resolved && resolved.streamableId && /^[a-zA-Z0-9_-]{11}$/.test(resolved.streamableId)) {
+          streamUrl = await fetchFromInvidious(resolved.streamableId);
+        }
+      } catch (e) {}
     }
 
     if (!streamUrl) {

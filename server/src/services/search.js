@@ -38,6 +38,128 @@ function setCachedSearch(key, data) {
   searchCache.set(key, { data, timestamp: Date.now() });
 }
 
+// Unwanted noise keywords (penalized/filtered unless the user explicitly searched for them)
+const UNWANTED_KEYWORDS = [
+  'sped up', 'speed up', 'מואץ', 'גרסה מהירה', 'nightcore', 'slowed', 'reverb', 'bass boost',
+  'רמיקס טיקטוק', 'טיקטוק', 'tiktok version', 'tik tok',
+  'cover', 'קאבר', 'גרסת כיסוי', 'קריוקי', 'karaoke', 'אינסטרומנטלי', 'instrumental',
+  'ריאקשן', 'reaction', 'מגיב ל', 'מגיבה ל', 'תגובה ל', 'reacts to',
+  'dance studio', 'just dance', 'סטודיו לריקוד', 'הדרכת ריקוד', 'כוריאוגרפיה', 'choreography',
+  'פודקאסט', 'podcast', 'ראיון', 'interview', 'מאחורי הקלעים', 'הצצה ל', 'פרק '
+];
+
+const SECONDARY_REMIX_KEYWORDS = [
+  'remix', 'רימיקס', 'רמיקס', 'redrum', 'mashup', 'מאשאפ', 'משאפ', 'אדיט', 'edit'
+];
+
+/**
+ * Score a search result based on query relevance, official channel badges, and penalize unofficial noise
+ */
+function scoreSearchResult(item, query) {
+  if (!item) return -999;
+  const qLower = String(query || '').toLowerCase().trim();
+  const rawTitle = String(item.originalTitle || item.title || '').toLowerCase();
+  const rawAuthor = String(item.rawAuthor || item.artist || '').toLowerCase();
+  const combined = `${rawTitle} ${rawAuthor}`;
+
+  let score = 100;
+
+  // 1. Check user intent for remixes / covers
+  const userWantsRemix = SECONDARY_REMIX_KEYWORDS.some(kw => qLower.includes(kw));
+  const userWantsCover = UNWANTED_KEYWORDS.some(kw => qLower.includes(kw));
+
+  // 2. Heavy penalty for unwanted spam/covers/sped-up versions
+  for (const kw of UNWANTED_KEYWORDS) {
+    if (combined.includes(kw) && !qLower.includes(kw)) {
+      score -= 300;
+      break;
+    }
+  }
+
+  if (!userWantsRemix) {
+    for (const kw of SECONDARY_REMIX_KEYWORDS) {
+      if (rawTitle.includes(kw) && !qLower.includes(kw)) {
+        score -= 200;
+        break;
+      }
+    }
+  }
+
+  // 3. Query word relevance
+  const genericWords = new Set(['שיר', 'של', 'את', 'עם', 'זה', 'the', 'in', 'of', 'and', 'official', 'video', 'audio']);
+  const qWords = qLower
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !genericWords.has(w));
+
+  if (qWords.length > 0) {
+    let matched = 0;
+    for (const w of qWords) {
+      if (combined.includes(w)) matched++;
+    }
+    const ratio = matched / qWords.length;
+    if (ratio === 1.0) {
+      score += 150; // Exact match on all search terms!
+    } else if (ratio < 0.5) {
+      score -= 250;
+    } else {
+      score += Math.round(ratio * 90);
+    }
+
+    // Identify title-only words (words in query that are NOT part of the artist's name)
+    const titleOnlyWords = qWords.filter(w => !rawAuthor.includes(w));
+    if (titleOnlyWords.length > 0) {
+      const matchedTitleWords = titleOnlyWords.filter(w => rawTitle.includes(w)).length;
+      if (matchedTitleWords === 0) {
+        // Completely different song by the same artist!
+        score -= 320;
+      } else {
+        score += Math.round((matchedTitleWords / titleOnlyWords.length) * 120);
+      }
+    }
+  }
+
+  // 4. Strong boost for Verified channels and Official Topic releases
+  if (item.isTopic) {
+    score += 110;
+  }
+  if (item.isVerified) {
+    score += 80;
+  }
+
+  // 5. Boost for official release titles
+  if (/\b(official audio|אודיו רשמי|קליפ רשמי|official video|official music video)\b/i.test(rawTitle)) {
+    score += 60;
+  }
+
+  // 6. Prefer standard song lengths (2-5 mins) over ultra long or ultra short
+  if (item.durationSeconds >= 110 && item.durationSeconds <= 320) {
+    score += 20;
+  }
+
+  return score;
+}
+
+function rankAndFilterSearchResults(results, query) {
+  if (!Array.isArray(results) || results.length === 0) return [];
+  const scored = results.map(item => ({
+    item,
+    score: scoreSearchResult(item, query)
+  }));
+
+  // Filter out completely disqualified junk (score < -150) unless that leaves too few results
+  let filtered = scored.filter(x => x.score > -150);
+  if (filtered.length < 3) {
+    filtered = scored.filter(x => x.score > -350);
+  }
+  if (filtered.length === 0) {
+    filtered = scored;
+  }
+
+  filtered.sort((a, b) => b.score - a.score);
+  return filtered.map(x => x.item);
+}
+
 /**
  * 1. Ultra-fast direct YouTube InnerTube Search API (~0.8-1.2s response, up to 40 results)
  */
@@ -66,7 +188,7 @@ async function searchInnerTube(query, limit = 40) {
     );
 
     const data = response.data;
-    const results = [];
+    const rawResults = [];
     const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
 
     for (const section of sections) {
@@ -92,7 +214,7 @@ async function searchInnerTube(query, limit = 40) {
           const thumbs = v.thumbnail?.thumbnails || [];
           const thumb = thumbs.length > 0 ? thumbs[thumbs.length - 1].url : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
 
-          results.push({
+          rawResults.push({
             id: v.videoId,
             streamableId: v.videoId,
             title: cleanTitle(rawTitle) || rawTitle,
@@ -108,14 +230,12 @@ async function searchInnerTube(query, limit = 40) {
             source: 'youtube',
             url: `https://youtube.com/watch?v=${v.videoId}`
           });
-
-          if (results.length >= limit) break;
         }
       }
-      if (results.length >= limit) break;
     }
 
-    return results;
+    const ranked = rankAndFilterSearchResults(rawResults, query);
+    return ranked.slice(0, limit);
   } catch (err) {
     return [];
   }
@@ -135,7 +255,7 @@ async function searchYts(query, limit = 40) {
     let filtered = videos.filter(v => !v.seconds || (v.seconds >= 40 && v.seconds <= 660));
     if (filtered.length === 0) filtered = videos;
 
-    return filtered.slice(0, limit).map(v => {
+    const rawList = filtered.map(v => {
       const thumbnail = v.image || v.thumbnail || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
       const rawAuthor = typeof v.author === 'string' ? v.author : (v.author?.name ? String(v.author.name) : 'Unknown Artist');
       const isTopic = /\s*-\s*Topic$/i.test(rawAuthor);
@@ -158,6 +278,9 @@ async function searchYts(query, limit = 40) {
         url: v.url
       };
     });
+
+    const ranked = rankAndFilterSearchResults(rawList, query);
+    return ranked.slice(0, limit);
   } catch (e) {
     return [];
   }
