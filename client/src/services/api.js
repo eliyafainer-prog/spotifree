@@ -340,15 +340,30 @@ export async function prefetchNextTracks(tracks) {
 }
 
 /**
- * Download track audio as a Blob for offline playback with real-time progress & auto-retry
+ * Generate dedicated offline download URL with multi-source fallback
+ */
+export function getOfflineDownloadUrl(track, serverOverride = null) {
+  const active = getActiveServerUrl();
+  const base = serverOverride !== null ? serverOverride : (active !== null && active !== undefined ? active : DEFAULT_SERVERS.cloud);
+  const fallbackQuery = encodeURIComponent(`${track.artist || ''} - ${track.title || ''}`.replace(/^-\s*|\s*-$/g, '').trim());
+  const streamableId = encodeURIComponent(track.streamableId || track.id || 'query');
+  const dur = Math.round(Number(track.durationSeconds) || 0);
+  const title = encodeURIComponent(track.title || '');
+  const artist = encodeURIComponent(track.artist || '');
+  const album = encodeURIComponent(track.album || '');
+  return `${base}/api/offline/download/${streamableId}?q=${fallbackQuery}&dur=${dur}&title=${title}&artist=${artist}&album=${album}`;
+}
+
+/**
+ * Download track audio as a Blob for offline playback with real-time progress & 3-stage auto-retry
  */
 export async function downloadTrackAudioBlob(track, onProgress = null) {
   let lastErr = null;
   const estimatedBytes = Math.max(2200000, (Number(track?.durationSeconds) || 180) * 18000);
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const baseAudioUrl = getPlayableAudioUrl(track);
+      const baseAudioUrl = attempt <= 2 ? getOfflineDownloadUrl(track) : getPlayableAudioUrl(track);
       const audioUrl = `${baseAudioUrl}&dl=1&attempt=${attempt}`;
       const response = await fetch(audioUrl);
       if (!response.ok) {
@@ -380,14 +395,14 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
         }
 
         const blob = new Blob(chunks, { type: contentType });
-        if (blob.size < 15000) {
+        if (blob.size < 10000) {
           throw new Error('Incomplete audio file received');
         }
         if (onProgress) onProgress(100, receivedBytes, receivedBytes);
         return blob;
       } else {
         const blob = await response.blob();
-        if (blob.size < 15000) {
+        if (blob.size < 10000) {
           throw new Error('Incomplete audio file received');
         }
         if (onProgress) onProgress(100, blob.size, blob.size);
@@ -395,8 +410,8 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
       }
     } catch (err) {
       lastErr = err;
-      if (attempt < 2) {
-        await new Promise(r => setTimeout(r, 800));
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, attempt * 900));
       }
     }
   }

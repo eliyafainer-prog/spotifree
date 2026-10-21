@@ -88,8 +88,15 @@ export async function saveTrackOffline(track, audioBlob) {
   });
 }
 
+export function getTrackNormKey(track) {
+  if (!track || !track.title) return null;
+  const title = String(track.title).toLowerCase().trim();
+  const artist = String(track.artist || '').toLowerCase().trim();
+  return title ? `meta:::${title}:::${artist}` : null;
+}
+
 /**
- * Build a Set of all IDs (id, streamableId, originalId) for downloaded tracks
+ * Build a Set of all IDs (id, streamableId, originalId, and normalized title+artist key) for downloaded tracks
  */
 export function buildDownloadedIdSet(tracks = []) {
   const set = new Set();
@@ -98,19 +105,23 @@ export function buildDownloadedIdSet(tracks = []) {
     if (t.id) set.add(t.id);
     if (t.streamableId) set.add(t.streamableId);
     if (t.originalId) set.add(t.originalId);
+    const normKey = getTrackNormKey(t);
+    if (normKey) set.add(normKey);
   }
   return set;
 }
 
 /**
- * Check if a track matches any ID in a downloadedIds Set
+ * Check if a track matches any ID or normalized metadata key in a downloadedIds Set
  */
 export function isTrackInIdSet(track, idSet) {
   if (!track || !idSet) return false;
+  const normKey = getTrackNormKey(track);
   return Boolean(
     (track.id && idSet.has(track.id)) ||
     (track.streamableId && idSet.has(track.streamableId)) ||
-    (track.originalId && idSet.has(track.originalId))
+    (track.originalId && idSet.has(track.originalId)) ||
+    (normKey && idSet.has(normKey))
   );
 }
 

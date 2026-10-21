@@ -46,7 +46,7 @@ import {
   isSameTrack
 } from './services/storage';
 import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
-import { saveTrackOffline, getAllOfflineTracks, buildDownloadedIdSet, isTrackInIdSet } from './services/offlineStorage';
+import { saveTrackOffline, getAllOfflineTracks, buildDownloadedIdSet, isTrackInIdSet, getTrackNormKey } from './services/offlineStorage';
 
 import { Sidebar, PlaylistThumb } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
@@ -175,7 +175,7 @@ export default function App() {
   const downloadingIdsRef = useRef(new Set());
   const queuedIdsRef = useRef(new Set());
 
-  const getTrackKeys = (t) => [t?.id, t?.streamableId, t?.originalId].filter(Boolean);
+  const getTrackKeys = (t) => [t?.id, t?.streamableId, t?.originalId, getTrackNormKey(t)].filter(Boolean);
 
   const refreshDownloads = useCallback(async () => {
     try {
@@ -279,7 +279,7 @@ export default function App() {
             return next;
           });
           activeWorkersRef.current = Math.max(0, activeWorkersRef.current - 1);
-          processDownloadQueue();
+          setTimeout(() => processDownloadQueue(), 200);
         }
       })();
     }

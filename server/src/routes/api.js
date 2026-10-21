@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { searchTracks, getTrendingTracks, getHomeCatalog } = require('../services/search');
 const { getAudioStreamUrl, pipeStream } = require('../services/stream');
+const { pipeOfflineDownload } = require('../services/offlineDownloader');
 const { getLyrics } = require('../services/lyrics');
 const { universalImport, resolveTrackToStreamableId } = require('../services/importer');
 const { setRegisteredTunnel, getRegisteredTunnel } = require('../services/tunnelState');
@@ -197,6 +198,19 @@ router.get('/stream/pipe/:id', (req, res) => {
     album: req.query.album || ''
   };
   pipeStream(id, req, res, fallbackQuery, meta);
+});
+
+/**
+ * Dedicated offline download endpoint (multi-query fallbacks)
+ */
+router.get('/offline/download/:id', (req, res) => {
+  const meta = {
+    durationSeconds: Number(req.query.dur) || 0,
+    title: req.query.title || '',
+    artist: req.query.artist || '',
+    album: req.query.album || ''
+  };
+  pipeOfflineDownload(req.params.id, req, res, req.query.q || null, meta);
 });
 
 /**
