@@ -212,7 +212,7 @@ export function SyncedLyrics({
       {/* Integrated Full Music Player Bottom Controls */}
       <div className="relative z-10 p-4 md:px-8 bg-black/60 backdrop-blur-xl border-t border-white/10 flex flex-col gap-3">
         {/* Progress Bar & Timestamps */}
-        <div className="flex items-center gap-3 w-full max-w-2xl mx-auto text-xs font-medium text-spotify-subtext">
+        <div className="flex items-center gap-3 w-full max-w-2xl mx-auto text-xs font-medium text-spotify-subtext" dir="ltr">
           <span className="w-10 text-left font-mono">{formatTime(currentTime)}</span>
           <div className="flex-1 relative flex items-center group h-4">
             <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden group-hover:h-1.5 transition-all">

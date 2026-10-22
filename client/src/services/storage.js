@@ -380,3 +380,64 @@ export function renamePlaylist(playlistId, newTitle) {
   }
 }
 
+/**
+ * Export all user playlists and liked songs to a JSON file format
+ */
+export function exportBackupData() {
+  const data = {
+    version: 1,
+    exportDate: new Date().toISOString(),
+    playlists: getPlaylists(),
+    likedSongs: getLikedSongs()
+  };
+  return JSON.stringify(data, null, 2);
+}
+
+/**
+ * Import user playlists and liked songs from backup JSON string
+ * returns { playlistsCount, likedSongsCount }
+ */
+export function importBackupData(jsonString) {
+  const parsed = JSON.parse(jsonString);
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('קובץ גיבוי לא תקין');
+  }
+
+  let importedPlaylistsCount = 0;
+  let importedLikedCount = 0;
+
+  // Import playlists
+  if (Array.isArray(parsed.playlists)) {
+    const existingPlaylists = getPlaylists();
+    const existingIds = new Set(existingPlaylists.map(p => p.id));
+    const existingTitles = new Set(existingPlaylists.map(p => (p.title || p.name || '').trim().toLowerCase()));
+
+    for (const p of parsed.playlists) {
+      const pTitle = (p.title || p.name || '').trim();
+      if (pTitle && !existingIds.has(p.id) && !existingTitles.has(pTitle.toLowerCase())) {
+        existingPlaylists.push(p);
+        existingIds.add(p.id);
+        existingTitles.add(pTitle.toLowerCase());
+        importedPlaylistsCount++;
+      }
+    }
+    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(existingPlaylists));
+  }
+
+  // Import liked songs
+  if (Array.isArray(parsed.likedSongs)) {
+    const existingLiked = getLikedSongs();
+    for (const track of parsed.likedSongs) {
+      if (track && !existingLiked.some(t => isSameTrack(t, track))) {
+        existingLiked.push(sanitizeTrackForStorage(track));
+        importedLikedCount++;
+      }
+    }
+    saveLikedSongs(existingLiked);
+  }
+
+  return {
+    playlistsCount: importedPlaylistsCount,
+    likedSongsCount: importedLikedCount
+  };
+}

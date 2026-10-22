@@ -54,12 +54,14 @@ import { PlayerBar } from './components/PlayerBar';
 import { FullscreenPlayer } from './components/FullscreenPlayer';
 import { SyncedLyrics } from './components/SyncedLyrics';
 import { ImportModal } from './components/ImportModal';
+import { QueueModal } from './components/QueueModal';
 import { AddToPlaylistModal } from './components/AddToPlaylistModal';
 import { TrackRow } from './components/TrackRow';
 import { PlaylistView } from './components/PlaylistView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { OfflineView } from './components/OfflineView';
 import { ServerSettingsModal } from './components/ServerSettingsModal';
+import { isNativeApp } from './services/nativeAudio';
 import { ForegroundService } from '@capawesome-team/capacitor-android-foreground-service';
 
 const BROWSE_CATEGORIES = [
@@ -89,6 +91,7 @@ export default function App() {
   const player = useAudioPlayer();
 
   useEffect(() => {
+    if (!isNativeApp) return;
     const startService = async () => {
       try {
         await ForegroundService.startForegroundService({
@@ -129,6 +132,7 @@ export default function App() {
   // Modals & Panels
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
+  const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isFullscreenPlayerOpen, setIsFullscreenPlayerOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [lyricsData, setLyricsData] = useState({ synced: [], plain: [], hasSynced: false });
@@ -140,6 +144,18 @@ export default function App() {
     setToastMessage(msg);
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 2800);
+  }, []);
+
+  useEffect(() => {
+    if (player.playbackError) {
+      showToast(player.playbackError);
+      player.clearPlaybackError();
+    }
+  }, [player.playbackError, player.clearPlaybackError, showToast]);
+
+  const handleLibraryRestored = useCallback(() => {
+    setPlaylists(getPlaylists());
+    setLikedSongs(getLikedSongs());
   }, []);
 
   const handleToggleShuffle = useCallback(() => {
@@ -1749,6 +1765,7 @@ export default function App() {
         onOpenAddToPlaylist={handleOpenAddToPlaylist}
         onOpenLyrics={() => setIsLyricsOpen(true)}
         onOpenFullscreen={() => setIsFullscreenPlayerOpen(true)}
+        onOpenQueue={() => setIsQueueOpen(true)}
         showNowPlayingPanel={showNowPlayingPanel}
         onToggleNowPlayingPanel={() => setShowNowPlayingPanel(prev => !prev)}
       />
@@ -1766,6 +1783,11 @@ export default function App() {
         isOpen={isFullscreenPlayerOpen}
         onClose={() => setIsFullscreenPlayerOpen(false)}
         currentTrack={player.currentTrack}
+        volume={player.volume}
+        isMuted={player.isMuted}
+        onVolumeChange={player.setVolume}
+        onToggleMute={player.toggleMute}
+        onOpenQueue={() => setIsQueueOpen(true)}
         isPlaying={player.isPlaying}
         currentTime={player.currentTime}
         duration={player.duration}
@@ -1819,11 +1841,27 @@ export default function App() {
         />
       )}
 
-      {/* Playlist Importer Modal */}
+      {/* Playlist Importer & Backup Modal */}
       <ImportModal
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         onPlaylistImported={handlePlaylistImported}
+        onLibraryRestored={handleLibraryRestored}
+        showToast={showToast}
+      />
+
+      {/* Queue Modal */}
+      <QueueModal
+        isOpen={isQueueOpen}
+        onClose={() => setIsQueueOpen(false)}
+        currentTrack={player.currentTrack}
+        queue={player.queue}
+        queueIndex={player.queueIndex}
+        isPlaying={player.isPlaying}
+        onPlayTrack={handlePlayTrack}
+        onRemoveFromQueue={player.removeFromQueue}
+        onMoveInQueue={player.moveInQueue}
+        onClearQueue={player.clearQueue}
       />
 
       {/* Add Track To Playlist Modal */}

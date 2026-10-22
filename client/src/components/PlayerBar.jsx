@@ -20,7 +20,8 @@ import {
   MonitorSpeaker,
   PanelLeft,
   ArrowDownCircle,
-  ListPlus
+  ListPlus,
+  ListMusic
 } from 'lucide-react';
 
 // Rich Spotify Mini-Player palette (matches Image 3 deep wine/plum/indigo/teal tones)
@@ -408,6 +409,15 @@ export function PlayerBar({
             </button>
           )}
 
+          {onOpenQueue && (
+            <button
+              onClick={onOpenQueue}
+              title="תור השמעה"
+              className="p-1.5 text-[#b3b3b3] hover:text-white transition-colors"
+            >
+              <ListMusic className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={onOpenLyrics}
             title="מילים לשיר"

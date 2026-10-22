@@ -19,7 +19,9 @@ import {
   MonitorSpeaker,
   ArrowDownCircle,
   ListPlus,
-  Loader2
+  Loader2,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 
 export function FullscreenPlayer({
@@ -48,7 +50,12 @@ export function FullscreenPlayer({
   previewLyricsLines = [],
   queue = [],
   queueIndex = -1,
-  onPlayTrack
+  onPlayTrack,
+  volume = 0.8,
+  isMuted = false,
+  onVolumeChange,
+  onToggleMute,
+  onOpenQueue
 }) {
   if (!isOpen || !currentTrack) return null;
 
@@ -251,9 +258,32 @@ export function FullscreenPlayer({
           </button>
         </div>
 
+        {/* Mobile Volume Slider (LTR) */}
+        <div className="flex items-center gap-3 px-1 mb-4" dir="ltr">
+          <button
+            onClick={onToggleMute}
+            className="text-white/70 hover:text-white transition-colors p-1"
+            title={isMuted ? 'בטל השתקה' : 'השתק'}
+          >
+            {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={isMuted ? 0 : (Number.isFinite(volume) ? volume : 0.8)}
+            onChange={(e) => onVolumeChange && onVolumeChange(parseFloat(e.target.value))}
+            style={{
+              background: `linear-gradient(to right, #1db954 ${(isMuted ? 0 : (Number.isFinite(volume) ? volume : 0.8)) * 100}%, rgba(255, 255, 255, 0.2) ${(isMuted ? 0 : (Number.isFinite(volume) ? volume : 0.8)) * 100}%)`
+            }}
+            className="spotify-slider w-full h-1"
+          />
+        </div>
+
         {/* Bottom Utility Row: Devices on left, Share & Queue on right (LTR) */}
         <div className="flex items-center justify-between text-white/75 mb-5 px-1" dir="ltr">
-          <button onClick={onOpenLyrics} className="p-1.5 hover:text-white transition-colors">
+          <button onClick={onOpenLyrics} className="p-1.5 hover:text-white transition-colors" title="מילים">
             <MonitorSpeaker className="w-5 h-5 text-spotify-green" />
           </button>
           <div className="flex items-center gap-4">
@@ -264,10 +294,15 @@ export function FullscreenPlayer({
                 }
               }}
               className="p-1.5 hover:text-white transition-colors"
+              title="שתף שיר"
             >
               <Share2 className="w-5 h-5" />
             </button>
-            <button onClick={onOpenLyrics} className="p-1.5 hover:text-white transition-colors">
+            <button
+              onClick={onOpenQueue}
+              className="p-1.5 hover:text-white transition-colors"
+              title="תור השמעה"
+            >
               <ListMusic className="w-5 h-5" />
             </button>
           </div>

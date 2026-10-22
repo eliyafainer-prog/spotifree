@@ -11,11 +11,11 @@ export const DEFAULT_SERVERS = {
 // Clean up any stale/dead tunnel URLs from previous sessions in localStorage
 try {
   const lastHealthy = localStorage.getItem('spotifree_last_healthy_server') || '';
-  if (lastHealthy.includes('trycloudflare.com') || lastHealthy.includes('10.100.102.16')) {
+  if (lastHealthy.includes('trycloudflare.com') || lastHealthy.includes('10.') || lastHealthy.includes('192.168.')) {
     localStorage.removeItem('spotifree_last_healthy_server');
   }
   const customSrv = localStorage.getItem('spotifree_server_url') || '';
-  if (customSrv.includes('depending-lawyer-memories-gui.trycloudflare.com')) {
+  if (customSrv.includes('trycloudflare.com') || customSrv.includes('10.') || customSrv.includes('192.168.')) {
     localStorage.removeItem('spotifree_server_url');
   }
 } catch (e) {}
@@ -140,32 +140,61 @@ export function getApiBase() {
 }
 
 /**
- * Fast fetch with automatic failover (never hanging on dead tunnels)
+ * Fast fetch with automatic failover (never duplicate requests to same server)
  */
 async function fetchWithFailover(apiPath, options = {}) {
   const currentBase = getActiveServerUrl();
   const serverCandidates = [];
 
-  if (currentBase === '') {
-    serverCandidates.push('');
-  } else if (currentBase) {
+  if (currentBase !== null && currentBase !== undefined) {
     serverCandidates.push(currentBase);
   }
 
+  // Dev environment fallback
   if (typeof window !== 'undefined' && window.location.origin?.includes('localhost:5173')) {
     serverCandidates.push('http://localhost:5050');
   }
-  serverCandidates.push(DEFAULT_SERVERS.cloud);
+
+  // Add cloud fallback ONLY if not already running on web or if primary is different
+  const isAlreadyCloudOrigin = typeof window !== 'undefined' && window.location.origin === DEFAULT_SERVERS.cloud;
+  if (!isAlreadyCloudOrigin && currentBase !== DEFAULT_SERVERS.cloud) {
+    serverCandidates.push(DEFAULT_SERVERS.cloud);
+  }
 
   const uniqueServers = [...new Set(serverCandidates)];
+  if (uniqueServers.length === 0) uniqueServers.push('');
 
-  const promises = uniqueServers.map(srv => {
+  // 1. Try primary server first to avoid duplicate load on backend
+  const primarySrv = uniqueServers[0];
+  const primaryUrl = primarySrv ? `${primarySrv}${apiPath}` : apiPath;
+  const primaryController = new AbortController();
+  const primaryTimer = setTimeout(() => primaryController.abort(), 6000);
+  const primarySignal = options.signal || primaryController.signal;
+
+  try {
+    const res = await fetch(primaryUrl, { ...options, signal: primarySignal });
+    clearTimeout(primaryTimer);
+    if (res.ok) {
+      return res;
+    }
+  } catch (primaryErr) {
+    clearTimeout(primaryTimer);
+    // Primary failed, proceed to failover candidates
+  }
+
+  // 2. If primary failed and there are remaining candidates, try them
+  const fallbackServers = uniqueServers.slice(1);
+  if (fallbackServers.length === 0) {
+    throw new Error('Server unreachable');
+  }
+
+  const fallbackPromises = fallbackServers.map(srv => {
     return new Promise(async (resolve, reject) => {
       const fullUrl = srv ? `${srv}${apiPath}` : apiPath;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
       const combinedSignal = options.signal || controller.signal;
-      
+
       try {
         const res = await fetch(fullUrl, { ...options, signal: combinedSignal });
         clearTimeout(timeoutId);
@@ -186,7 +215,7 @@ async function fetchWithFailover(apiPath, options = {}) {
   });
 
   try {
-    return await Promise.any(promises);
+    return await Promise.any(fallbackPromises);
   } catch (err) {
     throw new Error('All servers unreachable');
   }

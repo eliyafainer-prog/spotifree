@@ -34,6 +34,8 @@ export function useAudioPlayer() {
   const [currentTrack, setCurrentTrack] = useState(() => savedPlayback?.currentTrack || null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [playbackError, setPlaybackError] = useState(null);
+  const clearPlaybackError = useCallback(() => setPlaybackError(null), []);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(() => savedPlayback?.currentTrack?.durationSeconds || 0);
   const [volume, setVolumeState] = useState(() => {
@@ -225,6 +227,8 @@ export function useAudioPlayer() {
         }
       }
       setIsLoading(false);
+      setIsPlaying(false);
+      setPlaybackError('לא נמצא מקור שמע זמין לשיר זה');
     };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
@@ -485,7 +489,7 @@ export function useAudioPlayer() {
     if (!audio) return;
 
     try {
-      const streamUrl = getPlayableAudioUrl(track);
+      const streamUrl = track.audioBlob ? URL.createObjectURL(track.audioBlob) : getPlayableAudioUrl(track);
       audio.src = streamUrl;
       audio.volume = isMuted ? 0 : (Number.isFinite(volume) ? volume : 0.8);
 
@@ -992,6 +996,32 @@ export function useAudioPlayer() {
     setQueue(prev => [...prev, track]);
   }, []);
 
+  const removeFromQueue = useCallback((index) => {
+    setQueue(prev => prev.filter((_, idx) => idx !== index));
+    setQueueIndex(prev => (index < prev ? prev - 1 : prev));
+  }, []);
+
+  const moveInQueue = useCallback((fromIndex, toIndex) => {
+    setQueue(prev => {
+      if (fromIndex < 0 || fromIndex >= prev.length || toIndex < 0 || toIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+    setQueueIndex(prev => {
+      if (prev === fromIndex) return toIndex;
+      if (fromIndex < prev && toIndex >= prev) return prev - 1;
+      if (fromIndex > prev && toIndex <= prev) return prev + 1;
+      return prev;
+    });
+  }, []);
+
+  const clearQueue = useCallback(() => {
+    setQueue(prev => (currentTrackRef.current ? [currentTrackRef.current] : []));
+    setQueueIndex(0);
+  }, []);
+
   return {
     currentTrack,
     isPlaying,
@@ -1018,6 +1048,11 @@ export function useAudioPlayer() {
     toggleMute,
     toggleShuffle,
     toggleRepeat,
-    addToQueue
+    addToQueue,
+    removeFromQueue,
+    moveInQueue,
+    clearQueue,
+    playbackError,
+    clearPlaybackError
   };
 }

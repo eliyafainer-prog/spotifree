@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Library, Heart, Plus, Music2, ArrowDownCircle, Pin, Search, List, Maximize2 } from 'lucide-react';
+import { Library, Heart, Plus, Music2, ArrowDownCircle, Pin, Search, List, ListPlus } from 'lucide-react';
 
 export function PlaylistThumb({ playlist, className = 'w-12 h-12 rounded-[4px]' }) {
   const tracks = playlist?.tracks || [];
@@ -105,7 +105,7 @@ export function Sidebar({
               title="פלייליסט ריק חדש"
               className="p-2 rounded-full text-[#b3b3b3] hover:text-white hover:bg-[#1f1f1f] transition-colors"
             >
-              <Maximize2 className="w-4 h-4" />
+              <ListPlus className="w-4 h-4" />
             </button>
           )}
         </div>

@@ -48,7 +48,7 @@ try {
   }
 } catch (e) {}
 
-function saveCachesToDisk() {
+async function saveCachesToDisk() {
   try {
     const urlObj = {};
     const now = Date.now();
@@ -57,7 +57,7 @@ function saveCachesToDisk() {
         urlObj[k] = v;
       }
     }
-    fs.writeFileSync(URL_CACHE_FILE, JSON.stringify(urlObj), 'utf8');
+    await fs.promises.writeFile(URL_CACHE_FILE, JSON.stringify(urlObj), 'utf8');
   } catch (e) {}
 }
 
@@ -608,6 +608,7 @@ function stripStypSidx(buf) {
 /**
  * Zero-process Pure Node.js HLS fMP4 / MP3 Stream Concatenator
  * Streams full-length fMP4 (with patched moov duration and stripped sidx) or MP3 segments using ~200KB RAM!
+ * Supports HTTP Range requests and seeking so scrubber never snaps back to 0!
  */
 async function pipeHlsInNode(m3u8Url, req, res) {
   let aborted = false;
@@ -619,52 +620,118 @@ async function pipeHlsInNode(m3u8Url, req, res) {
   const m3u8Res = await axios.get(m3u8Url, { timeout: 3500, httpsAgent });
   const lines = String(m3u8Res.data || '').split('\n');
   let mapUrl = null;
-  const mediaUrls = [];
+  const segments = [];
   let totalDurationSec = 0;
+  let currentSegmentDur = 0;
 
   for (const line of lines) {
     const trimmed = line.trim();
     const infMatch = trimmed.match(/#EXTINF:([0-9.]+)/);
     if (infMatch && infMatch[1]) {
-      totalDurationSec += parseFloat(infMatch[1]) || 0;
+      currentSegmentDur = parseFloat(infMatch[1]) || 0;
     }
     const mapMatch = trimmed.match(/#EXT-X-MAP:URI="([^"]+)"/);
     if (mapMatch && mapMatch[1]) {
       mapUrl = mapMatch[1];
     } else if (trimmed.startsWith('http')) {
-      mediaUrls.push(trimmed);
+      segments.push({
+        url: trimmed,
+        duration: currentSegmentDur,
+        startTime: totalDurationSec
+      });
+      totalDurationSec += currentSegmentDur;
+      currentSegmentDur = 0;
     }
   }
 
-  if (mediaUrls.length === 0) {
+  if (segments.length === 0) {
     throw new Error('Empty HLS playlist');
   }
 
-  const isMp3 = !mapUrl && (mediaUrls[0].includes('.mp3') || m3u8Url.includes('mp3'));
-  res.statusCode = 200;
-  res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'audio/mp4');
-  res.setHeader('Cache-Control', 'public, max-age=14400');
-  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  const isMp3 = !mapUrl && (segments[0].url.includes('.mp3') || m3u8Url.includes('mp3'));
+  const contentType = isMp3 ? 'audio/mpeg' : 'audio/mp4';
 
-  // 1. If fMP4 (init.mp4 map present), fetch and patch init.mp4 with full track duration
-  if (mapUrl && !aborted && !res.writableEnded) {
-    const initRes = await axios.get(mapUrl, { responseType: 'arraybuffer', timeout: 5000, httpsAgent });
-    const patchedInit = patchInitMp4Duration(Buffer.from(initRes.data), totalDurationSec);
-    if (!aborted && !res.writableEnded) {
-      res.write(patchedInit);
+  // Approximate bitrate to estimate byte ranges (160kbps for AAC = 20KB/s, 128kbps for MP3 = 16KB/s)
+  const approxBytesPerSec = isMp3 ? 16000 : 20000;
+  const approxTotalBytes = Math.max(100000, Math.round(totalDurationSec * approxBytesPerSec));
+
+  const rangeHeader = req.headers.range;
+  let startByte = 0;
+  let endByte = approxTotalBytes - 1;
+  let isRange = false;
+
+  if (rangeHeader && typeof rangeHeader === 'string' && rangeHeader.startsWith('bytes=')) {
+    const parts = rangeHeader.replace(/bytes=/, '').split('-');
+    const parsedStart = parseInt(parts[0], 10);
+    const parsedEnd = parseInt(parts[1], 10);
+
+    if (!isNaN(parsedStart)) {
+      startByte = Math.max(0, Math.min(parsedStart, approxTotalBytes - 1));
+      isRange = true;
+    }
+    if (!isNaN(parsedEnd) && parsedEnd >= startByte) {
+      endByte = Math.min(parsedEnd, approxTotalBytes - 1);
     }
   }
 
-  // 2. Stream each media segment sequentially (stripping styp/sidx on fMP4 .m4s segments)
-  for (const segUrl of mediaUrls) {
+  // Calculate target start time from requested Range bytes or ?seek parameter
+  let targetStartTime = 0;
+  const seekQuery = parseFloat(req.query.seek || req.query.start);
+  if (!isNaN(seekQuery) && seekQuery > 0) {
+    targetStartTime = seekQuery;
+  } else if (isRange && startByte > 0) {
+    targetStartTime = (startByte / approxTotalBytes) * totalDurationSec;
+  }
+
+  // Find corresponding starting segment
+  let startSegmentIdx = 0;
+  if (targetStartTime > 0) {
+    for (let i = 0; i < segments.length; i++) {
+      if (segments[i].startTime + segments[i].duration > targetStartTime) {
+        startSegmentIdx = i;
+        break;
+      }
+    }
+  }
+
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cache-Control', 'public, max-age=14400');
+
+  if (isRange) {
+    res.statusCode = 206;
+    res.setHeader('Content-Range', `bytes ${startByte}-${endByte}/${approxTotalBytes}`);
+  } else {
+    res.statusCode = 200;
+  }
+
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+  // 1. If fMP4 (init.mp4 map present), always send patched init.mp4 first so decoder initializes
+  if (mapUrl && !aborted && !res.writableEnded) {
+    try {
+      const initRes = await axios.get(mapUrl, { responseType: 'arraybuffer', timeout: 5000, httpsAgent });
+      const patchedInit = patchInitMp4Duration(Buffer.from(initRes.data), totalDurationSec);
+      if (!aborted && !res.writableEnded) {
+        res.write(patchedInit);
+      }
+    } catch (e) {}
+  }
+
+  // 2. Stream segments starting from startSegmentIdx
+  for (let i = startSegmentIdx; i < segments.length; i++) {
     if (aborted || res.writableEnded) break;
-    const segRes = await axios.get(segUrl, { responseType: 'arraybuffer', timeout: 8000, httpsAgent });
-    if (aborted || res.writableEnded) break;
-    const rawBuf = Buffer.from(segRes.data);
-    const cleanBuf = isMp3 ? rawBuf : stripStypSidx(rawBuf);
-    const canContinue = res.write(cleanBuf);
-    if (!canContinue && !aborted && !res.writableEnded) {
-      await new Promise(resolve => res.once('drain', resolve));
+    try {
+      const segRes = await axios.get(segments[i].url, { responseType: 'arraybuffer', timeout: 8000, httpsAgent });
+      if (aborted || res.writableEnded) break;
+      const rawBuf = Buffer.from(segRes.data);
+      const cleanBuf = isMp3 ? rawBuf : stripStypSidx(rawBuf);
+      const canContinue = res.write(cleanBuf);
+      if (!canContinue && !aborted && !res.writableEnded) {
+        await new Promise(resolve => res.once('drain', resolve));
+      }
+    } catch (segErr) {
+      if (aborted) break;
     }
   }
 

@@ -345,7 +345,7 @@ export function PlaylistView({
                     ? 'כל השירים שמורים אופליין'
                     : anyDownloading
                     ? `מוריד פלייליסט לאופליין (${downloadedCount}/${rawTracks.length})`
-                    : 'הורד את כל הפלייליסט להאזנה אופליין'
+                    : downloadedCount > 0 ? `הורד שירים שנותרו (${rawTracks.length - downloadedCount} נותרו)` : 'הורד את כל הפלייליסט להאזנה אופליין'
                 }
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full transition-all active:scale-95 ${
                   allDownloaded
@@ -371,7 +371,7 @@ export function PlaylistView({
                   <>
                     <ArrowDownCircle className="w-5 h-5" />
                     <span className="text-xs font-semibold">
-                      {downloadedCount > 0 ? `הורד הכל (${downloadedCount}/${rawTracks.length})` : 'הורד לאופליין'}
+                      {downloadedCount > 0 ? `הורד שירים שנותרו (${rawTracks.length - downloadedCount} נותרו)` : 'הורד לאופליין'}
                     </span>
                   </>
                 )}
