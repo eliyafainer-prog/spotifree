@@ -87,6 +87,18 @@ function scoreSearchResult(item, query) {
 
   // 3. Query word relevance
   const genericWords = new Set(['שיר', 'של', 'את', 'עם', 'זה', 'the', 'in', 'of', 'and', 'official', 'video', 'audio']);
+  const CATEGORY_WORDS = new Set([
+    'שיר', 'שירים', 'של', 'את', 'עם', 'זה', 'על', 'אל', 'כל',
+    'להיט', 'להיטים', 'ישראלי', 'ישראליים', 'ישראלית', 'ישראליות', 'ישראל',
+    'פלייליסט', 'מוזיקה', 'מזרחית', 'ים', 'תיכוני', 'היפ', 'הופ', 'ראפ',
+    'פופ', 'רוק', 'דאנס', 'קלאסיקות', 'נוסטלגיה', 'ישנה', 'חדש', 'חדשים', 'חדשה',
+    'אימון', 'אימונים', 'כושר', 'מסיבה', 'שקט', 'שקטים', 'רגוע', 'רגועים',
+    'לילה', 'ליליות', 'קיץ', 'חורף', 'טופ', 'ויראלי', 'טיקטוק', 'עולמי', 'עולמיים', 'בינלאומי', 'לועזי',
+    'the', 'in', 'of', 'and', 'to', 'a', 'an', 'official', 'video', 'audio',
+    'hits', 'hit', 'top', 'best', 'pop', 'music', 'songs', 'song',
+    'dance', 'chill', 'playlist', 'viral', 'workout', 'gym', 'party',
+    'electronic', 'rock', 'rap', 'hip', 'hop', 'latin', 'night', 'summer'
+  ]);
   const qWords = qLower
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
@@ -101,20 +113,25 @@ function scoreSearchResult(item, query) {
     if (ratio === 1.0) {
       score += 150; // Exact match on all search terms!
     } else if (ratio < 0.5) {
-      score -= 250;
+      const isBrowseQuery = qWords.every(w => CATEGORY_WORDS.has(w) || CATEGORY_WORDS.has(w.replace(/^ו([א-ת]{3,})/, '$1')));
+      if (!isBrowseQuery) {
+        score -= 250;
+      }
     } else {
       score += Math.round(ratio * 90);
     }
 
-    // Identify title-only words (words in query that are NOT part of the artist's name)
+    // Identify title-only words (words in query that are NOT part of the artist's name AND NOT category words)
     const titleOnlyWords = qWords.filter(w => !rawAuthor.includes(w));
-    if (titleOnlyWords.length > 0) {
-      const matchedTitleWords = titleOnlyWords.filter(w => rawTitle.includes(w)).length;
+    const nonCategoryTitleWords = titleOnlyWords.filter(w => !CATEGORY_WORDS.has(w) && !CATEGORY_WORDS.has(w.replace(/^ו([א-ת]{3,})/, '$1')));
+
+    if (nonCategoryTitleWords.length > 0) {
+      const matchedTitleWords = nonCategoryTitleWords.filter(w => rawTitle.includes(w)).length;
       if (matchedTitleWords === 0) {
         // Completely different song by the same artist!
         score -= 320;
       } else {
-        score += Math.round((matchedTitleWords / titleOnlyWords.length) * 120);
+        score += Math.round((matchedTitleWords / nonCategoryTitleWords.length) * 120);
       }
     }
   }
@@ -435,14 +452,14 @@ async function searchTracks(query, limit = 60) {
 
   // 2. Full user search / category browse: query YouTube InnerTube + Deezer + iTunes in parallel for a huge, rich catalog!
   const [ytInner, deezerRes, itunesRes] = await Promise.all([
-    searchInnerTube(trimmed, 40),
-    searchDeezer(trimmed, 25),
-    searchItunes(trimmed, 20)
+    searchInnerTube(trimmed, 50),
+    searchDeezer(trimmed, 35),
+    searchItunes(trimmed, 30)
   ]);
 
   let ytsRes = [];
-  if (ytInner.length < 15) {
-    ytsRes = await searchYts(trimmed, 35);
+  if (ytInner.length < 20) {
+    ytsRes = await searchYts(trimmed, 40);
   }
 
   const results = mergeAndDeduplicateTracks([ytInner, ytsRes, deezerRes, itunesRes], limit);
@@ -454,6 +471,71 @@ async function searchTracks(query, limit = 60) {
   return results;
 }
 
+/**
+ * 5. Official Apple Music / iTunes Top Songs in Israel (Live Charts)
+ */
+async function fetchItunesChartTracks(country = 'IL', limit = 35) {
+  try {
+    const res = await axios.get(`https://itunes.apple.com/${country.toLowerCase()}/rss/topsongs/limit=${limit}/json`, { timeout: 3500 });
+    const entries = res.data?.feed?.entry || [];
+    return entries.map((e, idx) => {
+      const title = e['im:name']?.label || 'Unknown';
+      const artist = e['im:artist']?.label || 'Unknown Artist';
+      const rawImg = e['im:image']?.[2]?.label || '';
+      const artwork = rawImg ? rawImg.replace(/\/\d+x\d+bb\./, '/600x600bb.') : '';
+      const id = e.id?.attributes?.['im:id'] || idx;
+      return {
+        id: `sp_it_${id}`,
+        title: title,
+        originalTitle: title,
+        artist: artist,
+        album: e['im:collection']?.['im:name']?.label || 'Single',
+        duration: '3:30',
+        durationSeconds: 210,
+        thumbnail: artwork,
+        hasCustomArtwork: Boolean(artwork),
+        source: 'itunes',
+        query: `${artist} - ${title}`
+      };
+    });
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * 6. Official Deezer Global Top 50 Chart
+ */
+async function fetchDeezerChartTracks(limit = 35) {
+  try {
+    const res = await axios.get(`https://api.deezer.com/chart/0/tracks?limit=${limit}`, { timeout: 3500 });
+    const items = res.data?.data || [];
+    return items
+      .filter(t => t && t.duration >= 45 && t.duration <= 600)
+      .map(t => {
+        const durSec = Number(t.duration) || 0;
+        const mins = Math.floor(durSec / 60);
+        const secs = durSec % 60;
+        const artwork = t.album?.cover_big || t.album?.cover_medium || t.artist?.picture_big || '';
+        return {
+          id: `sp_dz_${t.id}`,
+          title: t.title,
+          originalTitle: t.title,
+          artist: t.artist?.name || 'Unknown Artist',
+          album: t.album?.title || 'Single',
+          duration: `${mins}:${secs < 10 ? '0' : ''}${secs}`,
+          durationSeconds: durSec,
+          thumbnail: artwork,
+          hasCustomArtwork: Boolean(artwork),
+          source: 'deezer',
+          query: `${t.artist?.name || ''} - ${t.title}`
+        };
+      });
+  } catch (e) {
+    return [];
+  }
+}
+
 // Cached rich home catalog (refreshes every 30 minutes)
 let cachedHomeCatalog = null;
 let cachedHomeCatalogTime = 0;
@@ -463,77 +545,170 @@ const CATALOG_SECTION_DEFS = [
   {
     id: 'israeli_hits',
     title: 'להיטי ישראל — הכי חמים עכשיו',
-    subtitle: 'השירים והקליפים הכי מושמעים בישראל',
+    subtitle: 'עומר אדם, נועה קירל, אושר כהן, פאר טסי, עדן חסון',
     queries: [
-      'עומר אדם נועה קירל אושר כהן פאר טסי',
-      'עדן חסון אודיה יסמין מועלם כפיר צפריר'
+      'עומר אדם אושר כהן',
+      'נועה קירל עדן חסון',
+      'פאר טסי אודיה יסמין מועלם'
     ]
   },
   {
     id: 'hiphop_groove',
     title: 'היפ-הופ, ראפ וגרוב ישראלי',
-    subtitle: 'טונה, רביד פלוטניק, נס וסטילה ועוד',
+    subtitle: 'טונה, רביד פלוטניק, שחר סאול, פול טראנק, נס וסטילה',
     queries: [
-      'רביד פלוטניק טונה שחר סאול',
-      'נס וסטילה הדג נחש פול טראנק'
+      'רביד פלוטניק טונה',
+      'שחר סאול פול טראנק',
+      'נס וסטילה הדג נחש'
     ]
   },
   {
     id: 'mizrahit',
     title: 'ים-תיכוני ומזרחית',
-    subtitle: 'קלאסיקות ולהיטים חדשים מהז׳אנר הים-תיכוני',
+    subtitle: 'אייל גולן, עדן בן זקן, איתי לוי, משה פרץ, ליאור נרקיס',
     queries: [
-      'אייל גולן עדן בן זקן משה פרץ איתי לוי',
-      'שרית חדד דודו אהרון ליאור נרקיס זוהר ארגוב'
+      'אייל גולן עדן בן זקן',
+      'איתי לוי משה פרץ',
+      'ליאור נרקיס שרית חדד'
+    ]
+  },
+  {
+    id: 'mizrahit_nostalgia',
+    title: 'מזרחית של פעם ונוסטלגיה',
+    subtitle: 'זוהר ארגוב, חיים משה, ישי לוי, אבנר גדסי, צלילי הכרם',
+    queries: [
+      'זוהר ארגוב חיים משה',
+      'ישי לוי אבנר גדסי',
+      'זהבה בן שימי תבורי'
+    ]
+  },
+  {
+    id: 'calm_acoustic',
+    title: 'שירים שקטים, אקוסטי ורגוע',
+    subtitle: 'עידן רייכל, חנן בן ארי, בניה ברבי, ישי ריבו, אמיר דדון',
+    queries: [
+      'עידן רייכל חנן בן ארי',
+      'בניה ברבי ישי ריבו',
+      'אמיר דדון נתן גושן'
+    ]
+  },
+  {
+    id: 'hebrew_classics',
+    title: 'קלאסיקות ישראליות ורוק ישראלי',
+    subtitle: 'אריק איינשטיין, שלמה ארצי, כוורת, שלום חנוך, משינה, היהודים',
+    queries: [
+      'אריק איינשטיין שלמה ארצי',
+      'כוורת שלום חנוך',
+      'משינה היהודים'
     ]
   },
   {
     id: 'festigal_nostalgia',
-    title: 'קלאסיקות פסטיגל ונוסטלגיה ישראלית',
-    subtitle: 'השירים הגדולים של הפסטיגל והמוזיקה הישראלית',
+    title: 'קלאסיקות פסטיגל ושירי ילדות',
+    subtitle: 'השירים הגדולים של הפסטיגל מכל השנים',
     queries: [
-      'הראל סקעת רן דנקר פסטיגל שירים',
-      'שלמה ארצי אריק איינשטיין כוורת משינה'
+      'הראל סקעת רן דנקר פסטיגל',
+      'אליאנה תדהר מרגי פסטיגל',
+      'פסטיגל שירים'
     ]
   },
   {
     id: 'global_pop',
     title: 'להיטים בינלאומיים — Global Top Hits',
-    subtitle: 'הלהיטים הגדולים בעולם ברגע זה',
+    subtitle: 'The Weeknd, Taylor Swift, Billie Eilish, Bruno Mars, Dua Lipa',
     queries: [
-      'The Weeknd Dua Lipa Bruno Mars Billie Eilish',
-      'Taylor Swift Sabrina Carpenter Post Malone Coldplay'
+      'The Weeknd Bruno Mars',
+      'Dua Lipa Billie Eilish',
+      'Taylor Swift Sabrina Carpenter'
     ]
   },
   {
     id: 'party_electronic',
-    title: 'מסיבה, דאנס ואנרגיה גבוהה',
-    subtitle: 'ביטים, אלקטרוני ומוזיקה לאימונים',
+    title: 'מסיבה, דאנס ואלקטרוני',
+    subtitle: 'David Guetta, Calvin Harris, Fred again.., Peggy Gou, Tiësto',
     queries: [
-      'David Guetta Calvin Harris Tiesto Avicii',
-      'Travis Scott Drake Kendrick Lamar Metro Boomin'
+      'Calvin Harris David Guetta',
+      'Fred again Peggy Gou',
+      'Tiësto Avicii'
+    ]
+  },
+  {
+    id: 'night_drive',
+    title: 'נסיעה לילית וצ\'יל — Night Drive',
+    subtitle: 'The Weeknd, Synthwave, Lo-Fi, Chill Pop',
+    queries: [
+      'The Weeknd Starboy Blinding Lights',
+      'Daft Punk Kavinsky',
+      'Synthwave chill pop'
+    ]
+  },
+  {
+    id: 'workout_energy',
+    title: 'אימונים, כושר ומוטיבציה',
+    subtitle: 'Workout & Gym Motivation, High Energy Beats',
+    queries: [
+      'Eminem Till I Collapse Lose Yourself',
+      'Travis Scott Drake',
+      'Gym motivation workout'
+    ]
+  },
+  {
+    id: 'latin_reggaeton',
+    title: 'לטיני ורגאטון — Latin & Reggaeton',
+    subtitle: 'Bad Bunny, Karol G, Feid, Rauw Alejandro, J Balvin',
+    queries: [
+      'Bad Bunny Karol G',
+      'Feid Rauw Alejandro',
+      'J Balvin Maluma'
     ]
   }
 ];
 
 /**
- * Build rich multi-section catalog & expanded trending tracks (100+ tracks across 6 categories)
+ * Build rich multi-section catalog & expanded trending tracks (300+ tracks across live charts & 12 genres)
  */
 async function getHomeCatalog() {
   if (cachedHomeCatalog && (Date.now() - cachedHomeCatalogTime < HOME_CATALOG_TTL)) {
     return cachedHomeCatalog;
   }
 
+  // 1. Fetch live charts in parallel
+  const [itunesChartTracks, deezerChartTracks] = await Promise.all([
+    fetchItunesChartTracks('IL', 30),
+    fetchDeezerChartTracks(30)
+  ]);
+
+  const liveChartSections = [];
+
+  if (itunesChartTracks && itunesChartTracks.length > 0) {
+    liveChartSections.push({
+      id: 'israel_official_chart',
+      title: 'מצעד ישראל הרשמי — Top Charts',
+      subtitle: 'השירים הכי מושמעים בישראל ברגע זה (בזמן אמת)',
+      tracks: itunesChartTracks
+    });
+  }
+
+  if (deezerChartTracks && deezerChartTracks.length > 0) {
+    liveChartSections.push({
+      id: 'global_top_chart',
+      title: 'המצעד העולמי — Global Top 50',
+      subtitle: 'הלהיטים הגדולים ביותר בעולם כרגע',
+      tracks: deezerChartTracks
+    });
+  }
+
+  // 2. Fetch curated genre and mood shelves
   const sectionPromises = CATALOG_SECTION_DEFS.map(async (def) => {
     const queryLists = await Promise.all(
       def.queries.map(q =>
         Promise.all([
-          searchInnerTube(q, 18),
-          searchDeezer(q, 12)
-        ]).then(([yt, dz]) => mergeAndDeduplicateTracks([yt, dz], 22))
+          searchInnerTube(q, 20),
+          searchDeezer(q, 15)
+        ]).then(([yt, dz]) => mergeAndDeduplicateTracks([yt, dz], 25))
       )
     );
-    const tracks = mergeAndDeduplicateTracks(queryLists, 24);
+    const tracks = mergeAndDeduplicateTracks(queryLists, 28);
     return {
       id: def.id,
       title: def.title,
@@ -542,12 +717,13 @@ async function getHomeCatalog() {
     };
   });
 
-  const sections = await Promise.all(sectionPromises);
-  const allTrending = mergeAndDeduplicateTracks(sections.map(s => s.tracks), 60);
+  const genreSections = await Promise.all(sectionPromises);
+  const allSections = [...liveChartSections, ...genreSections].filter(s => s.tracks && s.tracks.length > 0);
+  const allTrending = mergeAndDeduplicateTracks(allSections.map(s => s.tracks), 100);
 
   cachedHomeCatalog = {
     tracks: allTrending,
-    sections: sections.filter(s => s.tracks && s.tracks.length > 0)
+    sections: allSections
   };
   cachedHomeCatalogTime = Date.now();
 
