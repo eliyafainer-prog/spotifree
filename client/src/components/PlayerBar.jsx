@@ -72,6 +72,7 @@ export function PlayerBar({
   onOpenAddToPlaylist,
   onOpenLyrics,
   onOpenFullscreen,
+  onOpenQueue,
   showNowPlayingPanel = true,
   onToggleNowPlayingPanel
 }) {
