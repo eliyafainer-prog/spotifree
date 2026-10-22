@@ -197,6 +197,7 @@ export function useAudioPlayer() {
       if (currentTrackRef.current && !userPausedRef.current && retryCountRef.current < 3) {
         retryCountRef.current++;
         const attempt = retryCountRef.current;
+        const savedPos = (audioRef.current?.currentTime > 2) ? audioRef.current.currentTime : 0;
         if (attempt <= 2) {
           // Retry 1 & 2: Re-request server stream proxy on native <audio> (preserves 100% background playback & zero ads!)
           setTimeout(() => {
@@ -204,7 +205,11 @@ export function useAudioPlayer() {
             const retryUrl = `${getPlayableAudioUrl(currentTrackRef.current)}&retry=${Date.now()}`;
             audioRef.current.src = retryUrl;
             audioRef.current.load();
-            audioRef.current.play().catch(() => {});
+            audioRef.current.play().then(() => {
+              if (savedPos > 0 && audioRef.current) {
+                audioRef.current.currentTime = savedPos;
+              }
+            }).catch(() => {});
           }, attempt * 350);
           return;
         }
@@ -640,13 +645,15 @@ export function useAudioPlayer() {
     getOfflineTrack(playableTrack).then(offlineRecord => {
       if (playSessionIdRef.current !== sessionId || userPausedRef.current) return;
       if (offlineRecord && offlineRecord.audioBlob && audioRef.current) {
-        activeEngineRef.current = 'audio';
-        const localBlobUrl = URL.createObjectURL(offlineRecord.audioBlob);
-        audioRef.current.src = localBlobUrl;
-        audioRef.current.currentTime = 0;
-        audioRef.current.play().catch(() => {});
-        setIsPlaying(true);
-        setIsLoading(false);
+        if (!audioRef.current.currentTime || audioRef.current.currentTime < 1) {
+          activeEngineRef.current = 'audio';
+          const localBlobUrl = URL.createObjectURL(offlineRecord.audioBlob);
+          audioRef.current.src = localBlobUrl;
+          audioRef.current.currentTime = 0;
+          audioRef.current.play().catch(() => {});
+          setIsPlaying(true);
+          setIsLoading(false);
+        }
       }
     }).catch(() => {});
 

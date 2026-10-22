@@ -651,39 +651,14 @@ async function pipeHlsInNode(m3u8Url, req, res) {
   const isMp3 = !mapUrl && (segments[0].url.includes('.mp3') || m3u8Url.includes('mp3'));
   const contentType = isMp3 ? 'audio/mpeg' : 'audio/mp4';
 
-  // Approximate bitrate to estimate byte ranges (160kbps for AAC = 20KB/s, 128kbps for MP3 = 16KB/s)
-  const approxBytesPerSec = isMp3 ? 16000 : 20000;
-  const approxTotalBytes = Math.max(100000, Math.round(totalDurationSec * approxBytesPerSec));
-
-  const rangeHeader = req.headers.range;
-  let startByte = 0;
-  let endByte = approxTotalBytes - 1;
-  let isRange = false;
-
-  if (rangeHeader && typeof rangeHeader === 'string' && rangeHeader.startsWith('bytes=')) {
-    const parts = rangeHeader.replace(/bytes=/, '').split('-');
-    const parsedStart = parseInt(parts[0], 10);
-    const parsedEnd = parseInt(parts[1], 10);
-
-    if (!isNaN(parsedStart)) {
-      startByte = Math.max(0, Math.min(parsedStart, approxTotalBytes - 1));
-      isRange = true;
-    }
-    if (!isNaN(parsedEnd) && parsedEnd >= startByte) {
-      endByte = Math.min(parsedEnd, approxTotalBytes - 1);
-    }
-  }
-
-  // Calculate target start time from requested Range bytes or ?seek parameter
+  // Support explicit seek parameter (?seek=seconds or ?start=seconds)
   let targetStartTime = 0;
   const seekQuery = parseFloat(req.query.seek || req.query.start);
   if (!isNaN(seekQuery) && seekQuery > 0) {
     targetStartTime = seekQuery;
-  } else if (isRange && startByte > 0) {
-    targetStartTime = (startByte / approxTotalBytes) * totalDurationSec;
   }
 
-  // Find corresponding starting segment
+  // Find corresponding starting segment if seeking
   let startSegmentIdx = 0;
   if (targetStartTime > 0) {
     for (let i = 0; i < segments.length; i++) {
@@ -694,16 +669,10 @@ async function pipeHlsInNode(m3u8Url, req, res) {
     }
   }
 
+  // Always return 200 OK without Range for HLS streams so browser decodes continuously without chunk errors or restarts
+  res.statusCode = 200;
   res.setHeader('Content-Type', contentType);
-  res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'public, max-age=14400');
-
-  if (isRange) {
-    res.statusCode = 206;
-    res.setHeader('Content-Range', `bytes ${startByte}-${endByte}/${approxTotalBytes}`);
-  } else {
-    res.statusCode = 200;
-  }
 
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
