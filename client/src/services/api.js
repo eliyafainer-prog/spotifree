@@ -155,20 +155,19 @@ async function fetchWithFailover(apiPath, options = {}) {
     serverCandidates.push('http://localhost:5050');
   }
 
-  // Add cloud fallback ONLY if not already running on web or if primary is different
-  const isAlreadyCloudOrigin = typeof window !== 'undefined' && window.location.origin === DEFAULT_SERVERS.cloud;
-  if (!isAlreadyCloudOrigin && currentBase !== DEFAULT_SERVERS.cloud) {
+  // Always make cloud fallback available
+  if (currentBase !== DEFAULT_SERVERS.cloud) {
     serverCandidates.push(DEFAULT_SERVERS.cloud);
   }
 
   const uniqueServers = [...new Set(serverCandidates)];
   if (uniqueServers.length === 0) uniqueServers.push('');
 
-  // 1. Try primary server first to avoid duplicate load on backend
+  // 1. Try primary server first with generous 16s timeout for Render cold-starts
   const primarySrv = uniqueServers[0];
   const primaryUrl = primarySrv ? `${primarySrv}${apiPath}` : apiPath;
   const primaryController = new AbortController();
-  const primaryTimer = setTimeout(() => primaryController.abort(), 6000);
+  const primaryTimer = setTimeout(() => primaryController.abort(), 16000);
   const primarySignal = options.signal || primaryController.signal;
 
   try {
@@ -179,11 +178,15 @@ async function fetchWithFailover(apiPath, options = {}) {
     }
   } catch (primaryErr) {
     clearTimeout(primaryTimer);
-    // Primary failed, proceed to failover candidates
+    // Primary failed or timed out, proceed to failover candidates
   }
 
-  // 2. If primary failed and there are remaining candidates, try them
-  const fallbackServers = uniqueServers.slice(1);
+  // 2. Fallback candidates
+  let fallbackServers = uniqueServers.slice(1);
+  if (fallbackServers.length === 0 && primarySrv !== DEFAULT_SERVERS.cloud) {
+    fallbackServers = [DEFAULT_SERVERS.cloud];
+  }
+
   if (fallbackServers.length === 0) {
     throw new Error('Server unreachable');
   }
@@ -192,7 +195,7 @@ async function fetchWithFailover(apiPath, options = {}) {
     return new Promise(async (resolve, reject) => {
       const fullUrl = srv ? `${srv}${apiPath}` : apiPath;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 7000);
+      const timeoutId = setTimeout(() => controller.abort(), 16000);
       const combinedSignal = options.signal || controller.signal;
 
       try {

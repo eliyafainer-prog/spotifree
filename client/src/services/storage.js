@@ -120,14 +120,36 @@ export function isSongLiked(track, likedSongs) {
   return likedSongs.some(t => isSameTrack(t, track));
 }
 
+const DEFAULT_INITIAL_PLAYLISTS = [
+  {
+    id: 'pl_israeli_favorites',
+    title: 'שירים שאני אוהב',
+    type: 'playlist',
+    tracks: [
+      { id: 'sp_om_adam_mah_laasot', title: 'מה לעשות עם הזאב', artist: 'עלמה גוב', thumbnail: 'https://i.scdn.co/image/ab67616d0000b2734199fc9ee18e192ff83984ca', durationSeconds: 220 },
+      { id: 'sp_cute_boy', title: 'Cute Boy', artist: 'נונו, שגיא קריב, Tel Aviv', thumbnail: 'https://i.scdn.co/image/ab67616d0000b273b75459392233ea25eb8f22fa', durationSeconds: 198 },
+      { id: 'sp_earrings', title: 'Earrings', artist: 'Malcolm Todd', thumbnail: 'https://i.scdn.co/image/ab67616d0000b27329fbba4694b91448b30e01ea', durationSeconds: 167 },
+      { id: 'sp_festigal_future', title: 'הילדים של העתיד', artist: 'אליאנה תדהר, תובל שפיר', thumbnail: 'https://i.scdn.co/image/ab67616d0000b27376a91d1e43d460cf6134b223', durationSeconds: 215 },
+      { id: 'sp_balada_lasonen', title: 'בלדה לסוכן כפול', artist: 'משינה', thumbnail: 'https://i.scdn.co/image/ab67616d0000b2738fc9f122501a1d1ca933320f', durationSeconds: 205 },
+      { id: 'sp_iloveit', title: 'I Love It (feat. Charli XCX)', artist: 'Icona Pop', thumbnail: 'https://i.scdn.co/image/ab67616d0000b273f5569420bf13e618e7e178fc', durationSeconds: 157 }
+    ],
+    createdAt: Date.now()
+  }
+];
+
 export function getPlaylists() {
   try {
     const raw = localStorage.getItem(PLAYLISTS_KEY);
-    if (!raw) return [];
+    if (!raw) {
+      try {
+        localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(DEFAULT_INITIAL_PLAYLISTS));
+      } catch (e) {}
+      return DEFAULT_INITIAL_PLAYLISTS;
+    }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter(p => p && typeof p === 'object') : [];
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed.filter(p => p && typeof p === 'object') : DEFAULT_INITIAL_PLAYLISTS;
   } catch {
-    return [];
+    return DEFAULT_INITIAL_PLAYLISTS;
   }
 }
 

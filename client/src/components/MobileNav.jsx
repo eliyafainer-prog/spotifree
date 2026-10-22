@@ -5,13 +5,13 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
   const isLibraryActive = currentView === 'library' || currentView === 'liked' || currentView === 'playlist' || currentView === 'offline';
 
   return (
-    <nav className="md:hidden flex items-center justify-around bg-gradient-to-t from-black via-black/95 to-black/85 backdrop-blur-lg h-16 px-2 z-40 select-none">
+    <nav className="md:hidden flex items-center justify-around bg-black/95 backdrop-blur-xl border-t border-white/10 h-16 px-2 z-40 select-none w-full">
       <button
         onClick={() => {
           setCurrentView('home');
           setSelectedPlaylistId(null);
         }}
-        className={`flex flex-col items-center justify-center gap-1 w-16 py-1 transition-colors ${
+        className={`flex flex-col items-center justify-center gap-1 w-16 py-1 active:scale-95 transition-all ${
           currentView === 'home' ? 'text-white' : 'text-[#b3b3b3]'
         }`}
       >
@@ -26,7 +26,7 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
           setCurrentView('search');
           setSelectedPlaylistId(null);
         }}
-        className={`flex flex-col items-center justify-center gap-1 w-16 py-1 transition-colors ${
+        className={`flex flex-col items-center justify-center gap-1 w-16 py-1 active:scale-95 transition-all ${
           currentView === 'search' ? 'text-white' : 'text-[#b3b3b3]'
         }`}
       >
@@ -41,7 +41,7 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
           setCurrentView('library');
           setSelectedPlaylistId(null);
         }}
-        className={`flex flex-col items-center justify-center gap-1 w-16 py-1 transition-colors ${
+        className={`flex flex-col items-center justify-center gap-1 w-16 py-1 active:scale-95 transition-all ${
           isLibraryActive ? 'text-white' : 'text-[#b3b3b3]'
         }`}
       >
@@ -53,7 +53,7 @@ export function MobileNav({ currentView, setCurrentView, openImportModal, setSel
 
       <button
         onClick={openImportModal}
-        className="flex flex-col items-center justify-center gap-1 w-16 py-1 text-[#b3b3b3] active:text-white transition-colors"
+        className="flex flex-col items-center justify-center gap-1 w-16 py-1 text-[#b3b3b3] active:text-white active:scale-95 transition-all"
       >
         <Plus className="w-6 h-6 stroke-[2]" />
         <span className="text-[10px] font-normal">יצירה</span>

@@ -356,25 +356,40 @@ export default function App() {
 
   useEffect(() => {
     let isMounted = true;
-    setIsTrendingLoading(true);
-    getHomeCatalog()
-      .then(catalog => {
-        if (isMounted) {
+    let retryTimer = null;
+
+    const loadCatalog = (attempt = 1) => {
+      setIsTrendingLoading(true);
+      getHomeCatalog()
+        .then(catalog => {
+          if (!isMounted) return;
           const tracks = catalog.tracks || [];
           const sections = catalog.sections || [];
-          setTrendingTracks(tracks);
-          setCatalogSections(sections);
           if (tracks.length > 0) {
+            setTrendingTracks(tracks);
+            setCatalogSections(sections);
             prefetchNextTracks(tracks.slice(0, 5));
+          } else if (attempt < 4) {
+            retryTimer = setTimeout(() => loadCatalog(attempt + 1), 2200);
           }
-        }
-      })
-      .catch(err => console.error('Failed to load home catalog:', err))
-      .finally(() => {
-        if (isMounted) setIsTrendingLoading(false);
-      });
+        })
+        .catch(err => {
+          console.warn('Catalog fetch attempt', attempt, 'failed, retrying...', err);
+          if (isMounted && attempt < 4) {
+            retryTimer = setTimeout(() => loadCatalog(attempt + 1), 2200);
+          }
+        })
+        .finally(() => {
+          if (isMounted) setIsTrendingLoading(false);
+        });
+    };
 
-    return () => { isMounted = false; };
+    loadCatalog(1);
+
+    return () => {
+      isMounted = false;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, []);
 
   // Proactively prefetch and auto-enrich all playlist tracks in batches when opening a playlist
@@ -656,7 +671,7 @@ export default function App() {
   }, [lyricsData, player.currentTime]);
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-black text-white select-none">
+    <div className="flex flex-col h-screen h-[100dvh] w-screen overflow-hidden bg-black text-white select-none">
       {/* ==================== DESKTOP GLOBAL TOP BAR (Exact Match to Image 1) ==================== */}
       <header className="hidden md:flex items-center justify-between h-16 px-4 bg-black flex-shrink-0 z-30">
         {/* Right side (RTL): Official Spotify White Logo */}
@@ -915,7 +930,7 @@ export default function App() {
           )}
 
           {/* Main Scrollable Content Area (no-scrollbar on mobile so there is no grey bar on the left edge!) */}
-          <div className="relative z-10 flex-1 overflow-y-auto no-scrollbar px-4 md:px-6 pt-1 pb-24">
+          <div className="relative z-10 flex-1 overflow-y-auto no-scrollbar px-4 md:px-6 pt-1 pb-36 md:pb-24">
             {/* ==================== VIEW: HOME (Exact Match to Image 1 & Image 3) ==================== */}
             {currentView === 'home' && (
               <div className="flex flex-col gap-7 animate-fadeIn">
@@ -1734,49 +1749,54 @@ export default function App() {
         )}
       </div>
 
-      {/* Fixed Bottom Controls & Navigation */}
-      <PlayerBar
-        currentTrack={player.currentTrack}
-        isPlaying={player.isPlaying}
-        isLoading={player.isLoading}
-        currentTime={player.currentTime}
-        duration={player.duration}
-        volume={player.volume}
-        isMuted={player.isMuted}
-        isShuffle={player.isShuffle}
-        shuffleMode={player.shuffleMode}
-        repeatMode={player.repeatMode}
-        onTogglePlay={player.togglePlay}
-        onNext={player.nextTrack}
-        onPrev={player.prevTrack}
-        onSeek={player.seek}
-        onSetVolume={player.setVolume}
-        onToggleMute={player.toggleMute}
-        onToggleShuffle={handleToggleShuffle}
-        onToggleRepeat={player.toggleRepeat}
-        isLiked={isCurrentLiked}
-        onToggleLike={handleToggleLike}
-        isDownloaded={isTrackInIdSet(player.currentTrack, downloadedIds)}
-        isDownloading={
-          isTrackInIdSet(player.currentTrack, downloadingIds) ||
-          isTrackInIdSet(player.currentTrack, queuedDownloadIds)
-        }
-        onDownloadTrack={handleDownloadTrack}
-        onOpenAddToPlaylist={handleOpenAddToPlaylist}
-        onOpenLyrics={() => setIsLyricsOpen(true)}
-        onOpenFullscreen={() => setIsFullscreenPlayerOpen(true)}
-        onOpenQueue={() => setIsQueueOpen(true)}
-        showNowPlayingPanel={showNowPlayingPanel}
-        onToggleNowPlayingPanel={() => setShowNowPlayingPanel(prev => !prev)}
-      />
+      {/* Bottom Area: Fixed on mobile above Android nav bar, in-flow on desktop */}
+      <div className="md:contents fixed bottom-0 inset-x-0 z-40 flex flex-col pointer-events-none pb-[env(safe-area-inset-bottom)]">
+        <div className="pointer-events-auto w-full">
+          <PlayerBar
+            currentTrack={player.currentTrack}
+            isPlaying={player.isPlaying}
+            isLoading={player.isLoading}
+            currentTime={player.currentTime}
+            duration={player.duration}
+            volume={player.volume}
+            isMuted={player.isMuted}
+            isShuffle={player.isShuffle}
+            shuffleMode={player.shuffleMode}
+            repeatMode={player.repeatMode}
+            onTogglePlay={player.togglePlay}
+            onNext={player.nextTrack}
+            onPrev={player.prevTrack}
+            onSeek={player.seek}
+            onSetVolume={player.setVolume}
+            onToggleMute={player.toggleMute}
+            onToggleShuffle={handleToggleShuffle}
+            onToggleRepeat={player.toggleRepeat}
+            isLiked={isCurrentLiked}
+            onToggleLike={handleToggleLike}
+            isDownloaded={isTrackInIdSet(player.currentTrack, downloadedIds)}
+            isDownloading={
+              isTrackInIdSet(player.currentTrack, downloadingIds) ||
+              isTrackInIdSet(player.currentTrack, queuedDownloadIds)
+            }
+            onDownloadTrack={handleDownloadTrack}
+            onOpenAddToPlaylist={handleOpenAddToPlaylist}
+            onOpenLyrics={() => setIsLyricsOpen(true)}
+            onOpenFullscreen={() => setIsFullscreenPlayerOpen(true)}
+            onOpenQueue={() => setIsQueueOpen(true)}
+            showNowPlayingPanel={showNowPlayingPanel}
+            onToggleNowPlayingPanel={() => setShowNowPlayingPanel(prev => !prev)}
+          />
+        </div>
 
-      {/* Mobile Tab Bar */}
-      <MobileNav
-        currentView={currentView}
-        setCurrentView={setCurrentView}
-        openImportModal={() => setIsImportModalOpen(true)}
-        setSelectedPlaylistId={setSelectedPlaylistId}
-      />
+        <div className="pointer-events-auto w-full">
+          <MobileNav
+            currentView={currentView}
+            setCurrentView={setCurrentView}
+            openImportModal={() => setIsImportModalOpen(true)}
+            setSelectedPlaylistId={setSelectedPlaylistId}
+          />
+        </div>
+      </div>
 
       {/* Fullscreen Player */}
       <FullscreenPlayer
