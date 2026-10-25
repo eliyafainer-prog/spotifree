@@ -471,10 +471,11 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
 }
 
 // Persistent resolved tracks cache in localStorage for 0ms repeat playback
-const RESOLVED_CACHE_KEY = 'spotifree_resolved_v5';
+const RESOLVED_CACHE_KEY = 'spotifree_resolved_v6';
 let persistedResolveCache = {};
 try {
   localStorage.removeItem('spotifree_resolved_v4');
+  localStorage.removeItem('spotifree_resolved_v5');
   const stored = localStorage.getItem(RESOLVED_CACHE_KEY);
   if (stored) {
     const parsed = JSON.parse(stored);

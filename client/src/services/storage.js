@@ -2,7 +2,7 @@ const LIKED_SONGS_KEY = 'spotifree_liked_songs';
 const PLAYLISTS_KEY = 'spotifree_playlists';
 const RECENT_KEY = 'spotifree_recent_tracks';
 const PLAYBACK_STATE_KEY = 'spotifree_last_playback';
-const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v5';
+const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v6';
 
 // One-time migration: clear old non-studio streamableId on Spotify-imported tracks while keeping their cover artwork intact
 try {
@@ -12,7 +12,7 @@ try {
       return list.map(t => {
         if (!t || typeof t !== 'object') return t;
         const origId = String(t.originalId || t.id || '');
-        if ((origId.startsWith('sp_') || t.source === 'spotify') && !t.studioResolvedV5) {
+        if ((origId.startsWith('sp_') || t.source === 'spotify') && !t.studioResolvedV6) {
           return {
             ...t,
             originalId: origId.startsWith('sp_') ? origId : (t.originalId || `sp_${t.spotifyId || t.title}`),
@@ -21,6 +21,7 @@ try {
             studioResolvedV3: false,
             studioResolvedV4: false,
             studioResolvedV5: false,
+            studioResolvedV6: false,
             durationSeconds: (t.durationSeconds && t.durationSeconds <= 420) ? t.durationSeconds : 0
           };
         }
@@ -157,24 +158,23 @@ export function getPlaylists() {
 export function savePlaylist(playlist) {
   if (!playlist) return getPlaylists();
   const playlists = getPlaylists();
-  const index = playlists.findIndex(
-    p =>
-      p.id === playlist.id ||
-      (playlist.sourceId && p.sourceId === playlist.sourceId) ||
-      (playlist.sourceUrl && p.sourceUrl === playlist.sourceUrl) ||
-      (playlist.sourceId && p.title === playlist.title && p.type === playlist.type)
-  );
-  let updated;
-  if (index >= 0) {
-    updated = [...playlists];
-    updated[index] = {
-      ...playlists[index],
-      ...playlist,
-      id: playlists[index].id
-    };
-  } else {
-    updated = [playlist, ...playlists];
-  }
+  const normTitle = String(playlist.title || '').trim();
+  const isSamePlaylist = (p) =>
+    p.id === playlist.id ||
+    (playlist.sourceId && p.sourceId === playlist.sourceId) ||
+    (playlist.sourceUrl && p.sourceUrl === playlist.sourceUrl) ||
+    (normTitle && String(p.title || '').trim() === normTitle);
+
+  const existing = playlists.find(isSamePlaylist);
+  const finalId = playlist.sourceId || existing?.id || playlist.id;
+  playlist.id = finalId;
+
+  const mergedPlaylist = existing
+    ? { ...existing, ...playlist, id: finalId }
+    : { ...playlist, id: finalId };
+
+  const remaining = playlists.filter(p => !isSamePlaylist(p));
+  const updated = [mergedPlaylist, ...remaining];
   try {
     localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
   } catch (e) {}
@@ -236,11 +236,13 @@ export function updateTrackInPlaylists(resolvedTrack) {
             originalId: t.originalId || t.id,
             streamableId: resolvedTrack.streamableId || resolvedTrack.id,
             id: resolvedTrack.streamableId || resolvedTrack.id,
+            artist: resolvedTrack.artist || t.artist,
             thumbnail: resolvedTrack.thumbnail || t.thumbnail,
             hasCustomArtwork: true,
             studioResolvedV3: true,
             studioResolvedV4: true,
             studioResolvedV5: true,
+            studioResolvedV6: true,
             duration: finalDurStr,
             durationSeconds: finalSec
           };

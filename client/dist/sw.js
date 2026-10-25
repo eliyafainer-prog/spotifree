@@ -1,5 +1,5 @@
-// SpotiFree PWA Service Worker v3
-const CACHE_NAME = 'spotifree-pwa-v3';
+// SpotiFree PWA Service Worker v4
+const CACHE_NAME = 'spotifree-pwa-v4';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -36,8 +36,8 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(event.request.url);
 
-  // Direct pass-through for streaming and large binary proxy endpoints
-  if (url.pathname.startsWith('/api/stream/') || url.pathname.startsWith('/api/offline/')) {
+  // Direct pass-through for all API, streaming, and binary proxy endpoints
+  if (url.pathname.startsWith('/api/')) {
     return;
   }
 

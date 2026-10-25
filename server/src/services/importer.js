@@ -123,8 +123,9 @@ async function fetchSpotifyPlaylistPathfinder(playlistId, accessToken) {
     const artistList = (trackData.artists?.items || [])
       .map(a => a.profile?.name)
       .filter(Boolean);
-    const artist = (artistList.join(', ') || 'Unknown Artist').replace(/\u00a0/g, ' ').trim();
+    const rawArtist = (artistList.join(', ') || 'Unknown Artist').replace(/\u00a0/g, ' ').trim();
     const albumName = String(trackData.albumOfTrack?.name || playlistName || 'Spotify').replace(/\u00a0/g, ' ').trim();
+    const artist = localizeArtistIfHebrew(rawArtist, rawTitle, albumName);
     const durationMs = Number(trackData.trackDuration?.totalMilliseconds) || 0;
     const durationSec = Math.round(durationMs / 1000);
     const mins = Math.floor(durationSec / 60);
@@ -241,7 +242,8 @@ async function importSpotify(url, forceRefresh = false) {
 
   const tracks = rawTracks.map((t, index) => {
     const rawTitle = (t.title || t.name || 'שיר ללא שם').replace(/\u00a0/g, ' ').trim();
-    const artist = (t.subtitle || (t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist')).replace(/\u00a0/g, ' ').trim();
+    const rawArtist = (t.subtitle || (t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist')).replace(/\u00a0/g, ' ').trim();
+    const artist = localizeArtistIfHebrew(rawArtist, rawTitle, playlistTitle);
     const durationMs = t.duration || t.duration_ms || 0;
     const durationSec = Math.round(durationMs / 1000);
     const mins = Math.floor(durationSec / 60);
@@ -280,6 +282,12 @@ async function importSpotify(url, forceRefresh = false) {
 }
 
 const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+
+function normalizeQuotes(str) {
+  return String(str || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/['׳’`"״”“]/g, '');
+}
 
 const ARTIST_BILINGUAL_GROUPS = [
   ['עומר אדם', 'omer adam'],
@@ -324,16 +332,72 @@ const ARTIST_BILINGUAL_GROUPS = [
   ['שחר סאול', 'shahar saul'],
   ['פול טראנק', 'full trunk'],
   ['בניה ברבי', 'benaia barabi'],
-  ['אמיר דדון', 'amir dadon']
+  ['אמיר דדון', 'amir dadon'],
+  ['שי המבר', 'shay hamber'],
+  ['אליאנה תדהר', 'eliana tidhar'],
+  ['תובל שפיר', 'tuval shafir'],
+  ['רן דנקר', 'ran danker'],
+  ['טל מוסרי', 'tal mosseri'],
+  ['עודד פז', 'oded paz', 'הפיג\'מות', 'הפיגמות', 'hapijamot'],
+  ['אילן רוזנפלד', 'ilan rosenfeld'],
+  ['קובי פרג\'', 'קובי פרג', 'kobi farag'],
+  ['עדי הימלבלוי', 'adi himelbloy'],
+  ['שירה וילנסקי', 'shira vilenski'],
+  ['דון לני גבאי', 'don lenny gabai'],
+  ['הדורבנים', 'hadorbanim'],
+  ['תמיר בר', 'tamir bar'],
+  ['שוטי הנבואה', 'shotei hanevuah'],
+  ['ישי סוויסה', 'yishay swissa'],
+  ['ערוץ הכיבוד', 'arutz hakibud'],
+  ['דנה פרידר', 'dana frider'],
+  ['רוני דואני', 'רוני סופרסטאר', 'roni duani', 'roni superstar'],
+  ['עילי בוטנר', 'elai botner'],
+  ['אביב אלוש', 'avraham aviv alush', 'aviv alush'],
+  ['לירז צ\'רכי', 'לירז צרכי', 'liraz charhi'],
+  ['בן אל תבורי', 'ben el tavori'],
+  ['ג\'ימבו ג\'יי', 'גימבו גיי', 'jimbo j'],
+  ['עידו בי וצוקי', 'ido b & zooki', 'ido b zooki', 'idobzookiofficial'],
+  ['עדן גולן', 'eden golan'],
+  ['שרקי', 'שרק', 'shreki'],
+  ['עלמה גוב', 'alma gov'],
+  ['נונו', 'nunu'],
+  ['שגיא קריב', 'sagi kariv'],
+  ['ליעד מאיר', 'liad meir'],
+  ['יא-נה', 'יא נה', 'ya-ne'],
+  ['צליל מכוון', 'tuned tone'],
+  ['יצחק קלפטר', 'itzhak klepter'],
+  ['שם טוב לוי', 'shem-tov levy', 'shem tov levy'],
+  ['שלמה ידוב', 'shlomo ydov'],
+  ['יונתן הרץ', 'yonathan hertz'],
+  ['בועז מעודה', 'boaz mauda'],
+  ['משתתפי הפסטיגל', 'participants of festigal', 'כוכבי הפסטיגל']
 ];
 
-function expandBilingualArtistParts(artistParts = []) {
-  const expanded = new Set(artistParts.filter(Boolean));
-  for (const a of [...expanded]) {
-    const low = a.toLowerCase().trim();
+function localizeArtistIfHebrew(artistStr, titleStr = '', albumStr = '') {
+  if (!artistStr) return 'Unknown Artist';
+  const hasHebrewContext = /[\u0590-\u05FF]/.test(titleStr) || /[\u0590-\u05FF]/.test(albumStr);
+  if (!hasHebrewContext) return artistStr;
+
+  const parts = String(artistStr).split(',').map(p => p.trim()).filter(Boolean);
+  const localized = parts.map(p => {
+    const low = normalizeQuotes(p).toLowerCase().trim();
     for (const grp of ARTIST_BILINGUAL_GROUPS) {
-      if (grp.some(g => low === g || low.includes(g) || g.includes(low))) {
-        grp.forEach(g => expanded.add(g));
+      if (grp.some(g => normalizeQuotes(g).toLowerCase() === low)) {
+        return grp[0];
+      }
+    }
+    return p;
+  });
+  return localized.join(', ');
+}
+
+function expandBilingualArtistParts(artistParts = []) {
+  const expanded = new Set(artistParts.filter(Boolean).map(a => normalizeQuotes(a).toLowerCase().trim()));
+  for (const a of [...expanded]) {
+    for (const grp of ARTIST_BILINGUAL_GROUPS) {
+      const normGrp = grp.map(g => normalizeQuotes(g).toLowerCase());
+      if (normGrp.some(g => a === g || a.includes(g) || g.includes(a))) {
+        normGrp.forEach(g => expanded.add(g));
       }
     }
   }
@@ -476,9 +540,10 @@ async function universalImport(inputUrl, forceRefresh = false) {
   // When re-importing or forceRefresh is requested, evict cached resolutions for all tracks in the playlist
   if (forceRefresh && result && Array.isArray(result.tracks)) {
     for (const t of result.tracks) {
-      const cleanArtist = String(t.artist || '').replace(/\u00a0/g, ' ').trim();
       const cleanTrackTitle = String(t.title || '').replace(/\u00a0/g, ' ').trim();
-      const cacheKey = `v4:::${cleanArtist}:::${cleanTrackTitle}:::${t.durationSeconds || 0}`.toLowerCase();
+      const rawArtist = String(t.artist || '').replace(/\u00a0/g, ' ').trim();
+      const cleanArtist = localizeArtistIfHebrew(rawArtist, cleanTrackTitle, t.album || '');
+      const cacheKey = `v6:::${cleanArtist}:::${cleanTrackTitle}:::${t.durationSeconds || 0}`.toLowerCase();
       resolveMemCache.delete(cacheKey);
     }
   }
@@ -493,16 +558,17 @@ async function universalImport(inputUrl, forceRefresh = false) {
  */
 function scoreCandidate(cand, track, extraArtistAliases = []) {
   let score = 0;
-  const candTitle = String(cand.originalTitle || cand.title || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
-  const candCleanTitle = String(cand.title || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
-  const candAuthor = String(cand.rawAuthor || cand.artist || cand.author?.name || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
-  const rawTargetTitle = String(track.title || track.originalTitle || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
+  const candTitle = normalizeQuotes(cand.originalTitle || cand.title || '').toLowerCase();
+  const candCleanTitle = normalizeQuotes(cand.title || '').toLowerCase();
+  const candAuthor = normalizeQuotes(cand.rawAuthor || cand.artist || cand.author?.name || '').toLowerCase();
+  const rawTargetTitle = normalizeQuotes(track.title || track.originalTitle || '').toLowerCase();
   const coreTargetTitle = rawTargetTitle.replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').split(' - ')[0].trim() || rawTargetTitle;
-  const targetArtist = String(track.artist || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
-  const targetAlbum = String(track.album || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
+  const targetAlbum = normalizeQuotes(track.album || '').toLowerCase();
+  const targetArtist = normalizeQuotes(localizeArtistIfHebrew(track.artist || '', rawTargetTitle, targetAlbum)).toLowerCase();
   const candSec = Number(cand.durationSeconds || cand.seconds) || 0;
   const targetSec = Number(track.durationSeconds) || 0;
   const isTopic = Boolean(cand.isTopic || candAuthor.includes('- topic') || candAuthor.endsWith('topic'));
+  const isFestigalTrack = targetArtist.includes('פסטיגל') || targetAlbum.includes('פסטיגל') || rawTargetTitle.includes('פסטיגל');
 
   // Reject very short teasers/clips (< 45s) unless the Spotify track itself is short
   if (candSec > 0 && candSec < 45 && (targetSec === 0 || targetSec >= 45)) {
@@ -514,7 +580,7 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
   const titleWords = coreTargetTitle
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
-    .filter(w => w.length > 1 || /\p{N}/u.test(w));
+    .filter(w => w.length > 1 || /\p{N}/u.test(w) || /^[a-z]$/i.test(w));
 
   const importantTitleWords = titleWords.filter(w => !stopWords.has(w));
   const wordsToTest = importantTitleWords.length > 0 ? importantTitleWords : titleWords;
@@ -535,26 +601,45 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
     }
   }
 
-  if (wordsToTest.length > 0 && matchedWords === 0) {
-    return -999;
-  }
-
-  const matchRatio = wordsToTest.length > 0 ? (matchedWords / wordsToTest.length) : 1;
-  if (matchRatio < 0.6) {
-    return -999;
-  }
-  score += Math.round(matchRatio * 90);
+  let matchRatio = wordsToTest.length > 0 ? (matchedWords / wordsToTest.length) : 1;
 
   // Build artist aliases early so we don't penalize official bilingual titles that contain the artist's name!
-  const genericFestigalWords = new Set(['פסטיגל', 'משתתפי', 'הפסטיגל', 'כוכבי', 'ילדי', 'various', 'artists', 'tel', 'aviv']);
+  const genericFestigalWords = new Set(['פסטיגל', 'משתתפי', 'הפסטיגל', 'כוכבי', 'ילדי', 'various', 'artists', 'tel', 'aviv', 'participants', 'of', 'festigal']);
   const rawArtistParts = [
     ...targetArtist
       .split(/[,&•/]+|\s+x\s+/i)
       .map(a => a.trim().toLowerCase())
       .filter(a => a.length > 1),
-    ...extraArtistAliases.map(a => String(a || '').replace(/['׳’`]/g, '').trim().toLowerCase()).filter(a => a.length > 1)
+    ...extraArtistAliases.map(a => normalizeQuotes(a).trim().toLowerCase()).filter(a => a.length > 1)
   ];
   const artistParts = expandBilingualArtistParts(rawArtistParts);
+
+  // Special case: Festigal songs where Official Festigal Channel titles the video by Festigal album + artist (e.g. "פסטיגל גיבורי הממלכה האבודה - רן דנקר")
+  if (matchRatio < 0.6 && isFestigalTrack && targetAlbum.includes('פסטיגל')) {
+    const albumWords = targetAlbum
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !/^\d+$/.test(w) && !stopWords.has(w));
+    const matchedAlbumWords = albumWords.filter(w => candTokens.has(w) || candTitle.includes(w));
+    const hasArtistInTitle = artistParts.some(a => a.length >= 3 && !genericFestigalWords.has(a) && candTitle.includes(a));
+    if (
+      albumWords.length >= 2 &&
+      matchedAlbumWords.length >= Math.ceil(albumWords.length * 0.6) &&
+      (rawTargetTitle.includes('פסטיגל') || (hasArtistInTitle && candAuthor.includes('פסטיגל')))
+    ) {
+      matchRatio = matchedAlbumWords.length / albumWords.length;
+      matchedWords = matchedAlbumWords.length;
+    }
+  }
+
+  if (wordsToTest.length > 0 && matchedWords === 0) {
+    return -999;
+  }
+
+  if (matchRatio < 0.6) {
+    return -999;
+  }
+  score += Math.round(matchRatio * 90);
   const artistWordTokens = new Set(
     artistParts
       .join(' ')
@@ -585,7 +670,7 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
     else score -= 220;
   }
 
-  // 3. Strictly penalize Live / Stage / Club / Date-stamped concert recordings / Vocal-only / Cover / Remix / Mashup
+  // 3. Strictly penalize Live / Stage / Club / Date-stamped concert recordings / Vocal-only / Cover / Remix / Mashup / Tutorials
   const stageAndLiveWords = [
     'מתוך המופע', 'מהמופע', 'במופע', 'המופע המלא', 'קטע מתוך', 'נאמבר',
     'מהבמה', 'על הבמה', 'במה', 'מהקהל', 'קהל', 'הופעה חיה', 'בהופעה', 'הופעה',
@@ -597,7 +682,8 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
     '#myפסטיגל', 'my פסטיגל', 'my festigal', 'חידוש', 'מחווה', 'גיבוי', 'תרגום',
     'מגיב', 'מגיבה', 'תגובה', 'reacts', 'edits', 'אדיט', 'speed up', 'spedup', 'מואץ', 'גרסה מהירה', 'bass boost', 'tiktok', 'טיקטוק',
     'מארח את', 'מארחת את', 'אורח ב', 'אורחת ב', 'מועדון ה', 'מועדון גריי', 'בארבי', 'זאפה', 'כולי עלמא', 'בצוללת',
-    'פסטיבל ', 'מצעד הגאווה', 'גירסת רוק', 'גרסת רוק', 'דיבוב', 'זומבה', 'zumba', 'rave mix'
+    'פסטיבל ', 'מצעד הגאווה', 'גירסת רוק', 'גרסת רוק', 'דיבוב', 'זומבה', 'zumba', 'rave mix',
+    'שיעור', 'תופים', 'גיטרה', 'פסנתר', 'נגינה', 'אקורדים', 'טוטוריאל', 'tutorial', 'lesson', 'drum'
   ];
   for (const w of stageAndLiveWords) {
     if ((candTitle.includes(w) || candAuthor.includes(w)) && !rawTargetTitle.includes(w) && !targetAlbum.includes(w)) {
@@ -616,7 +702,6 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
   }
 
   // 5. Artist & Official Channel verification (strongly prefer when the YouTube CHANNEL itself is the artist!)
-  const isFestigalTrack = targetArtist.includes('פסטיגל') || targetAlbum.includes('פסטיגל') || rawTargetTitle.includes('פסטיגל');
   let artistMatched = false;
   let primarySingerMatched = false;
   let channelIsOfficialArtist = false;
@@ -641,8 +726,14 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
   if (!channelIsOfficialArtist) {
     for (const a of specificSigners) {
       if (candTitle.includes(a)) {
-        score += 30; // Artist is only mentioned in the video title, not the channel name
-        artistMatched = true;
+        const parenCoverRegex = new RegExp(`\\([^)]*${a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^)]*\\)`);
+        if (parenCoverRegex.test(candTitle) && !candTitle.startsWith(a)) {
+          // Cover version crediting the original artist in parentheses, e.g. "מיס צ'אנקי - מלכה קרה (לירז צ'רכי)"
+          score -= 180;
+        } else {
+          score += candTitle.startsWith(a) ? 65 : 30;
+          artistMatched = true;
+        }
         break;
       }
     }
@@ -656,9 +747,15 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
   }
 
   if (isFestigalTrack || candTitle.includes('פסטיגל') || candAuthor.includes('פסטיגל')) {
-    if (candAuthor.includes('מוזיקה ישראלית ו-פסטיגל') || candAuthor.includes('פסטיגל - הערוץ הרשמי') || candAuthor.includes('festigal')) {
+    if (
+      candAuthor.includes('מוזיקה ישראלית ו-פסטיגל') ||
+      candAuthor.includes('פסטיגל - הערוץ הרשמי') ||
+      candAuthor.includes('משתתפי הפסטיגל') ||
+      candAuthor.includes('festigal')
+    ) {
       score += 85; // Official Festigal / Israeli Music channel
       artistMatched = true;
+      primarySingerMatched = true;
       channelIsOfficialArtist = true;
     } else if (candTitle.includes('פסטיגל') || candTitle.includes('festigal')) {
       score += 20;
@@ -724,23 +821,28 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
     };
   }
 
-  const cleanArtist = String(track.artist || '').replace(/\u00a0/g, ' ').trim();
   const cleanTrackTitle = String(track.title || '').replace(/\u00a0/g, ' ').trim();
-  const cacheKey = `v5:::${cleanArtist}:::${cleanTrackTitle}:::${track.durationSeconds || 0}`.toLowerCase();
+  const rawArtist = String(track.artist || '').replace(/\u00a0/g, ' ').trim();
+  const cleanArtist = localizeArtistIfHebrew(rawArtist, cleanTrackTitle, track.album || '');
+  const cacheKey = `v6:::${cleanArtist}:::${cleanTrackTitle}:::${track.durationSeconds || 0}`.toLowerCase();
   if (shouldBypassCache) {
     resolveMemCache.delete(cacheKey);
   } else if (resolveMemCache.has(cacheKey)) {
     return resolveMemCache.get(cacheKey);
   }
 
-  const primaryArtist = cleanArtist.split(',')[0].trim();
+  const artistList = cleanArtist.split(',').map(a => a.trim()).filter(Boolean);
+  const primaryArtist = artistList[0] || cleanArtist;
+  const secondaryArtist = artistList[1] || '';
   const isFestigal = (track.album || '').includes('פסטיגל') || cleanArtist.includes('פסטיגל') || cleanTrackTitle.includes('פסטיגל');
   const baseQuery = isFestigal && !cleanTrackTitle.includes('פסטיגל') && !primaryArtist.includes('פסטיגל')
     ? `${primaryArtist} - ${cleanTrackTitle} פסטיגל`.trim()
     : `${primaryArtist || cleanArtist} - ${cleanTrackTitle}`.trim();
 
   const hasHebrew = /[\u0590-\u05FF]/.test(baseQuery);
-  const studioQuery = hasHebrew ? `${primaryArtist || cleanArtist} ${cleanTrackTitle} אודיו` : `${baseQuery} official audio`;
+  const studioQuery = (isFestigal && cleanTrackTitle.includes('פסטיגל') && track.album)
+    ? `${primaryArtist} ${track.album}`.trim()
+    : (hasHebrew ? `${primaryArtist || cleanArtist} ${cleanTrackTitle} אודיו` : `${baseQuery} official audio`);
 
   const needsIndividualCover = !track.hasCustomArtwork || !track.thumbnail || track.thumbnail.includes('default') || track.thumbnail.includes('spotifree');
 
@@ -760,12 +862,12 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
 
     function isCatalogTitleMatch(candTitle, tgtTitle) {
       if (!candTitle || !tgtTitle) return false;
-      const clean1 = String(candTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '').trim();
-      const clean2 = String(tgtTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '').trim();
+      const clean1 = normalizeQuotes(candTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '').trim();
+      const clean2 = normalizeQuotes(tgtTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '').trim();
       if (clean1 === clean2) return true;
 
-      const words1 = String(candTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
-      const words2 = String(tgtTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
+      const words1 = normalizeQuotes(candTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
+      const words2 = normalizeQuotes(tgtTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
 
       if (words1.length === 0 || words2.length === 0) return false;
       if (words1.length === 1 || words2.length === 1) {
@@ -814,17 +916,28 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
     return { bestCover, catalogDuration, artistAliases };
   })();
 
+  const prelimTrack = { ...track, artist: cleanArtist, title: cleanTrackTitle };
+
   // 2. Search YouTube candidates (run baseQuery and studioQuery in parallel when needed for maximum studio accuracy)
   const searchPromise = (async () => {
     const res1 = await searchTracks(baseQuery, 12).catch(() => []);
     if (res1 && res1.length > 0) {
-      const bestBaseScore = Math.max(...res1.map(c => scoreCandidate(c, track)));
+      const bestBaseScore = Math.max(...res1.map(c => scoreCandidate(c, prelimTrack)));
       if (bestBaseScore >= 185) {
         return res1;
       }
     }
     const res2 = await searchTracks(studioQuery, 10).catch(() => []);
     const combined = [...(res1 || []), ...(res2 || [])];
+
+    // Fallback when primary artist is censored by YouTube search (e.g. Track #3) or collaborated under secondary/group artist
+    const bestCombinedScore = combined.length > 0 ? Math.max(...combined.map(c => scoreCandidate(c, prelimTrack))) : -999;
+    if ((combined.length === 0 || bestCombinedScore < 80) && (secondaryArtist || isFestigal)) {
+      const fallbackQuery = isFestigal ? `${cleanTrackTitle} פסטיגל` : `${secondaryArtist} - ${cleanTrackTitle}`;
+      const res3 = await searchTracks(fallbackQuery, 10).catch(() => []);
+      combined.push(...(res3 || []));
+    }
+
     const seen = new Set();
     const deduped = [];
     for (const item of combined) {
@@ -868,11 +981,13 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
 
   const resolutionResult = {
     streamableId: resolvedId,
+    artist: cleanArtist,
     thumbnail: bestCover || track.thumbnail || ytThumb || '',
     hasCustomArtwork: true,
     studioResolvedV3: true,
     studioResolvedV4: true,
     studioResolvedV5: true,
+    studioResolvedV6: true,
     durationSeconds: finalDurationSec
   };
 
