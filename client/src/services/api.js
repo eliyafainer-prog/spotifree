@@ -275,13 +275,18 @@ export async function getTrendingTracks() {
 }
 
 /**
- * Import playlist from Spotify or YouTube URL (Instant response)
+ * Import playlist from Spotify or YouTube URL (Instant response with Cache-Busting)
  */
-export async function importPlaylist(url) {
-  const res = await fetchWithFailover('/api/import', {
+export async function importPlaylist(url, forceRefresh = true) {
+  const qs = forceRefresh ? `?refresh=true&_cb=${Date.now()}` : '';
+  const res = await fetchWithFailover(`/api/import${qs}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url })
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache'
+    },
+    body: JSON.stringify({ url, forceRefresh })
   });
   if (!res.ok) {
     let errMsg = 'שגיאה בייבוא הפלייליסט';
@@ -295,7 +300,21 @@ export async function importPlaylist(url) {
     throw new Error(errMsg);
   }
   const data = await res.json();
-  return data.playlist;
+  const playlist = data.playlist;
+
+  // Bust any stale client-side resolved cache entries for the imported tracks
+  if (forceRefresh && playlist && Array.isArray(playlist.tracks)) {
+    try {
+      for (const t of playlist.tracks) {
+        const key = `${t.artist || ''}:::${t.title || ''}`.trim().toLowerCase();
+        clientResolveCache.delete(key);
+        delete persistedResolveCache[key];
+      }
+      localStorage.setItem(RESOLVED_CACHE_KEY, JSON.stringify(persistedResolveCache));
+    } catch (e) {}
+  }
+
+  return playlist;
 }
 
 /**
@@ -487,8 +506,10 @@ export function getCachedTrackResolution(track) {
 /**
  * Resolve track (e.g. Spotify imported track) to streamable YouTube videoId and individual artwork
  */
-export async function resolveTrack(track, forceArtwork = false) {
-  if (!forceArtwork && track.hasCustomArtwork !== false && track.studioResolvedV4) {
+export async function resolveTrack(track, forceArtwork = false, forceRefresh = false) {
+  const shouldRefresh = Boolean(forceRefresh || track?.forceRefresh || track?.refresh);
+
+  if (!shouldRefresh && !forceArtwork && track.hasCustomArtwork !== false && track.studioResolvedV4) {
     if (track.streamableId && !track.streamableId.startsWith('sp_')) {
       return { streamableId: track.streamableId, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true, studioResolvedV4: true };
     }
@@ -498,18 +519,30 @@ export async function resolveTrack(track, forceArtwork = false) {
   }
 
   const key = `${track.artist || ''}:::${track.title || ''}`.trim().toLowerCase();
-  if (clientResolveCache.has(key)) {
-    return clientResolveCache.get(key);
-  }
-  if (persistedResolveCache[key]) {
-    clientResolveCache.set(key, persistedResolveCache[key]);
-    return persistedResolveCache[key];
+  if (shouldRefresh) {
+    clientResolveCache.delete(key);
+    delete persistedResolveCache[key];
+  } else {
+    if (clientResolveCache.has(key)) {
+      return clientResolveCache.get(key);
+    }
+    if (persistedResolveCache[key]) {
+      clientResolveCache.set(key, persistedResolveCache[key]);
+      return persistedResolveCache[key];
+    }
   }
 
-  const res = await fetchWithFailover('/api/resolve', {
+  const qs = shouldRefresh ? `?refresh=true&_cb=${Date.now()}` : '';
+  const res = await fetchWithFailover(`/api/resolve${qs}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ track: { ...track, hasCustomArtwork: false } })
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache'
+    },
+    body: JSON.stringify({
+      track: { ...track, hasCustomArtwork: false, forceRefresh: shouldRefresh },
+      forceRefresh: shouldRefresh
+    })
   });
   if (!res.ok) throw new Error('Failed to resolve track to streamable source');
   const data = await res.json();

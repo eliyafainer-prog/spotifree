@@ -56,19 +56,21 @@ async function extractCoverArt(entity, rawUrl) {
 /**
  * Fetch tracks and artwork from Spotify URL (no API key required)
  */
-async function importSpotify(url) {
+async function importSpotify(url, forceRefresh = false) {
   const parsed = parseSpotifyUrl(url);
   if (!parsed) {
     throw new Error('קישור ספוטיפיי אינו תקין. אנא ודא שהעתקת קישור לפלייליסט, אלבום או שיר.');
   }
 
-  const embedUrl = `https://open.spotify.com/embed/${parsed.type}/${parsed.id}`;
+  const embedUrl = `https://open.spotify.com/embed/${parsed.type}/${parsed.id}${forceRefresh ? `?_cb=${Date.now()}` : ''}`;
   let response;
   try {
     response = await axios.get(embedUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'he,en-US,en;q=0.9'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept-Language': 'he,en-US,en;q=0.9',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
       },
       timeout: 10000,
       validateStatus: () => true
@@ -328,15 +330,28 @@ async function importYouTubePlaylist(url) {
 /**
  * Universal importer: handles Spotify, YouTube, or direct search queries
  */
-async function universalImport(inputUrl) {
-  const trimmed = inputUrl.trim();
+async function universalImport(inputUrl, forceRefresh = false) {
+  const trimmed = String(inputUrl || '').trim();
+  let result;
   if (trimmed.includes('spotify.com') || trimmed.startsWith('spotify:')) {
-    return await importSpotify(trimmed);
+    result = await importSpotify(trimmed, forceRefresh);
   } else if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
-    return await importYouTubePlaylist(trimmed);
+    result = await importYouTubePlaylist(trimmed, forceRefresh);
   } else {
     throw new Error('כתובת לא נתמכת. יש להדביק קישור תקין מ-Spotify או מ-YouTube.');
   }
+
+  // When re-importing or forceRefresh is requested, evict cached resolutions for all tracks in the playlist
+  if (forceRefresh && result && Array.isArray(result.tracks)) {
+    for (const t of result.tracks) {
+      const cleanArtist = String(t.artist || '').replace(/\u00a0/g, ' ').trim();
+      const cleanTrackTitle = String(t.title || '').replace(/\u00a0/g, ' ').trim();
+      const cacheKey = `v4:::${cleanArtist}:::${cleanTrackTitle}:::${t.durationSeconds || 0}`.toLowerCase();
+      resolveMemCache.delete(cacheKey);
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -527,8 +542,10 @@ const MAX_RESOLVE_CACHE = 1000;
 /**
  * Resolve a track to a streamable audio ID (matches Spotify track to exact studio version, duration, and artwork)
  */
-async function resolveTrackToStreamableId(track) {
-  if (track.source === 'youtube' && track.id && !track.id.startsWith('sp_') && track.hasCustomArtwork !== false) {
+async function resolveTrackToStreamableId(track, forceRefresh = false) {
+  const shouldBypassCache = Boolean(forceRefresh || track?.forceRefresh || track?.refresh);
+
+  if (!shouldBypassCache && track.source === 'youtube' && track.id && !track.id.startsWith('sp_') && track.hasCustomArtwork !== false) {
     return {
       streamableId: track.id,
       thumbnail: track.thumbnail,
@@ -540,7 +557,9 @@ async function resolveTrackToStreamableId(track) {
   const cleanArtist = String(track.artist || '').replace(/\u00a0/g, ' ').trim();
   const cleanTrackTitle = String(track.title || '').replace(/\u00a0/g, ' ').trim();
   const cacheKey = `v4:::${cleanArtist}:::${cleanTrackTitle}:::${track.durationSeconds || 0}`.toLowerCase();
-  if (resolveMemCache.has(cacheKey)) {
+  if (shouldBypassCache) {
+    resolveMemCache.delete(cacheKey);
+  } else if (resolveMemCache.has(cacheKey)) {
     return resolveMemCache.get(cacheKey);
   }
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getPlayableAudioUrl, fetchDirectStreamUrl, prefetchNextTracks, resolveTrack, getCachedTrackResolution, searchTracks } from '../services/api';
 import { addRecentTrack, updateTrackInPlaylists, isSameTrack, getLastPlaybackState, saveLastPlaybackState } from '../services/storage';
-import { getOfflineTrack } from '../services/offlineStorage';
+import { getOfflineTrack, revokeOfflineObjectUrl } from '../services/offlineStorage';
 
 // Fisher-Yates shuffle helper: produces a non-repeating permutation of indices
 function generateShuffledDeck(length, startingIndex = -1) {
@@ -24,10 +24,20 @@ export function useAudioPlayer() {
   const ytTimerRef = useRef(null);
   const activeEngineRef = useRef('audio');
   const fallbackTimerRef = useRef(null);
+  const retryTimerRef = useRef(null);
+  const activeBlobUrlRef = useRef(null);
+  const isOfflinePlaybackRef = useRef(false);
   const nextTrackRef = useRef(null);
   const userPausedRef = useRef(false);
   const playViaYouTubePlayerRef = useRef(null);
   const playSessionIdRef = useRef(0);
+
+  const revokeActiveBlobUrl = useCallback(() => {
+    if (activeBlobUrlRef.current) {
+      revokeOfflineObjectUrl(activeBlobUrlRef.current);
+      activeBlobUrlRef.current = null;
+    }
+  }, []);
 
   const savedPlayback = useRef(getLastPlaybackState()).current;
 
@@ -190,6 +200,13 @@ export function useAudioPlayer() {
       const srcAttr = audio.getAttribute('src');
       if (!srcAttr) return; // Ignore empty src reset
 
+      // Never overwrite an active local Offline Blob with network retries!
+      if (isOfflinePlaybackRef.current || srcAttr.startsWith('blob:')) {
+        console.warn('Local offline blob playback encountered an error:', audio.error);
+        setIsLoading(false);
+        return;
+      }
+
       const err = audio.error;
       console.warn('Native HTML5 Audio error:', err ? `code=${err.code} msg=${err.message}` : 'unknown error');
       const activeSession = playSessionIdRef.current;
@@ -200,8 +217,17 @@ export function useAudioPlayer() {
         const savedPos = (audioRef.current?.currentTime > 2) ? audioRef.current.currentTime : 0;
         if (attempt <= 2) {
           // Retry 1 & 2: Re-request server stream proxy on native <audio> (preserves 100% background playback & zero ads!)
-          setTimeout(() => {
-            if (playSessionIdRef.current !== activeSession || userPausedRef.current || !audioRef.current) return;
+          if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = setTimeout(() => {
+            if (
+              playSessionIdRef.current !== activeSession ||
+              userPausedRef.current ||
+              isOfflinePlaybackRef.current ||
+              !audioRef.current ||
+              (audioRef.current.getAttribute('src') || '').startsWith('blob:')
+            ) {
+              return;
+            }
             const retryUrl = `${getPlayableAudioUrl(currentTrackRef.current)}&retry=${Date.now()}`;
             audioRef.current.src = retryUrl;
             audioRef.current.load();
@@ -216,7 +242,14 @@ export function useAudioPlayer() {
         if (attempt === 3) {
           // Retry 3: Try direct stream URL on native <audio> to preserve background playback
           fetchDirectStreamUrl(currentTrackRef.current).then(directUrl => {
-            if (playSessionIdRef.current !== activeSession || userPausedRef.current) return;
+            if (
+              playSessionIdRef.current !== activeSession ||
+              userPausedRef.current ||
+              isOfflinePlaybackRef.current ||
+              (audioRef.current?.getAttribute('src') || '').startsWith('blob:')
+            ) {
+              return;
+            }
             if (directUrl && audioRef.current && activeEngineRef.current === 'audio') {
               audioRef.current.src = directUrl;
               audioRef.current.load();
@@ -246,6 +279,11 @@ export function useAudioPlayer() {
     audio.addEventListener('error', handleError);
 
     return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (activeBlobUrlRef.current) {
+        revokeOfflineObjectUrl(activeBlobUrlRef.current);
+        activeBlobUrlRef.current = null;
+      }
       audio.pause();
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('durationchange', handleDurationChange);
@@ -443,6 +481,8 @@ export function useAudioPlayer() {
         audioRef.current.src = '';
       } catch (e) {}
     }
+    revokeActiveBlobUrl();
+    isOfflinePlaybackRef.current = false;
 
     activeEngineRef.current = 'yt';
     setActiveEngine('yt');
@@ -494,7 +534,23 @@ export function useAudioPlayer() {
     if (!audio) return;
 
     try {
-      const streamUrl = track.audioBlob ? URL.createObjectURL(track.audioBlob) : getPlayableAudioUrl(track);
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      // Always revoke any previous Blob URL before creating or assigning a new src to prevent memory leaks!
+      revokeActiveBlobUrl();
+
+      let streamUrl;
+      if (track.audioBlob) {
+        isOfflinePlaybackRef.current = true;
+        streamUrl = URL.createObjectURL(track.audioBlob);
+        activeBlobUrlRef.current = streamUrl;
+      } else {
+        isOfflinePlaybackRef.current = false;
+        streamUrl = getPlayableAudioUrl(track);
+      }
+
       audio.src = streamUrl;
       audio.volume = isMuted ? 0 : (Number.isFinite(volume) ? volume : 0.8);
 
@@ -635,27 +691,39 @@ export function useAudioPlayer() {
     setIsLoading(true);
     setCurrentTime(0);
     setDuration(playableTrack.durationSeconds || 0);
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
 
-    // Start streaming immediately inside the synchronous user gesture / ended event!
-    playViaAudioElement(playableTrack, sessionId);
     addRecentTrack(playableTrack);
-    prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
 
-    // Check Offline Storage in parallel (if track is saved offline, seamlessly switch to 0ms local blob)
-    getOfflineTrack(playableTrack).then(offlineRecord => {
+    // STRICT OFFLINE PRIORITY: Always check IndexedDB local offline storage BEFORE initiating any network stream!
+    if (playableTrack.audioBlob) {
+      playViaAudioElement(playableTrack, sessionId);
+      prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
+    } else {
+      const offlineRecord = await getOfflineTrack(playableTrack).catch(() => null);
       if (playSessionIdRef.current !== sessionId || userPausedRef.current) return;
-      if (offlineRecord && offlineRecord.audioBlob && audioRef.current) {
-        if (!audioRef.current.currentTime || audioRef.current.currentTime < 1) {
-          activeEngineRef.current = 'audio';
-          const localBlobUrl = URL.createObjectURL(offlineRecord.audioBlob);
-          audioRef.current.src = localBlobUrl;
-          audioRef.current.currentTime = 0;
-          audioRef.current.play().catch(() => {});
-          setIsPlaying(true);
-          setIsLoading(false);
-        }
+
+      if (offlineRecord && offlineRecord.audioBlob) {
+        const offlinePlayable = {
+          ...playableTrack,
+          audioBlob: offlineRecord.audioBlob,
+          thumbnail: offlineRecord.thumbnail || playableTrack.thumbnail,
+          durationSeconds: offlineRecord.durationSeconds || playableTrack.durationSeconds
+        };
+        setCurrentTrack(offlinePlayable);
+        currentTrackRef.current = offlinePlayable;
+        playViaAudioElement(offlinePlayable, sessionId);
+        prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
+        return;
       }
-    }).catch(() => {});
+
+      // Not saved in Offline DB -> stream from server
+      playViaAudioElement(playableTrack, sessionId);
+      prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
+    }
 
     // Background metadata/artwork enrichment for unresolved Spotify tracks
     const needsAsyncResolve = (!playableTrack.streamableId && (!playableTrack.id || playableTrack.id.startsWith('sp_'))) || playableTrack.hasCustomArtwork === false || playableTrack.studioResolvedV3 === false;

@@ -733,6 +733,37 @@ function stripStypSidx(buf) {
 }
 
 /**
+ * Build unified browser-like HTTP headers for upstream CDN requests (SoundCloud / CloudFront / googlevideo / Invidious)
+ */
+function buildUpstreamHeaders(targetUrl = '', rangeHeader = null) {
+  const urlStr = String(targetUrl || '');
+  const isGoogleVideo = urlStr.includes('googlevideo.com') || urlStr.includes('youtube.com');
+  const isSoundCloud = urlStr.includes('sndcdn.com') || urlStr.includes('soundcloud.com');
+
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': '*/*',
+    'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Connection': 'keep-alive'
+  };
+
+  if (isGoogleVideo) {
+    headers['Referer'] = 'https://www.youtube.com/';
+    headers['Origin'] = 'https://www.youtube.com';
+    // googlevideo requires Range header to avoid throttling / 403 blocks
+    headers['Range'] = rangeHeader || 'bytes=0-';
+  } else if (isSoundCloud) {
+    headers['Referer'] = 'https://soundcloud.com/';
+    headers['Origin'] = 'https://soundcloud.com';
+    if (rangeHeader) headers['Range'] = rangeHeader;
+  } else if (rangeHeader) {
+    headers['Range'] = rangeHeader;
+  }
+
+  return headers;
+}
+
+/**
  * Zero-process Pure Node.js HLS fMP4 / MP3 Stream Concatenator
  * Streams full-length fMP4 (with patched moov duration and stripped sidx) or MP3 segments using ~200KB RAM!
  * Supports HTTP Range requests and seeking so scrubber never snaps back to 0!
@@ -744,7 +775,12 @@ async function pipeHlsInNode(m3u8Url, req, res) {
     aborted = true;
   });
 
-  const m3u8Res = await axios.get(m3u8Url, { timeout: 3500, httpsAgent });
+  const m3u8Res = await axios.get(m3u8Url, {
+    timeout: 4500,
+    httpsAgent,
+    maxRedirects: 5,
+    headers: buildUpstreamHeaders(m3u8Url)
+  });
   const lines = String(m3u8Res.data || '').split('\n');
   let mapUrl = null;
   const segments = [];
@@ -806,7 +842,13 @@ async function pipeHlsInNode(m3u8Url, req, res) {
   // 1. If fMP4 (init.mp4 map present), always send patched init.mp4 first so decoder initializes
   if (mapUrl && !aborted && !res.writableEnded) {
     try {
-      const initRes = await axios.get(mapUrl, { responseType: 'arraybuffer', timeout: 5000, httpsAgent });
+      const initRes = await axios.get(mapUrl, {
+        responseType: 'arraybuffer',
+        timeout: 6000,
+        httpsAgent,
+        maxRedirects: 5,
+        headers: buildUpstreamHeaders(mapUrl)
+      });
       const patchedInit = patchInitMp4Duration(Buffer.from(initRes.data), totalDurationSec);
       if (!aborted && !res.writableEnded) {
         res.write(patchedInit);
@@ -818,7 +860,14 @@ async function pipeHlsInNode(m3u8Url, req, res) {
   for (let i = startSegmentIdx; i < segments.length; i++) {
     if (aborted || res.writableEnded) break;
     try {
-      const segRes = await axios.get(segments[i].url, { responseType: 'arraybuffer', timeout: 8000, httpsAgent });
+      const segUrl = segments[i].url;
+      const segRes = await axios.get(segUrl, {
+        responseType: 'arraybuffer',
+        timeout: 9000,
+        httpsAgent,
+        maxRedirects: 5,
+        headers: buildUpstreamHeaders(segUrl)
+      });
       if (aborted || res.writableEnded) break;
       const rawBuf = Buffer.from(segRes.data);
       const cleanBuf = isMp3 ? rawBuf : stripStypSidx(rawBuf);
@@ -874,13 +923,7 @@ async function pipeStream(videoId, req, res, fallbackQuery = null, meta = null) 
     }
 
     const range = req.headers.range;
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    };
-
-    if (range) {
-      headers['Range'] = range;
-    }
+    let headers = buildUpstreamHeaders(streamUrl, range);
 
     let response = await axios({
       method: 'GET',
@@ -904,6 +947,7 @@ async function pipeStream(videoId, req, res, fallbackQuery = null, meta = null) 
           await pipeHlsInNode(streamUrl, req, res);
           return;
         }
+        headers = buildUpstreamHeaders(streamUrl, range);
         response = await axios({
           method: 'GET',
           url: streamUrl,
@@ -966,7 +1010,12 @@ async function pipeStream(videoId, req, res, fallbackQuery = null, meta = null) 
 module.exports = {
   getAudioStreamUrl,
   pipeStream,
+  pipeHlsInNode,
   prefetchTracks,
   scoreSoundCloudCandidate,
-  evictStreamCache
+  evictStreamCache,
+  buildUpstreamHeaders,
+  fetchFromInvidious,
+  patchInitMp4Duration,
+  stripStypSidx
 };

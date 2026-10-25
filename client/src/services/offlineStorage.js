@@ -2,12 +2,17 @@ const DB_NAME = 'SpotiFreeOfflineDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'offline_tracks';
 
+let cachedDbPromise = null;
+
 /**
- * Open or upgrade IndexedDB database
+ * Open or upgrade IndexedDB database (reuses singleton connection for 1ms lookups)
  */
 function openDB() {
-  return new Promise((resolve, reject) => {
+  if (cachedDbPromise) return cachedDbPromise;
+
+  cachedDbPromise = new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) {
+      cachedDbPromise = null;
       return reject(new Error('IndexedDB is not supported on this browser.'));
     }
 
@@ -23,9 +28,34 @@ function openDB() {
       }
     };
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        cachedDbPromise = null;
+      };
+      db.onclose = () => {
+        cachedDbPromise = null;
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      cachedDbPromise = null;
+      reject(request.error);
+    };
   });
+
+  return cachedDbPromise;
+}
+
+/**
+ * Safe Object URL helper to prevent memory leaks across offline playback
+ */
+export function revokeOfflineObjectUrl(objectUrl) {
+  if (!objectUrl || typeof objectUrl !== 'string' || !objectUrl.startsWith('blob:')) return;
+  try {
+    URL.revokeObjectURL(objectUrl);
+  } catch (e) {}
 }
 
 /**

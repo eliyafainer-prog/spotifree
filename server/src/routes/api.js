@@ -142,13 +142,26 @@ router.post('/stream/prefetch', (req, res) => {
  * Resolve track (e.g. Spotify track) to streamable YouTube ID
  */
 router.post('/resolve', async (req, res) => {
-  const { track } = req.body;
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
+  const { track, forceRefresh, refresh } = req.body || {};
   if (!track) {
     return res.status(400).json({ error: 'Track object is required' });
   }
 
+  const shouldRefresh = Boolean(
+    forceRefresh ||
+    refresh ||
+    track.forceRefresh ||
+    track.refresh ||
+    req.query.refresh === 'true' ||
+    req.query.forceRefresh === 'true'
+  );
+
   try {
-    const resolved = await resolveTrackToStreamableId(track);
+    const resolved = await resolveTrackToStreamableId(track, shouldRefresh);
     res.json(resolved);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -159,13 +172,22 @@ router.post('/resolve', async (req, res) => {
  * Import playlist from Spotify or YouTube URL
  */
 router.post('/import', async (req, res) => {
-  const { url } = req.body;
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
+  const { url, forceRefresh, refresh } = req.body || {};
   if (!url) {
     return res.status(400).json({ error: 'URL is required' });
   }
 
+  const shouldRefresh = Boolean(
+    forceRefresh !== false &&
+    (forceRefresh || refresh || req.query.refresh === 'true' || req.query.forceRefresh === 'true' || true)
+  );
+
   try {
-    const playlist = await universalImport(url);
+    const playlist = await universalImport(url, shouldRefresh);
     res.json({ playlist });
   } catch (err) {
     res.status(400).json({ error: err.message });

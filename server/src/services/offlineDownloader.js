@@ -1,6 +1,13 @@
 const axios = require('axios');
 const https = require('https');
-const { getAudioStreamUrl, evictStreamCache } = require('./stream');
+const {
+  getAudioStreamUrl,
+  evictStreamCache,
+  buildUpstreamHeaders,
+  fetchFromInvidious,
+  patchInitMp4Duration,
+  stripStypSidx
+} = require('./stream');
 
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
 
@@ -14,14 +21,18 @@ async function refreshScClientId() {
       const home = await axios.get('https://soundcloud.com', {
         timeout: 4500,
         httpsAgent,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-        }
+        maxRedirects: 5,
+        headers: buildUpstreamHeaders('https://soundcloud.com')
       });
       const scripts = [...String(home.data || '').matchAll(/src="(https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)].map(m => m[1]);
       for (const s of scripts.slice(-4).reverse()) {
         try {
-          const js = await axios.get(s, { timeout: 4000, httpsAgent });
+          const js = await axios.get(s, {
+            timeout: 4000,
+            httpsAgent,
+            maxRedirects: 5,
+            headers: buildUpstreamHeaders(s)
+          });
           const m =
             String(js.data || '').match(/client_id\s*:\s*"([a-zA-Z0-9]{32})"/) ||
             String(js.data || '').match(/client_id="([a-zA-Z0-9]{32})"/);
@@ -46,9 +57,8 @@ async function searchScTracks(query, limit = 20) {
       params: { q: query.trim(), client_id: cid, limit },
       timeout: 4500,
       httpsAgent,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-      }
+      maxRedirects: 5,
+      headers: buildUpstreamHeaders('https://api-v2.soundcloud.com/search/tracks')
     });
     return res.data?.collection || [];
   };
@@ -84,7 +94,9 @@ async function resolveScStreamUrl(item) {
           ...(item.track_authorization ? { track_authorization: item.track_authorization } : {})
         },
         timeout: 3500,
-        httpsAgent
+        httpsAgent,
+        maxRedirects: 5,
+        headers: buildUpstreamHeaders(trans.url)
       });
       if (res.data?.url && !res.data.url.includes('/preview/') && !res.data.url.includes('_preview')) {
         return res.data.url;
@@ -97,10 +109,13 @@ async function resolveScStreamUrl(item) {
 async function fetchYoutubeOembed(videoId) {
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
   try {
-    const res = await axios.get(
-      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
-      { timeout: 2200, httpsAgent }
-    );
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const res = await axios.get(oembedUrl, {
+      timeout: 2200,
+      httpsAgent,
+      maxRedirects: 5,
+      headers: buildUpstreamHeaders(oembedUrl)
+    });
     if (res.data?.title) {
       const author = String(res.data.author_name || '').replace(/\s*-\s*Topic$/i, '').trim();
       const rawTitle = String(res.data.title || '')
@@ -646,76 +661,25 @@ async function findOfflineStreamUrl(videoId, fallbackQuery, meta = {}, forceFres
     }
   }
 
-  throw new Error('לא נמצאה גרסה מקורית מלאה של השיר להורדה');
-}
-
-function patchInitMp4Duration(buf, totalSec) {
-  if (!totalSec || totalSec <= 0) return buf;
-  let mvhdTs = 1000;
-  const containers = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'mvex', 'edts', 'dinf']);
-
-  function walk(start, end) {
-    let offset = start;
-    while (offset + 8 <= end) {
-      const size = buf.readUInt32BE(offset);
-      if (size < 8 || offset + size > end) break;
-      const type = buf.slice(offset + 4, offset + 8).toString('ascii');
-      if (type === 'mvhd' || type === 'mdhd') {
-        const ver = buf[offset + 8];
-        if (ver === 0 && offset + 28 <= end) {
-          const ts = buf.readUInt32BE(offset + 20);
-          if (ts > 0) {
-            if (type === 'mvhd') mvhdTs = ts;
-            buf.writeUInt32BE(Math.round(totalSec * ts), offset + 24);
-          }
-        }
-      } else if (type === 'tkhd') {
-        const ver = buf[offset + 8];
-        if (ver === 0 && offset + 32 <= end) {
-          buf.writeUInt32BE(Math.round(totalSec * mvhdTs), offset + 28);
-        }
-      } else if (type === 'elst') {
-        const ver = buf[offset + 8];
-        if (ver === 0 && offset + 20 <= end) {
-          const count = buf.readUInt32BE(offset + 12);
-          if (count >= 1) {
-            buf.writeUInt32BE(Math.round(totalSec * mvhdTs), offset + 16);
-          }
-        }
-      }
-      if (containers.has(type)) {
-        walk(offset + 8, offset + size);
-      }
-      offset += size;
-    }
+  // 5. Fallback for YouTube videoIds if SoundCloud has no match: direct Invidious / googlevideo stream
+  if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId) && typeof fetchFromInvidious === 'function') {
+    const invUrl = await fetchFromInvidious(videoId);
+    if (invUrl) return invUrl;
   }
 
-  try {
-    walk(0, buf.length);
-  } catch (e) {}
-  return buf;
-}
-
-function stripStypSidx(buf) {
-  try {
-    let offset = 0;
-    while (offset + 8 <= buf.length) {
-      const size = buf.readUInt32BE(offset);
-      if (size < 8 || offset + size > buf.length) break;
-      const type = buf.slice(offset + 4, offset + 8).toString('ascii');
-      if (type === 'moof' || type === 'ftyp') {
-        return offset > 0 ? buf.slice(offset) : buf;
-      }
-      offset += size;
-    }
-  } catch (e) {}
-  return buf;
+  throw new Error('לא נמצאה גרסה מקורית מלאה של השיר להורדה');
 }
 
 async function fetchSegmentWithRetry(segUrl) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const segRes = await axios.get(segUrl, { responseType: 'arraybuffer', timeout: 10000, httpsAgent });
+      const segRes = await axios.get(segUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000,
+        httpsAgent,
+        maxRedirects: 5,
+        headers: buildUpstreamHeaders(segUrl)
+      });
       return Buffer.from(segRes.data);
     } catch (err) {
       if (attempt === 3) throw err;
@@ -730,7 +694,12 @@ async function pipeHlsDownload(m3u8Url, req, res) {
     aborted = true;
   });
 
-  const m3u8Res = await axios.get(m3u8Url, { timeout: 6000, httpsAgent });
+  const m3u8Res = await axios.get(m3u8Url, {
+    timeout: 6000,
+    httpsAgent,
+    maxRedirects: 5,
+    headers: buildUpstreamHeaders(m3u8Url)
+  });
   const lines = String(m3u8Res.data || '').split('\n');
   let mapUrl = null;
   const mediaUrls = [];
@@ -757,6 +726,7 @@ async function pipeHlsDownload(m3u8Url, req, res) {
   const isMp3 = !mapUrl && (mediaUrls[0].includes('.mp3') || m3u8Url.includes('mp3'));
   res.statusCode = 200;
   res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'audio/mp4');
+  res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'no-store');
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
@@ -792,7 +762,8 @@ async function pipeHlsDownload(m3u8Url, req, res) {
 
 /**
  * Dedicated Offline Download Stream Handler:
- * Automatically evicts expired URLs and retries fresh on 403/404 for both HLS (.m3u8) and progressive MP3s.
+ * Uses the unified upstream browser headers, Range handling, and HLS fMP4/MP3 segment unpacking from stream.js,
+ * and automatically evicts expired URLs & retries fresh on 403/404/500.
  */
 async function pipeOfflineDownload(videoId, req, res, fallbackQuery = null, meta = null) {
   let upstreamStream = null;
@@ -808,6 +779,9 @@ async function pipeOfflineDownload(videoId, req, res, fallbackQuery = null, meta
       return true;
     }
 
+    const range = req.headers?.range || null;
+    const headers = buildUpstreamHeaders(streamUrl, range);
+
     const response = await axios({
       method: 'GET',
       url: streamUrl,
@@ -816,19 +790,26 @@ async function pipeOfflineDownload(videoId, req, res, fallbackQuery = null, meta
       httpsAgent,
       decompress: false,
       maxRedirects: 5,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-      },
+      headers,
       validateStatus: () => true
     });
 
     if (response.status >= 200 && response.status < 400) {
       upstreamStream = response.data;
-      res.statusCode = 200;
-      const ct = String(response.headers['content-type'] || '');
-      res.setHeader('Content-Type', (!ct || ct.includes('video/')) ? 'audio/mp4' : ct);
-      if (response.headers['content-length']) {
-        res.setHeader('Content-Length', response.headers['content-length']);
+      res.statusCode = range && response.status === 206 ? 206 : 200;
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'no-store');
+
+      for (const [key, value] of Object.entries(response.headers)) {
+        const lower = key.toLowerCase();
+        if (['content-type', 'content-length', 'content-range'].includes(lower)) {
+          res.setHeader(lower, value);
+        }
+      }
+
+      const ct = String(res.getHeader('Content-Type') || '');
+      if (!ct || ct.includes('video/')) {
+        res.setHeader('Content-Type', 'audio/mp4');
       }
       if (typeof res.flushHeaders === 'function') res.flushHeaders();
       response.data.pipe(res);
