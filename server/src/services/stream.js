@@ -61,7 +61,15 @@ async function saveCachesToDisk() {
   } catch (e) {}
 }
 
-setInterval(saveCachesToDisk, 30000);
+const cacheSaveInterval = setInterval(saveCachesToDisk, 30000);
+if (cacheSaveInterval && typeof cacheSaveInterval.unref === 'function') {
+  cacheSaveInterval.unref();
+}
+
+function evictStreamCache(videoId, fallbackQuery) {
+  if (videoId) urlCache.delete(videoId);
+  if (fallbackQuery) urlCache.delete(fallbackQuery.trim());
+}
 
 // ============================================================================
 // PURE NODE.JS SOUNDCLOUD API V2 ENGINE (0MB extra RAM, ~300-500ms extraction)
@@ -117,7 +125,10 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
   const validTranscodings = transcodings.filter(t => t && t.url && !t.url.includes('preview') && !t.snipped);
   if (validTranscodings.length === 0) return -999;
 
-  const title = String(item.title || '').toLowerCase();
+  const title = String(item.title || '')
+    .replace(/([\u0590-\u05FF])([a-zA-Z0-9])/g, '$1 $2')
+    .replace(/([a-zA-Z0-9])([\u0590-\u05FF])/g, '$1 $2')
+    .toLowerCase();
   const username = String(item.user?.username || '').toLowerCase();
   const combined = `${title} ${username}`;
 
@@ -131,26 +142,41 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
   }
 
   const targetDur = Number(meta?.durationSeconds) || 0;
-  const rawTargetTitle = String(meta?.title || '').toLowerCase().trim();
-  const coreTitle = rawTargetTitle.replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').split(' - ')[0].trim();
+  const rawTargetTitle = String(meta?.title || '')
+    .replace(/([\u0590-\u05FF])([a-zA-Z0-9])/g, '$1 $2')
+    .replace(/([a-zA-Z0-9])([\u0590-\u05FF])/g, '$1 $2')
+    .toLowerCase()
+    .trim();
+  const cleanBracketless = rawTargetTitle.replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').split('|')[0].trim();
+  const dashParts = cleanBracketless.split(/\s+-\s+|\s*-\s+/).map(s => s.trim()).filter(Boolean);
+  const coreTitleCandidates = dashParts.length >= 2 ? [dashParts[1], dashParts[0]] : [cleanBracketless];
   const targetArtist = String(meta?.artist || '').toLowerCase().trim();
 
   let score = 100;
 
-  // 1. Core title word match
+  // 1. Core title word match (supports both "Song - Extra" and "Artist - Song")
   const stopWords = new Set(['כל', 'כך', 'של', 'את', 'עם', 'זה', 'על', 'אל', 'מן', 'זה', 'מה', 'לא', 'כי', 'גם', 'the', 'in', 'of', 'and', 'to', 'a', 'an']);
-  const titleCheck = coreTitle || rawTargetTitle;
-  const tWords = titleCheck ? titleCheck.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1) : [];
-  const importantWords = tWords.filter(w => !stopWords.has(w));
-  const wordsToTest = importantWords.length > 0 ? importantWords : tWords;
-
   const candTitleTokens = new Set(title.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/));
 
-  if (wordsToTest.length > 0) {
-    const matched = wordsToTest.filter(w => candTitleTokens.has(w) || (w.length >= 4 && title.includes(w))).length;
-    const ratio = matched / wordsToTest.length;
-    if (ratio < 0.6) return -999;
-    score += Math.round(ratio * 95);
+  let bestRatio = -1;
+  let tWords = [];
+  for (const candCore of coreTitleCandidates) {
+    const words = candCore ? candCore.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1) : [];
+    const imp = words.filter(w => !stopWords.has(w));
+    const toTest = imp.length > 0 ? imp : words;
+    if (toTest.length > 0) {
+      const matched = toTest.filter(w => candTitleTokens.has(w) || (w.length >= 4 && title.includes(w))).length;
+      const ratio = matched / toTest.length;
+      if (ratio > bestRatio) {
+        bestRatio = ratio;
+        tWords = words;
+      }
+    }
+  }
+
+  if (bestRatio >= 0) {
+    if (bestRatio < 0.6) return -999;
+    score += Math.round(bestRatio * 95);
   } else if (queryLower) {
     const qWords = queryLower.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1 && !stopWords.has(w));
     if (qWords.length > 0) {
@@ -840,5 +866,6 @@ module.exports = {
   getAudioStreamUrl,
   pipeStream,
   prefetchTracks,
-  scoreSoundCloudCandidate
+  scoreSoundCloudCandidate,
+  evictStreamCache
 };
