@@ -28,10 +28,35 @@ function setBoundedCache(map, key, value) {
   map.set(key, value);
 }
 
+function getSignedUrlExpirationMs(url) {
+  if (!url || typeof url !== 'string') return 0;
+  try {
+    const expMatch = url.match(/[?&](?:expires|expire)=(\d{10,13})/i);
+    if (expMatch && expMatch[1]) {
+      const val = Number(expMatch[1]);
+      return val < 1e11 ? val * 1000 : val;
+    }
+    const policyMatch = url.match(/[?&]Policy=([A-Za-z0-9_-]+)/);
+    if (policyMatch && policyMatch[1]) {
+      const jsonStr = Buffer.from(policyMatch[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+      const epochMatch = jsonStr.match(/"AWS:EpochTime"\s*:\s*(\d{10,13})/);
+      if (epochMatch && epochMatch[1]) {
+        const val = Number(epochMatch[1]);
+        return val < 1e11 ? val * 1000 : val;
+      }
+    }
+  } catch (e) {}
+  return 0;
+}
+
 function isValidCachedStreamUrl(url) {
   if (!url || typeof url !== 'string') return false;
   if (url.includes('mime=audio%2Fwebm')) return false;
   if (url.includes('/preview/') || url.includes('cf-preview-media') || url.includes('_preview')) return false;
+  const signedExp = getSignedUrlExpirationMs(url);
+  if (signedExp > 0 && signedExp - 45000 <= Date.now()) {
+    return false;
+  }
   return true;
 }
 
@@ -111,6 +136,83 @@ async function refreshSoundCloudClientId() {
   return scClientIdRefreshPromise;
 }
 
+const VERSION_SUFFIX_RE = /^(?:(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|radio\s+edit|clean\s+edit|club\s+edit|edit|original\s+mix|extended(?:\s+mix)?|live(?:\s+.*)?|acoustic(?:\s+version)?|instrumental|version|mono|stereo|deluxe|bonus\s+track|אקוסטי|לייב|בהופעה.*|מתוך.*|רמיקס|רימיקס|גרסת\s+.*|גרסה\s+.*|שיר\s+הנושא.*)$/i;
+
+function extractSongAndArtistFromMeta(meta = {}) {
+  const rawTitle = String(meta?.title || '')
+    .replace(/([\u0590-\u05FF])([a-zA-Z0-9])/g, '$1 $2')
+    .replace(/([a-zA-Z0-9])([\u0590-\u05FF])/g, '$1 $2')
+    .replace(/\s*[\(\[][^)\]]*[\)\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const rawArtist = String(meta?.artist || '')
+    .replace(/([\u0590-\u05FF])([a-zA-Z0-9])/g, '$1 $2')
+    .replace(/([a-zA-Z0-9])([\u0590-\u05FF])/g, '$1 $2')
+    .replace(/\s*-\s*Topic$/i, '')
+    .replace(/\b(?:official|music|channel|הערוץ הרשמי|תאגיד השידור הישראלי|ישראל בידור|גלגלצ)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  let working = rawTitle;
+  if (working.includes('|')) {
+    const p = working.split('|').map(s => s.trim()).filter(Boolean);
+    if (p[0] && /\s*-\s*/.test(p[0])) {
+      working = p[0];
+    } else if (p.length >= 2 && /\s*-\s*/.test(p[1])) {
+      working = `${p[0]} ${p.slice(1).join(' ')}`;
+    } else if (p[0]) {
+      working = p[0];
+    }
+  }
+
+  const dashParts = working.split(/\s+-\s+|\s*-\s+/).map(s => s.trim()).filter(Boolean);
+  let coreTitle = working;
+  let extractedArtist = rawArtist;
+  const titleCandidates = [];
+
+  if (dashParts.length >= 2) {
+    const left = dashParts[0];
+    const right = dashParts.slice(1).join(' - ').trim();
+    const artistLower = rawArtist.toLowerCase();
+    const artistWords = artistLower.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
+    const leftLower = left.toLowerCase();
+    const rightLower = right.toLowerCase();
+
+    const leftMatchesArtist = artistWords.length > 0 && artistWords.some(w => leftLower.includes(w));
+    const rightMatchesArtist = artistWords.length > 0 && artistWords.some(w => rightLower.includes(w));
+
+    if (VERSION_SUFFIX_RE.test(right)) {
+      coreTitle = left;
+      titleCandidates.push(left);
+    } else if (leftMatchesArtist || !rightMatchesArtist) {
+      // Standard "Artist - Song" (e.g. "עומר אדם - כשאת הולכת")
+      coreTitle = right;
+      titleCandidates.push(right);
+      if (!extractedArtist) extractedArtist = left;
+      else if (!leftMatchesArtist) extractedArtist = `${extractedArtist}, ${left}`;
+    } else {
+      // Reversed "Song - Artist"
+      coreTitle = left;
+      titleCandidates.push(left);
+    }
+  } else if (working) {
+    titleCandidates.push(working);
+  }
+
+  for (const tc of [...titleCandidates]) {
+    if (tc.includes('+')) {
+      tc.split('+').map(s => s.trim()).filter(Boolean).forEach(sub => titleCandidates.push(sub));
+    }
+  }
+
+  return {
+    coreTitle: coreTitle.trim(),
+    artist: extractedArtist.trim(),
+    titleCandidates: [...new Set(titleCandidates.filter(Boolean))]
+  };
+}
+
 /**
  * Score a SoundCloud track candidate for studio accuracy, duration proximity, and artist match
  */
@@ -128,13 +230,14 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
   const title = String(item.title || '')
     .replace(/([\u0590-\u05FF])([a-zA-Z0-9])/g, '$1 $2')
     .replace(/([a-zA-Z0-9])([\u0590-\u05FF])/g, '$1 $2')
+    .replace(/['׳’`]/g, '')
     .toLowerCase();
-  const username = String(item.user?.username || '').toLowerCase();
+  const username = String(item.user?.username || '').replace(/['׳’`]/g, '').toLowerCase();
   const combined = `${title} ${username}`;
 
   // Disqualify podcasts, radio promos, jingles, or ad tracks
   const adOrPodcastWords = [
-    'podcast', 'פודקאסט', 'פרק ', 'שידור', 'פרסומת', 'חסות', 'ג\'ינגל', 'ג׳ינגל',
+    'podcast', 'פודקאסט', 'פרק ', 'שידור', 'פרסומת', 'חסות', 'גינגל',
     'jingle', 'commercial', 'promo', 'פרומו', 'teaser', 'טיזר', 'trailer', 'טריילר'
   ];
   for (const aw of adOrPodcastWords) {
@@ -142,48 +245,50 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
   }
 
   const targetDur = Number(meta?.durationSeconds) || 0;
-  const rawTargetTitle = String(meta?.title || '')
-    .replace(/([\u0590-\u05FF])([a-zA-Z0-9])/g, '$1 $2')
-    .replace(/([a-zA-Z0-9])([\u0590-\u05FF])/g, '$1 $2')
-    .toLowerCase()
-    .trim();
-  const cleanBracketless = rawTargetTitle.replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').split('|')[0].trim();
-  const dashParts = cleanBracketless.split(/\s+-\s+|\s*-\s+/).map(s => s.trim()).filter(Boolean);
-  const coreTitleCandidates = dashParts.length >= 2 ? [dashParts[1], dashParts[0]] : [cleanBracketless];
-  const targetArtist = String(meta?.artist || '').toLowerCase().trim();
+  const rawTargetTitle = String(meta?.title || '').replace(/['׳’`]/g, '').toLowerCase().trim();
+  const { titleCandidates: coreTitleCandidates, artist: parsedArtist } = extractSongAndArtistFromMeta(meta);
+  const targetArtist = String(parsedArtist || meta?.artist || '').replace(/['׳’`]/g, '').toLowerCase().trim();
+  const artistWordSet = new Set(
+    targetArtist.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1)
+  );
 
   let score = 100;
 
-  // 1. Core title word match (supports both "Song - Extra" and "Artist - Song")
+  // 1. Core title word match (never allow artist words alone to count as song title!)
   const stopWords = new Set(['כל', 'כך', 'של', 'את', 'עם', 'זה', 'על', 'אל', 'מן', 'זה', 'מה', 'לא', 'כי', 'גם', 'the', 'in', 'of', 'and', 'to', 'a', 'an']);
   const candTitleTokens = new Set(title.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/));
 
   let bestRatio = -1;
   let tWords = [];
   for (const candCore of coreTitleCandidates) {
-    const words = candCore ? candCore.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1) : [];
-    const imp = words.filter(w => !stopWords.has(w));
-    const toTest = imp.length > 0 ? imp : words;
+    const cleanCore = candCore.replace(/['׳’`]/g, '').toLowerCase();
+    const words = cleanCore ? cleanCore.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1 || /\p{N}/u.test(w)) : [];
+    const nonArtist = words.filter(w => !artistWordSet.has(w));
+    const effectiveWords = nonArtist.length > 0 ? nonArtist : words;
+    const imp = effectiveWords.filter(w => !stopWords.has(w));
+    const toTest = imp.length > 0 ? imp : effectiveWords;
     if (toTest.length > 0) {
-      const matched = toTest.filter(w => candTitleTokens.has(w) || (w.length >= 4 && title.includes(w))).length;
+      const matched = toTest.filter(w => candTitleTokens.has(w) || candTitleTokens.has('ו' + w) || candTitleTokens.has('ה' + w) || (w.length >= 4 && title.includes(w))).length;
       const ratio = matched / toTest.length;
       if (ratio > bestRatio) {
         bestRatio = ratio;
-        tWords = words;
+        tWords = effectiveWords;
       }
     }
   }
 
   if (bestRatio >= 0) {
-    if (bestRatio < 0.6) return -999;
+    if (bestRatio < 0.65) return -999;
     score += Math.round(bestRatio * 95);
   } else if (queryLower) {
-    const qWords = queryLower.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1 && !stopWords.has(w));
+    const qWords = queryLower.replace(/['׳’`]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1 && !stopWords.has(w) && !artistWordSet.has(w));
     if (qWords.length > 0) {
       const matched = qWords.filter(w => candTitleTokens.has(w) || (w.length >= 4 && combined.includes(w))).length;
       const ratio = matched / qWords.length;
-      if (ratio < 0.5) return -999;
+      if (ratio < 0.6) return -999;
       score += Math.round(ratio * 70);
+    } else {
+      return -999;
     }
   }
 
@@ -312,11 +417,8 @@ async function resolveSoundCloudTranscoding(item) {
  * Fast pure-Node.js SoundCloud studio track extractor (~300-500ms, 0MB Python overhead)
  */
 async function extractSoundCloudDirect(rawQuery, meta = {}) {
-  const primaryArtist = String(meta?.artist || '').split(',')[0].trim();
-  const coreTitle = String(meta?.title || '')
-    .replace(/\s*[\(\[][^)\]]*[\)\]]/g, '')
-    .split(' - ')[0]
-    .trim();
+  const { coreTitle, artist: extractedArtist } = extractSongAndArtistFromMeta(meta);
+  const primaryArtist = String(extractedArtist || meta?.artist || '').split(/[,&/]/)[0].trim();
   const isFestigal = String(meta?.album || '').includes('פסטיגל') || String(meta?.artist || '').includes('פסטיגל');
 
   let primaryQuery = rawQuery || '';
@@ -329,7 +431,7 @@ async function extractSoundCloudDirect(rawQuery, meta = {}) {
   const cleanPrimary = primaryQuery.replace(/[^\p{L}\p{N}\s\-']/gu, ' ').replace(/\s+/g, ' ').trim();
   if (!cleanPrimary) throw new Error('Empty SoundCloud query');
 
-  const items1 = await searchSoundCloudApi(cleanPrimary, 10).catch(() => []);
+  const items1 = await searchSoundCloudApi(cleanPrimary, 15).catch(() => []);
   const qLower = cleanPrimary.toLowerCase();
   let scored = items1
     .map(item => ({ item, score: scoreSoundCloudCandidate(item, qLower, meta) }))
@@ -341,7 +443,7 @@ async function extractSoundCloudDirect(rawQuery, meta = {}) {
     const secondaryRaw = isFestigal && !coreTitle.includes('פסטיגל') ? `${coreTitle} פסטיגל` : coreTitle;
     const cleanSecondary = secondaryRaw.replace(/[^\p{L}\p{N}\s\-']/gu, ' ').replace(/\s+/g, ' ').trim();
     if (cleanSecondary && cleanSecondary.toLowerCase() !== cleanPrimary.toLowerCase()) {
-      const items2 = await searchSoundCloudApi(cleanSecondary, 10).catch(() => []);
+      const items2 = await searchSoundCloudApi(cleanSecondary, 15).catch(() => []);
       const seenIds = new Set(scored.map(x => x.item.id));
       for (const it of items2) {
         if (!seenIds.has(it.id)) {
@@ -353,7 +455,7 @@ async function extractSoundCloudDirect(rawQuery, meta = {}) {
     }
   }
 
-  for (const cand of scored.slice(0, 3)) {
+  for (const cand of scored.slice(0, 4)) {
     const url = await resolveSoundCloudTranscoding(cand.item);
     if (url) return url;
   }
@@ -486,37 +588,36 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       }
     } catch (e) {}
 
-    // 2. Fallback: Invidious direct stream if videoId is available
+    // 2. If SoundCloud missed and we have a YouTube videoId whose oEmbed title wasn't checked yet, try oEmbed title
     if (!streamUrl && isVideoId) {
-      streamUrl = await fetchFromInvidious(videoId);
+      const oembed = await fetchVideoMetaFromOembed(videoId);
+      if (oembed && oembed.title) {
+        try {
+          streamUrl = await extractSoundCloudDirect(oembed.query || oembed.title, {
+            ...effectiveMeta,
+            title: oembed.title,
+            artist: oembed.artist || effectiveMeta.artist
+          });
+        } catch (e) {}
+      }
     }
 
-    // 3. Fallback: If not a direct video ID or SoundCloud failed, resolve to YouTube videoId and fetch stream
-    if (!streamUrl && (!isVideoId || !streamUrl)) {
-      try {
-        const { resolveTrackToStreamableId } = require('./importer');
-        const resolved = await resolveTrackToStreamableId({
-          id: videoId,
-          title: effectiveMeta.title,
-          artist: effectiveMeta.artist,
-          album: effectiveMeta.album,
-          durationSeconds: effectiveMeta.durationSeconds
-        });
-        if (resolved && resolved.streamableId && /^[a-zA-Z0-9_-]{11}$/.test(resolved.streamableId)) {
-          streamUrl = await fetchFromInvidious(resolved.streamableId);
-        }
-      } catch (e) {}
+    // 3. Fallback: Invidious direct stream if videoId is available
+    if (!streamUrl && isVideoId) {
+      streamUrl = await fetchFromInvidious(videoId);
     }
 
     if (!streamUrl) {
       throw new Error('לא נמצא מקור שמע זמין לשיר זה.');
     }
 
-    const ttlMs = streamUrl.includes('.m3u8')
-      ? 12 * 60 * 1000
-      : streamUrl.includes('googlevideo.com')
-        ? 45 * 60 * 1000
-        : 4 * 60 * 60 * 1000;
+    const signedExp = getSignedUrlExpirationMs(streamUrl);
+    let ttlMs = 4 * 60 * 1000; // Default 4 minutes for SoundCloud signed URLs (which expire in ~5-7 mins)
+    if (signedExp > Date.now() + 60000) {
+      ttlMs = Math.min(45 * 60 * 1000, signedExp - Date.now() - 45000);
+    } else if (streamUrl.includes('googlevideo.com')) {
+      ttlMs = 30 * 60 * 1000;
+    }
 
     const cacheEntry = {
       url: streamUrl,

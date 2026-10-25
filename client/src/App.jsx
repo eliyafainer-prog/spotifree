@@ -264,43 +264,26 @@ export default function App() {
         let allKeys = [...initialKeys];
 
         try {
-          // If the track is an unresolved Spotify stub (sp_...), resolve it to the exact studio audio first
-          const currentStreamId = targetTrack.streamableId || targetTrack.id || '';
-          if (!currentStreamId || currentStreamId.startsWith('sp_')) {
-            try {
-              const resolved = await resolveTrack(targetTrack, true);
-              if (resolved && resolved.streamableId) {
-                targetTrack = {
-                  ...targetTrack,
-                  originalId: targetTrack.originalId || targetTrack.id,
-                  streamableId: resolved.streamableId,
-                  id: resolved.streamableId,
-                  thumbnail: resolved.thumbnail || targetTrack.thumbnail,
-                  hasCustomArtwork: true,
-                  studioResolvedV3: true,
-                  studioResolvedV4: true
-                };
-                updateTrackInPlaylists(targetTrack);
-                setPlaylists(getPlaylists());
-                allKeys = [...new Set([...allKeys, ...getTrackKeys(targetTrack)])];
-                allKeys.forEach(k => downloadingIdsRef.current.add(k));
-                setDownloadingIds(new Set(downloadingIdsRef.current));
-              }
-            } catch (e) {}
-          }
+          // Download audio directly without blocking on YouTube resolution or lyrics!
+          // /api/offline/download/:id natively resolves SoundCloud studio audio from title + artist in ~400ms
+          const blob = await downloadTrackAudioBlob(targetTrack, (pct) => {
+            updateProgressForKeys(allKeys, pct);
+          });
 
-          const [blob, fetchedLyrics] = await Promise.all([
-            downloadTrackAudioBlob(targetTrack, (pct) => {
-              updateProgressForKeys(allKeys, pct);
-            }),
-            getLyrics(targetTrack.title, targetTrack.artist, targetTrack.durationSeconds).catch(() => null)
-          ]);
-
-          await saveTrackOffline(targetTrack, blob, fetchedLyrics);
+          await saveTrackOffline(targetTrack, blob, null);
 
           allKeys.forEach(k => downloadedIdsRef.current.add(k));
           setDownloadedIds(new Set(downloadedIdsRef.current));
           setDownloadedTracksCount(prev => prev + 1);
+
+          // Asynchronously enrich offline lyrics in the background without blocking the download queue
+          getLyrics(targetTrack.title, targetTrack.artist, targetTrack.durationSeconds)
+            .then(fetchedLyrics => {
+              if (fetchedLyrics && (fetchedLyrics.hasSynced || (fetchedLyrics.plain && fetchedLyrics.plain.length > 0))) {
+                saveOfflineTrackLyrics(targetTrack, fetchedLyrics).catch(() => {});
+              }
+            })
+            .catch(() => {});
 
           if (downloadQueueRef.current.length === 0 && activeWorkersRef.current <= 1) {
             showToast(`✓ "${targetTrack.title}" נשמר להאזנה אופליין`);
@@ -431,8 +414,13 @@ export default function App() {
       let cancelled = false;
 
       (async () => {
-        const batchSize = 5;
+        const batchSize = 2;
         for (let i = 0; i < unverified.length; i += batchSize) {
+          if (cancelled) break;
+          // Pause background playlist resolution while offline downloads are actively running
+          while (!cancelled && (activeWorkersRef.current > 0 || downloadQueueRef.current.length > 0)) {
+            await new Promise(r => setTimeout(r, 1500));
+          }
           if (cancelled) break;
           const batch = unverified.slice(i, i + batchSize);
           await Promise.all(

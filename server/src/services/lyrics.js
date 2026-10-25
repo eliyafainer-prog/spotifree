@@ -132,14 +132,14 @@ function formatLyricsResponse(record, source = 'lrclib') {
  * Secondary fallback: Query lyrics.ovh or lyrist for plain lyrics if LRCLIB has no match
  */
 async function fetchFallbackPlainLyrics(candidates) {
-  for (const cand of candidates.slice(0, 3)) {
+  for (const cand of candidates.slice(0, 1)) {
     if (!cand.track || !cand.artist) continue;
 
     // 1. Try lyrics.ovh
     try {
       const ovhRes = await axios.get(
         `https://api.lyrics.ovh/v1/${encodeURIComponent(cand.artist)}/${encodeURIComponent(cand.track)}`,
-        { timeout: 3500 }
+        { timeout: 1800 }
       );
       if (ovhRes.data && ovhRes.data.lyrics && ovhRes.data.lyrics.trim().length > 20) {
         const cleanedPlain = ovhRes.data.lyrics
@@ -163,7 +163,7 @@ async function fetchFallbackPlainLyrics(candidates) {
     try {
       const lyristRes = await axios.get(
         `https://lyrist.vercel.app/api/${encodeURIComponent(cand.track)}/${encodeURIComponent(cand.artist)}`,
-        { timeout: 3500 }
+        { timeout: 1800 }
       );
       if (lyristRes.data && lyristRes.data.lyrics && lyristRes.data.lyrics.trim().length > 20) {
         return formatLyricsResponse(
@@ -191,7 +191,7 @@ async function getLyrics(trackName, artistName, durationSeconds = null) {
     return lyricsCache.get(cacheKey);
   }
 
-  const candidates = getSearchCandidates(trackName, artistName);
+  const candidates = getSearchCandidates(trackName, artistName).slice(0, 2);
   const headers = {
     'User-Agent': 'SpotiFree/2.0 (https://github.com/spotifree)'
   };
@@ -211,7 +211,7 @@ async function getLyrics(trackName, artistName, durationSeconds = null) {
         const exactRes = await axios.get('https://lrclib.net/api/get', {
           params,
           headers,
-          timeout: 4500
+          timeout: 2200
         });
         if (exactRes.data && (exactRes.data.syncedLyrics || exactRes.data.plainLyrics)) {
           const formatted = formatLyricsResponse(exactRes.data, 'lrclib');
@@ -232,7 +232,7 @@ async function getLyrics(trackName, artistName, durationSeconds = null) {
         const searchStructured = await axios.get('https://lrclib.net/api/search', {
           params: { track_name: cand.track, artist_name: cand.artist },
           headers,
-          timeout: 4500
+          timeout: 2200
         });
         if (Array.isArray(searchStructured.data)) {
           results = searchStructured.data;
@@ -243,7 +243,7 @@ async function getLyrics(trackName, artistName, durationSeconds = null) {
         const searchRes = await axios.get('https://lrclib.net/api/search', {
           params: { q: `${cand.track} ${cand.artist}`.trim() },
           headers,
-          timeout: 4500
+          timeout: 2200
         });
         results = Array.isArray(searchRes.data) ? searchRes.data : [];
       }
@@ -254,7 +254,7 @@ async function getLyrics(trackName, artistName, durationSeconds = null) {
           const trackOnlyRes = await axios.get('https://lrclib.net/api/search', {
             params: { track_name: cand.track },
             headers,
-            timeout: 4500
+            timeout: 2000
           });
           if (Array.isArray(trackOnlyRes.data) && trackOnlyRes.data.length > 0) {
             const artistLower = cand.artist.toLowerCase();

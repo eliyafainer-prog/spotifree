@@ -148,10 +148,143 @@ async function importSpotify(url) {
 
 const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
 
+const ARTIST_BILINGUAL_GROUPS = [
+  ['עומר אדם', 'omer adam'],
+  ['אושר כהן', 'osher cohen', 'osher cohen music'],
+  ['נועה קירל', 'noa kirel'],
+  ['פאר טסי', 'peer tasi'],
+  ['אייל גולן', 'eyal golan'],
+  ['איתי לוי', 'itay levi'],
+  ['עדן חסון', 'eden hason'],
+  ['עדן בן זקן', 'eden ben zaken'],
+  ['רביד פלוטניק', 'נצ\'י נצ\'', 'נצ׳י נצ׳', 'נצי נצ', 'ravid plotnik', 'nechi nech'],
+  ['טונה', 'tuna', 'tuna official'],
+  ['הדג נחש', 'hadag nahash'],
+  ['מועדון הקצב של אביהו פנחסוב', 'אביהו פנחסוב', 'the avihu pinhasov rhythm club', 'avihu pinhasov'],
+  ['הפרויקט של עידן רייכל', 'עידן רייכל', 'the idan raichel project', 'idan raichel'],
+  ['יסמין מועלם', 'jasmin moallem'],
+  ['חנן בן ארי', 'hanan ben ari'],
+  ['אודיה', 'odeya'],
+  ['אגם בוחבוט', 'agam buhbut'],
+  ['מרגי', 'יהונתן מרגי', 'mergui'],
+  ['סטטיק', 'static', 'סטטיק ובן אל', 'static and ben el'],
+  ['משה פרץ', 'moshe peretz'],
+  ['שרית חדד', 'sarit hadad'],
+  ['ליאור נרקיס', 'lior narkis'],
+  ['דודו אהרון', 'dudu aharon'],
+  ['עידן עמדי', 'idan amedi'],
+  ['נתן גושן', 'nathan goshen'],
+  ['ישי ריבו', 'ishay ribo'],
+  ['אביב גפן', 'aviv geffen'],
+  ['שלמה ארצי', 'shlomo artzi'],
+  ['אריק איינשטיין', 'arik einstein'],
+  ['משינה', 'mashina'],
+  ['היהודים', 'hayehudim'],
+  ['מוניקה סקס', 'monica sex'],
+  ['כוורת', 'kaveret'],
+  ['זוהר ארגוב', 'zohar argov'],
+  ['נומי', 'numi'],
+  ['עקיבא', 'akiva'],
+  ['ששון איפרם שאולוב', 'ששון שאולוב', 'sasson efram shaulov', 'sasson shaulov'],
+  ['סאבלימינל', 'subliminal'],
+  ['נס וסטילה', 'סטילה', 'stilla', 'ness ve stilla'],
+  ['שחר סאול', 'shahar saul'],
+  ['פול טראנק', 'full trunk'],
+  ['בניה ברבי', 'benaia barabi'],
+  ['אמיר דדון', 'amir dadon']
+];
+
+function expandBilingualArtistParts(artistParts = []) {
+  const expanded = new Set(artistParts.filter(Boolean));
+  for (const a of [...expanded]) {
+    const low = a.toLowerCase().trim();
+    for (const grp of ARTIST_BILINGUAL_GROUPS) {
+      if (grp.some(g => low === g || low.includes(g) || g.includes(low))) {
+        grp.forEach(g => expanded.add(g));
+      }
+    }
+  }
+  return [...expanded];
+}
+
+function formatYtTrackEntry(v, playlistTitle) {
+  const id = v.videoId || v.id;
+  const durSec = Number(v.durationSeconds || v.seconds || v.duration) || 0;
+  const mins = Math.floor(durSec / 60);
+  const secs = Math.round(durSec % 60);
+  const durStr = v.timestamp || `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  const rawTitle = String(v.title || 'YouTube Track').trim();
+  const cleaned = cleanTitle(rawTitle) || rawTitle;
+  let artist = String(v.author?.name || v.uploader || v.channel || 'YouTube Artist').replace(/\s*-\s*Topic$/i, '').trim();
+  let finalTitle = cleaned;
+
+  if (cleaned.includes(' - ')) {
+    const parts = cleaned.split(' - ').map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      artist = parts[0];
+      finalTitle = parts.slice(1).join(' - ').split('|')[0].trim() || cleaned;
+    }
+  }
+
+  return {
+    id,
+    streamableId: id,
+    title: finalTitle,
+    originalTitle: rawTitle,
+    artist,
+    album: playlistTitle,
+    thumbnail: v.thumbnail || v.image || v.thumbnails?.[0]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+    hasCustomArtwork: true,
+    duration: durStr,
+    durationSeconds: durSec,
+    source: 'youtube',
+    url: `https://www.youtube.com/watch?v=${id}`
+  };
+}
+
 /**
- * Import a YouTube playlist
+ * Import a YouTube playlist or single video (fast pure Node.js via yt-search with yt-dlp fallback)
  */
 async function importYouTubePlaylist(url) {
+  const listMatch = url.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+  const videoMatch = url.match(/(?:[?&]v=|youtu\.be\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+
+  // 1. Fast Pure-Node.js Playlist Import via yt-search
+  if (listMatch && listMatch[1]) {
+    try {
+      const pl = await yts({ listId: listMatch[1] });
+      if (pl && Array.isArray(pl.videos) && pl.videos.length > 0) {
+        const playlistTitle = pl.title || 'YouTube Playlist';
+        const tracks = pl.videos.map(v => formatYtTrackEntry(v, playlistTitle));
+        return {
+          title: playlistTitle,
+          cover: pl.thumbnail || tracks[0]?.thumbnail || '',
+          type: 'youtube',
+          totalTracks: tracks.length,
+          tracks
+        };
+      }
+    } catch (e) {}
+  }
+
+  // 2. Fast Pure-Node.js Single Video Import via yt-search
+  if (videoMatch && videoMatch[1] && !listMatch) {
+    try {
+      const v = await yts({ videoId: videoMatch[1] });
+      if (v && (v.videoId || v.title)) {
+        const track = formatYtTrackEntry(v, v.title);
+        return {
+          title: track.title,
+          cover: track.thumbnail,
+          type: 'track',
+          totalTracks: 1,
+          tracks: [track]
+        };
+      }
+    } catch (e) {}
+  }
+
+  // 3. Fallback: yt-dlp subprocess
   return new Promise((resolve, reject) => {
     const pyProcess = spawn(PYTHON_BIN, [
       '-m', 'yt_dlp',
@@ -175,28 +308,8 @@ async function importYouTubePlaylist(url) {
       try {
         const json = JSON.parse(output);
         const playlistTitle = json.title || 'YouTube Playlist';
-        const entries = json.entries || [];
-
-        const tracks = entries.map(v => {
-          const durSec = v.duration || 0;
-          const mins = Math.floor(durSec / 60);
-          const secs = Math.round(durSec % 60);
-          const durStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-
-          return {
-            id: v.id,
-            streamableId: v.id,
-            title: cleanTitle(v.title) || v.title,
-            originalTitle: v.title,
-            artist: v.uploader || v.channel || 'YouTube Artist',
-            album: playlistTitle,
-            thumbnail: v.thumbnails?.[0]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
-            duration: durStr,
-            durationSeconds: durSec,
-            source: 'youtube',
-            url: `https://www.youtube.com/watch?v=${v.id}`
-          };
-        });
+        const entries = Array.isArray(json.entries) ? json.entries : (json.id ? [json] : []);
+        const tracks = entries.map(v => formatYtTrackEntry(v, playlistTitle));
 
         resolve({
           title: playlistTitle,
@@ -233,13 +346,13 @@ async function universalImport(inputUrl) {
  */
 function scoreCandidate(cand, track, extraArtistAliases = []) {
   let score = 0;
-  const candTitle = String(cand.originalTitle || cand.title || '').replace(/\u00a0/g, ' ').toLowerCase();
-  const candCleanTitle = String(cand.title || '').replace(/\u00a0/g, ' ').toLowerCase();
-  const candAuthor = String(cand.rawAuthor || cand.artist || cand.author?.name || '').replace(/\u00a0/g, ' ').toLowerCase();
-  const rawTargetTitle = String(track.title || track.originalTitle || '').replace(/\u00a0/g, ' ').toLowerCase();
+  const candTitle = String(cand.originalTitle || cand.title || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
+  const candCleanTitle = String(cand.title || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
+  const candAuthor = String(cand.rawAuthor || cand.artist || cand.author?.name || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
+  const rawTargetTitle = String(track.title || track.originalTitle || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
   const coreTargetTitle = rawTargetTitle.replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').split(' - ')[0].trim() || rawTargetTitle;
-  const targetArtist = String(track.artist || '').replace(/\u00a0/g, ' ').toLowerCase();
-  const targetAlbum = String(track.album || '').replace(/\u00a0/g, ' ').toLowerCase();
+  const targetArtist = String(track.artist || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
+  const targetAlbum = String(track.album || '').replace(/\u00a0/g, ' ').replace(/['׳’`]/g, '').toLowerCase();
   const candSec = Number(cand.durationSeconds || cand.seconds) || 0;
   const targetSec = Number(track.durationSeconds) || 0;
   const isTopic = Boolean(cand.isTopic || candAuthor.includes('- topic') || candAuthor.endsWith('topic'));
@@ -254,9 +367,8 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
   const titleWords = coreTargetTitle
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
-    .filter(w => w.length > 1);
+    .filter(w => w.length > 1 || /\p{N}/u.test(w));
 
-  // Extract core non-stop words (e.g. for "רוקד כל כך יפה", important words are "רוקד" and "יפה")
   const importantTitleWords = titleWords.filter(w => !stopWords.has(w));
   const wordsToTest = importantTitleWords.length > 0 ? importantTitleWords : titleWords;
 
@@ -265,77 +377,82 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
 
   let matchedWords = 0;
   for (const w of wordsToTest) {
-    if (candTokens.has(w) || candCleanTokens.has(w) || (w.length >= 4 && (candTitle.includes(w) || candCleanTitle.includes(w)))) {
+    if (
+      candTokens.has(w) ||
+      candCleanTokens.has(w) ||
+      candTokens.has('ו' + w) ||
+      candTokens.has('ה' + w) ||
+      (w.length >= 4 && (candTitle.includes(w) || candCleanTitle.includes(w)))
+    ) {
       matchedWords++;
     }
   }
 
-  // If none of the important title words matched, it's definitely a completely different song!
   if (wordsToTest.length > 0 && matchedWords === 0) {
     return -999;
   }
 
   const matchRatio = wordsToTest.length > 0 ? (matchedWords / wordsToTest.length) : 1;
   if (matchRatio < 0.6) {
-    return -999; // Disqualify wrong songs immediately
+    return -999;
   }
   score += Math.round(matchRatio * 90);
 
-  // If candidate title has prominent words that are completely absent from target title, penalize it
   const candNonStopTokens = [...candCleanTokens].filter(w => w.length > 2 && !stopWords.has(w));
   const extraUnknownWords = candNonStopTokens.filter(cw => !titleWords.some(tw => cw === tw || (cw.length >= 4 && tw.includes(cw))));
   if (extraUnknownWords.length >= 2 && !candAuthor.includes(extraUnknownWords[0])) {
-    score -= 120; // Another song or extra unrelated content in title
+    score -= 120;
   }
 
-  // 2. Duration matching against Spotify studio master (Crucial for studio vs stage/live/extended versions!)
+  // 2. Duration matching against Spotify studio master
   if (targetSec > 0 && candSec > 0) {
     const diff = Math.abs(candSec - targetSec);
-    if (diff <= 2) score += 140;       // Exact Spotify studio master length!
-    else if (diff <= 5) score += 105;  // Studio release within 5s
-    else if (diff <= 9) score += 55;   // Close match
+    if (diff <= 2) score += 140;
+    else if (diff <= 5) score += 105;
+    else if (diff <= 9) score += 55;
     else if (diff <= 15) score += 10;
     else if (diff <= 25) score -= 65;
     else if (diff <= 40) score -= 145;
-    else score -= 280; // >40s difference = stage medley, live speech, or wrong version
+    else score -= 280;
   }
 
-  // 3. Strictly penalize Live / Stage / Festigal Remake / Dance Tutorial / Cover / Remix / Mashup
+  // 3. Strictly penalize Live / Stage / Vocal-only / Cover / Remix / Mashup
   const stageAndLiveWords = [
     'מתוך המופע', 'מהמופע', 'במופע', 'המופע המלא', 'קטע מתוך', 'נאמבר',
     'מהבמה', 'על הבמה', 'במה', 'מהקהל', 'קהל', 'הופעה חיה', 'בהופעה', 'הופעה',
     'לייב', 'live', 'concert', 'חי באולפן', 'באולפן', 'גלגלצ', 'חזרות', 'מאחורי הקלעים', 'ריאקשן', 'reaction',
     'איך לרקוד', 'הדרכת ריקוד', 'כוריאוגרפיה', 'ילדי הפסטיגל', 'אודישן', 'מחרוזת',
     'קאבר', 'cover', 'קריוקי', 'karaoke', 'פרודיה', 'parody', 'משאפ', 'מאשאפ', 'mashup', 'mash up',
-    'אינסטרומנטלי', 'instrumental', 'ריאיון', 'ראיון', 'הצצה ל', 'מתוך פרק', 'בטקס ',
+    'אינסטרומנטלי', 'instrumental', 'ווקאלי', 'ווקאלים', 'אקפלה', 'acapella', 'ריאיון', 'ראיון', 'הצצה ל', 'מתוך פרק', 'בטקס ',
     'רמיקס', 'רימיקס', 'remix', 'slowed', 'sped up', 'nightcore', '8d',
     '#myפסטיגל', 'my פסטיגל', 'my festigal', 'חידוש', 'מחווה', 'גיבוי', 'תרגום',
     'מגיב', 'מגיבה', 'תגובה', 'reacts', 'edits', 'אדיט', 'speed up', 'spedup', 'מואץ', 'גרסה מהירה', 'bass boost', 'tiktok', 'טיקטוק'
   ];
   for (const w of stageAndLiveWords) {
-    if (candTitle.includes(w) && !rawTargetTitle.includes(w) && !targetAlbum.includes(w)) {
+    if ((candTitle.includes(w) || candAuthor.includes(w)) && !rawTargetTitle.includes(w) && !targetAlbum.includes(w)) {
       score -= 180;
     }
   }
 
-  // 4. Penalize unrequested remakes/duets ("בביצוע ...", "X ...") where another singer performs the song
+  // 4. Penalize unrequested remakes/duets ("בביצוע ...", "X ...")
   if ((candTitle.includes('בביצוע') || candTitle.includes(' x ')) && !rawTargetTitle.includes('בביצוע') && !rawTargetTitle.includes(' x ')) {
     score -= 160;
   }
 
-  // 5. Artist & Official Page verification (Ensure it comes from the same singer/official page)
+  // 5. Artist & Official Page verification (including bilingual Hebrew<->English aliases)
   const isFestigalTrack = targetArtist.includes('פסטיגל') || targetAlbum.includes('פסטיגל') || rawTargetTitle.includes('פסטיגל');
   let artistMatched = false;
   let primarySingerMatched = false;
 
   const genericFestigalWords = new Set(['פסטיגל', 'משתתפי', 'הפסטיגל', 'כוכבי', 'ילדי', 'various', 'artists']);
-  const artistParts = [
+  const rawArtistParts = [
     ...targetArtist
       .split(/[,&•/]+/)
       .map(a => a.trim().toLowerCase())
       .filter(a => a.length > 1),
-    ...extraArtistAliases.map(a => String(a || '').trim().toLowerCase()).filter(a => a.length > 1)
+    ...extraArtistAliases.map(a => String(a || '').replace(/['׳’`]/g, '').trim().toLowerCase()).filter(a => a.length > 1)
   ];
+  const artistParts = expandBilingualArtistParts(rawArtistParts);
 
   const specificSigners = artistParts.filter(a => {
     const words = a.split(/\s+/);
@@ -344,7 +461,7 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
 
   for (const a of specificSigners) {
     if (candAuthor.includes(a)) {
-      score += 75; // Uploaded directly by the singer's own official channel / Topic page!
+      score += 75;
       artistMatched = true;
       primarySingerMatched = true;
       break;
@@ -549,10 +666,16 @@ async function resolveTrackToStreamableId(track) {
     score: scoreCandidate(cand, effectiveTrack, artistAliases)
   })).sort((a, b) => b.score - a.score);
 
-  const topMatch = scored[0].cand;
-  const resolvedId = topMatch.id || topMatch.videoId;
-  const ytThumb = topMatch.thumbnail || topMatch.image || (resolvedId ? `https://i.ytimg.com/vi/${resolvedId}/hqdefault.jpg` : '');
-  const finalDurationSec = effectiveTrack.durationSeconds || topMatch.durationSeconds || 0;
+  const topEntry = scored[0];
+  const topMatch = topEntry.cand;
+  const isAcceptableScore = topEntry.score >= -150;
+  const resolvedId = isAcceptableScore
+    ? (topMatch.id || topMatch.videoId)
+    : (track.streamableId || track.id || topMatch.id || topMatch.videoId);
+  const ytThumb = isAcceptableScore
+    ? (topMatch.thumbnail || topMatch.image || (resolvedId ? `https://i.ytimg.com/vi/${resolvedId}/hqdefault.jpg` : ''))
+    : '';
+  const finalDurationSec = effectiveTrack.durationSeconds || (isAcceptableScore ? topMatch.durationSeconds : 0) || 0;
 
   const resolutionResult = {
     streamableId: resolvedId,
