@@ -80,9 +80,18 @@ async function resolveScStreamUrl(item) {
   );
   if (transcodings.length === 0) return null;
 
+  // Priority 1: High-Efficiency 160kbps AAC (aac_160k fMP4 studio quality)
+  // Priority 2: Progressive HTTP MP3 (128kbps MP3)
+  // Priority 3: Other HLS streams (excluding multi-bitrate mpegurl master manifests)
   const ordered = [
+    ...transcodings.filter(t => t.preset === 'aac_160k' || String(t.preset || '').includes('160k')),
     ...transcodings.filter(t => t.format?.protocol === 'progressive'),
-    ...transcodings.filter(t => t.format?.protocol === 'hls' && !String(t.format?.mime_type || '').includes('mpegurl')),
+    ...transcodings.filter(
+      t =>
+        t.format?.protocol === 'hls' &&
+        t.preset !== 'aac_160k' &&
+        !String(t.format?.mime_type || '').includes('mpegurl')
+    ),
     ...transcodings.filter(t => t.format?.protocol === 'hls')
   ];
 

@@ -2,7 +2,7 @@ const LIKED_SONGS_KEY = 'spotifree_liked_songs';
 const PLAYLISTS_KEY = 'spotifree_playlists';
 const RECENT_KEY = 'spotifree_recent_tracks';
 const PLAYBACK_STATE_KEY = 'spotifree_last_playback';
-const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v4';
+const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v5';
 
 // One-time migration: clear old non-studio streamableId on Spotify-imported tracks while keeping their cover artwork intact
 try {
@@ -12,7 +12,7 @@ try {
       return list.map(t => {
         if (!t || typeof t !== 'object') return t;
         const origId = String(t.originalId || t.id || '');
-        if ((origId.startsWith('sp_') || t.source === 'spotify') && !t.studioResolvedV4) {
+        if ((origId.startsWith('sp_') || t.source === 'spotify') && !t.studioResolvedV5) {
           return {
             ...t,
             originalId: origId.startsWith('sp_') ? origId : (t.originalId || `sp_${t.spotifyId || t.title}`),
@@ -20,6 +20,7 @@ try {
             streamableId: null,
             studioResolvedV3: false,
             studioResolvedV4: false,
+            studioResolvedV5: false,
             durationSeconds: (t.durationSeconds && t.durationSeconds <= 420) ? t.durationSeconds : 0
           };
         }
@@ -126,8 +127,8 @@ const DEFAULT_INITIAL_PLAYLISTS = [
     title: 'שירים שאני אוהב',
     type: 'playlist',
     tracks: [
-      { id: 'sp_om_adam_mah_laasot', title: 'מה לעשות עם הזאב', artist: 'עלמה גוב', thumbnail: 'https://i.scdn.co/image/ab67616d0000b2734199fc9ee18e192ff83984ca', durationSeconds: 220 },
-      { id: 'sp_cute_boy', title: 'Cute Boy', artist: 'נונו, שגיא קריב, Tel Aviv', thumbnail: 'https://i.scdn.co/image/ab67616d0000b273b75459392233ea25eb8f22fa', durationSeconds: 198 },
+      { id: 'sp_om_adam_mah_laasot', title: 'מה לעשות עם הזאב', artist: 'עלמה גוב', thumbnail: 'https://i.scdn.co/image/ab67616d0000b2734199fc9ee18e192ff83984ca', durationSeconds: 176 },
+      { id: 'sp_cute_boy', title: 'Cute Boy', artist: 'נונו, שגיא קריב, Tel Aviv', thumbnail: 'https://i.scdn.co/image/ab67616d0000b273b75459392233ea25eb8f22fa', durationSeconds: 207 },
       { id: 'sp_earrings', title: 'Earrings', artist: 'Malcolm Todd', thumbnail: 'https://i.scdn.co/image/ab67616d0000b27329fbba4694b91448b30e01ea', durationSeconds: 167 },
       { id: 'sp_festigal_future', title: 'הילדים של העתיד', artist: 'אליאנה תדהר, תובל שפיר', thumbnail: 'https://i.scdn.co/image/ab67616d0000b27376a91d1e43d460cf6134b223', durationSeconds: 215 },
       { id: 'sp_balada_lasonen', title: 'בלדה לסוכן כפול', artist: 'משינה', thumbnail: 'https://i.scdn.co/image/ab67616d0000b2738fc9f122501a1d1ca933320f', durationSeconds: 205 },
@@ -156,11 +157,21 @@ export function getPlaylists() {
 export function savePlaylist(playlist) {
   if (!playlist) return getPlaylists();
   const playlists = getPlaylists();
-  const index = playlists.findIndex(p => p.id === playlist.id);
+  const index = playlists.findIndex(
+    p =>
+      p.id === playlist.id ||
+      (playlist.sourceId && p.sourceId === playlist.sourceId) ||
+      (playlist.sourceUrl && p.sourceUrl === playlist.sourceUrl) ||
+      (playlist.sourceId && p.title === playlist.title && p.type === playlist.type)
+  );
   let updated;
   if (index >= 0) {
     updated = [...playlists];
-    updated[index] = playlist;
+    updated[index] = {
+      ...playlists[index],
+      ...playlist,
+      id: playlists[index].id
+    };
   } else {
     updated = [playlist, ...playlists];
   }
@@ -229,6 +240,7 @@ export function updateTrackInPlaylists(resolvedTrack) {
             hasCustomArtwork: true,
             studioResolvedV3: true,
             studioResolvedV4: true,
+            studioResolvedV5: true,
             duration: finalDurStr,
             durationSeconds: finalSec
           };

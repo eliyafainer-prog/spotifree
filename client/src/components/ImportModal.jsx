@@ -47,7 +47,9 @@ export function ImportModal({ isOpen, onClose, onPlaylistImported, onLibraryRest
     if (!preview) return;
 
     const newPlaylist = {
-      id: `pl_${Date.now()}`,
+      id: preview.sourceId || `pl_${Date.now()}`,
+      sourceId: preview.sourceId || null,
+      sourceUrl: url.trim(),
       title: preview.title,
       cover: preview.cover,
       type: preview.type,

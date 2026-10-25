@@ -54,6 +54,120 @@ async function extractCoverArt(entity, rawUrl) {
 }
 
 /**
+ * Fetch live real-time playlist tracks and 640x640 individual artwork from Spotify Pathfinder GraphQL API
+ * (Bypasses Spotify's stale /embed/playlist/ snapshot cache so edited playlists update immediately!)
+ */
+async function fetchSpotifyPlaylistPathfinder(playlistId, accessToken) {
+  if (!playlistId || !accessToken) return null;
+
+  const allItems = [];
+  let playlistName = '';
+  let playlistCover = '';
+  let offset = 0;
+  const limit = 100;
+
+  for (let page = 0; page < 4; page++) {
+    const pfRes = await axios.post(
+      'https://api-partner.spotify.com/pathfinder/v1/query',
+      {
+        variables: {
+          uri: `spotify:playlist:${playlistId}`,
+          offset,
+          limit,
+          enableWatchFeedEntrypoint: false
+        },
+        operationName: 'fetchPlaylist',
+        extensions: {
+          persistedQuery: {
+            version: 1,
+            sha256Hash: 'cd2275433b29f7316176e7b5b5e098ae7744724e1a52d63549c76636b3257749'
+          }
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'App-Platform': 'WebPlayer',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
+        },
+        timeout: 8000
+      }
+    );
+
+    const pl = pfRes.data?.data?.playlistV2;
+    if (!pl) break;
+
+    if (!playlistName && pl.name) playlistName = pl.name;
+    if (!playlistCover && pl.images?.items?.[0]?.sources?.length) {
+      const sortedImg = [...pl.images.items[0].sources].sort((a, b) => (b.width || 0) - (a.width || 0));
+      playlistCover = sortedImg[0]?.url || '';
+    }
+
+    const items = pl.content?.items || [];
+    allItems.push(...items);
+
+    const totalCount = Number(pl.content?.totalCount) || items.length;
+    offset += items.length;
+    if (items.length === 0 || offset >= totalCount) break;
+  }
+
+  if (allItems.length === 0) return null;
+
+  const tracks = [];
+  for (let i = 0; i < allItems.length; i++) {
+    const trackData = allItems[i]?.itemV2?.data;
+    if (!trackData || trackData.__typename !== 'Track') continue;
+
+    const rawTitle = String(trackData.name || 'שיר ללא שם').replace(/\u00a0/g, ' ').trim();
+    const artistList = (trackData.artists?.items || [])
+      .map(a => a.profile?.name)
+      .filter(Boolean);
+    const artist = (artistList.join(', ') || 'Unknown Artist').replace(/\u00a0/g, ' ').trim();
+    const albumName = String(trackData.albumOfTrack?.name || playlistName || 'Spotify').replace(/\u00a0/g, ' ').trim();
+    const durationMs = Number(trackData.trackDuration?.totalMilliseconds) || 0;
+    const durationSec = Math.round(durationMs / 1000);
+    const mins = Math.floor(durationSec / 60);
+    const secs = durationSec % 60;
+    const durationStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+    const coverSources = trackData.albumOfTrack?.coverArt?.sources || [];
+    const sortedCovers = [...coverSources].sort((a, b) => (b.width || 0) - (a.width || 0));
+    const trackSpecificCover = sortedCovers[0]?.url || null;
+
+    const spotifyTrackId = trackData.uri ? trackData.uri.split(':').pop() : `${playlistId}_${i}`;
+
+    tracks.push({
+      id: `sp_${spotifyTrackId}`,
+      originalId: `sp_${spotifyTrackId}`,
+      spotifyId: spotifyTrackId,
+      title: rawTitle,
+      originalTitle: rawTitle,
+      artist,
+      album: albumName,
+      thumbnail: trackSpecificCover || playlistCover,
+      hasCustomArtwork: Boolean(trackSpecificCover),
+      duration: durationStr,
+      durationSeconds: durationSec,
+      source: 'spotify',
+      query: `${artist} - ${rawTitle}`
+    });
+  }
+
+  if (tracks.length === 0) return null;
+
+  return {
+    sourceId: `pl_sp_${playlistId}`,
+    spotifyPlaylistId: playlistId,
+    title: playlistName || 'פלייליסט מיובא',
+    cover: playlistCover || tracks[0]?.thumbnail || '',
+    type: 'playlist',
+    totalTracks: tracks.length,
+    tracks
+  };
+}
+
+/**
  * Fetch tracks and artwork from Spotify URL (no API key required)
  */
 async function importSpotify(url, forceRefresh = false) {
@@ -62,7 +176,7 @@ async function importSpotify(url, forceRefresh = false) {
     throw new Error('קישור ספוטיפיי אינו תקין. אנא ודא שהעתקת קישור לפלייליסט, אלבום או שיר.');
   }
 
-  const embedUrl = `https://open.spotify.com/embed/${parsed.type}/${parsed.id}${forceRefresh ? `?_cb=${Date.now()}` : ''}`;
+  const embedUrl = `https://open.spotify.com/embed/${parsed.type}/${parsed.id}?_cb=${Date.now()}`;
   let response;
   try {
     response = await axios.get(embedUrl, {
@@ -97,6 +211,19 @@ async function importSpotify(url, forceRefresh = false) {
     throw new Error('שגיאה בקריאת המידע מספוטיפיי.');
   }
 
+  // 1. For playlists, always query Spotify's real-time Pathfinder GraphQL API first so newly added/removed songs & individual 640x640 covers load immediately!
+  const accessToken = nextData.props?.pageProps?.state?.settings?.session?.accessToken;
+  if (parsed.type === 'playlist' && accessToken) {
+    try {
+      const livePlaylist = await fetchSpotifyPlaylistPathfinder(parsed.id, accessToken);
+      if (livePlaylist && livePlaylist.tracks.length > 0) {
+        return livePlaylist;
+      }
+    } catch (pfErr) {
+      // Fallback to embed entity if Pathfinder fails
+    }
+  }
+
   const entity = nextData.props?.pageProps?.state?.data?.entity;
   if (!entity) {
     throw new Error('האלבום או הפלייליסט לא נמצא בספוטיפיי (בדוק את הקישור שהדבקת).');
@@ -122,10 +249,12 @@ async function importSpotify(url, forceRefresh = false) {
     const durationStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 
     const trackSpecificCover = t.coverArt?.sources?.[0]?.url || t.images?.[0]?.url || t.album?.images?.[0]?.url || null;
+    const spotifyTrackId = t.id || t.uri?.split(':').pop() || `${parsed.id}_${index}`;
 
     return {
-      id: `sp_${parsed.id}_${index}`,
-      spotifyId: t.id || t.uri?.split(':').pop() || null,
+      id: `sp_${spotifyTrackId}`,
+      originalId: `sp_${spotifyTrackId}`,
+      spotifyId: spotifyTrackId,
       title: rawTitle,
       originalTitle: rawTitle,
       artist: artist,
@@ -140,6 +269,8 @@ async function importSpotify(url, forceRefresh = false) {
   });
 
   return {
+    sourceId: `pl_sp_${parsed.id}`,
+    spotifyPlaylistId: parsed.id,
     title: playlistTitle,
     cover: playlistCover,
     type: parsed.type,
@@ -259,6 +390,7 @@ async function importYouTubePlaylist(url) {
         const playlistTitle = pl.title || 'YouTube Playlist';
         const tracks = pl.videos.map(v => formatYtTrackEntry(v, playlistTitle));
         return {
+          sourceId: `pl_yt_${listMatch[1]}`,
           title: playlistTitle,
           cover: pl.thumbnail || tracks[0]?.thumbnail || '',
           type: 'youtube',
@@ -413,10 +545,32 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
   }
   score += Math.round(matchRatio * 90);
 
-  const candNonStopTokens = [...candCleanTokens].filter(w => w.length > 2 && !stopWords.has(w));
-  const extraUnknownWords = candNonStopTokens.filter(cw => !titleWords.some(tw => cw === tw || (cw.length >= 4 && tw.includes(cw))));
-  if (extraUnknownWords.length >= 2 && !candAuthor.includes(extraUnknownWords[0])) {
-    score -= 120;
+  // Build artist aliases early so we don't penalize official bilingual titles that contain the artist's name!
+  const genericFestigalWords = new Set(['פסטיגל', 'משתתפי', 'הפסטיגל', 'כוכבי', 'ילדי', 'various', 'artists', 'tel', 'aviv']);
+  const rawArtistParts = [
+    ...targetArtist
+      .split(/[,&•/]+|\s+x\s+/i)
+      .map(a => a.trim().toLowerCase())
+      .filter(a => a.length > 1),
+    ...extraArtistAliases.map(a => String(a || '').replace(/['׳’`]/g, '').trim().toLowerCase()).filter(a => a.length > 1)
+  ];
+  const artistParts = expandBilingualArtistParts(rawArtistParts);
+  const artistWordTokens = new Set(
+    artistParts
+      .join(' ')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 1)
+  );
+
+  const candNonStopTokens = [...candCleanTokens].filter(w => w.length > 2 && !stopWords.has(w) && w !== 'x');
+  const extraUnknownWords = candNonStopTokens.filter(
+    cw =>
+      !artistWordTokens.has(cw) &&
+      !titleWords.some(tw => cw === tw || (cw.length >= 4 && tw.includes(cw)))
+  );
+  if (extraUnknownWords.length >= 3 && !candAuthor.includes(extraUnknownWords[0])) {
+    score -= 110;
   }
 
   // 2. Duration matching against Spotify studio master
@@ -424,74 +578,88 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
     const diff = Math.abs(candSec - targetSec);
     if (diff <= 2) score += 140;
     else if (diff <= 5) score += 105;
-    else if (diff <= 9) score += 55;
-    else if (diff <= 15) score += 10;
-    else if (diff <= 25) score -= 65;
-    else if (diff <= 40) score -= 145;
-    else score -= 280;
+    else if (diff <= 9) score += 60;
+    else if (diff <= 15) score += 15;
+    else if (diff <= 25) score -= 50;
+    else if (diff <= 40) score -= 120;
+    else score -= 220;
   }
 
-  // 3. Strictly penalize Live / Stage / Vocal-only / Cover / Remix / Mashup
+  // 3. Strictly penalize Live / Stage / Club / Date-stamped concert recordings / Vocal-only / Cover / Remix / Mashup
   const stageAndLiveWords = [
     'מתוך המופע', 'מהמופע', 'במופע', 'המופע המלא', 'קטע מתוך', 'נאמבר',
     'מהבמה', 'על הבמה', 'במה', 'מהקהל', 'קהל', 'הופעה חיה', 'בהופעה', 'הופעה',
-    'לייב', 'live', 'concert', 'חי באולפן', 'באולפן', 'גלגלצ', 'חזרות', 'מאחורי הקלעים', 'ריאקשן', 'reaction',
+    'לייב', 'live', 'concert', 'חי באולפן', 'באולפן', 'חי מ', 'גלגלצ', 'חזרות', 'מאחורי הקלעים', 'ריאקשן', 'reaction',
     'איך לרקוד', 'הדרכת ריקוד', 'כוריאוגרפיה', 'ילדי הפסטיגל', 'אודישן', 'מחרוזת',
     'קאבר', 'cover', 'קריוקי', 'karaoke', 'פרודיה', 'parody', 'משאפ', 'מאשאפ', 'mashup', 'mash up',
     'אינסטרומנטלי', 'instrumental', 'ווקאלי', 'ווקאלים', 'אקפלה', 'acapella', 'ריאיון', 'ראיון', 'הצצה ל', 'מתוך פרק', 'בטקס ',
-    'רמיקס', 'רימיקס', 'remix', 'slowed', 'sped up', 'nightcore', '8d',
+    'רמיקס', 'רימיקס', 'remix', 'rmx', 'bootleg', 'slowed', 'sped up', 'nightcore', '8d',
     '#myפסטיגל', 'my פסטיגל', 'my festigal', 'חידוש', 'מחווה', 'גיבוי', 'תרגום',
-    'מגיב', 'מגיבה', 'תגובה', 'reacts', 'edits', 'אדיט', 'speed up', 'spedup', 'מואץ', 'גרסה מהירה', 'bass boost', 'tiktok', 'טיקטוק'
+    'מגיב', 'מגיבה', 'תגובה', 'reacts', 'edits', 'אדיט', 'speed up', 'spedup', 'מואץ', 'גרסה מהירה', 'bass boost', 'tiktok', 'טיקטוק',
+    'מארח את', 'מארחת את', 'אורח ב', 'אורחת ב', 'מועדון ה', 'מועדון גריי', 'בארבי', 'זאפה', 'כולי עלמא', 'בצוללת',
+    'פסטיבל ', 'מצעד הגאווה', 'גירסת רוק', 'גרסת רוק', 'דיבוב', 'זומבה', 'zumba', 'rave mix'
   ];
   for (const w of stageAndLiveWords) {
     if ((candTitle.includes(w) || candAuthor.includes(w)) && !rawTargetTitle.includes(w) && !targetAlbum.includes(w)) {
-      score -= 180;
+      score -= 220;
     }
   }
 
-  // 4. Penalize unrequested remakes/duets ("בביצוע ...", "X ...")
-  if ((candTitle.includes('בביצוע') || candTitle.includes(' x ')) && !rawTargetTitle.includes('בביצוע') && !rawTargetTitle.includes(' x ')) {
-    score -= 160;
+  // Penalize date-stamped amateur concert recordings (e.g. "26.11.22", "11/2023", "17.2.2024")
+  if (/\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b|\b\d{1,2}\/20\d{2}\b/.test(candTitle) && !/\b\d{1,2}[./]\d{1,2}\b/.test(rawTargetTitle)) {
+    score -= 240;
   }
 
-  // 5. Artist & Official Page verification (including bilingual Hebrew<->English aliases)
+  // 4. Penalize unrequested remakes ("בביצוע ...")
+  if (candTitle.includes('בביצוע') && !rawTargetTitle.includes('בביצוע')) {
+    score -= 180;
+  }
+
+  // 5. Artist & Official Channel verification (strongly prefer when the YouTube CHANNEL itself is the artist!)
   const isFestigalTrack = targetArtist.includes('פסטיגל') || targetAlbum.includes('פסטיגל') || rawTargetTitle.includes('פסטיגל');
   let artistMatched = false;
   let primarySingerMatched = false;
-
-  const genericFestigalWords = new Set(['פסטיגל', 'משתתפי', 'הפסטיגל', 'כוכבי', 'ילדי', 'various', 'artists']);
-  const rawArtistParts = [
-    ...targetArtist
-      .split(/[,&•/]+/)
-      .map(a => a.trim().toLowerCase())
-      .filter(a => a.length > 1),
-    ...extraArtistAliases.map(a => String(a || '').replace(/['׳’`]/g, '').trim().toLowerCase()).filter(a => a.length > 1)
-  ];
-  const artistParts = expandBilingualArtistParts(rawArtistParts);
+  let channelIsOfficialArtist = false;
 
   const specificSigners = artistParts.filter(a => {
     const words = a.split(/\s+/);
     return !words.every(w => genericFestigalWords.has(w));
   });
 
+  const candAuthorClean = candAuthor.replace(/\s*-\s*topic$/i, '').replace(/vevo$/i, '').replace(/official$/i, '').trim();
+
   for (const a of specificSigners) {
-    if (candAuthor.includes(a)) {
-      score += 75;
+    if (candAuthor.includes(a) || (candAuthorClean.length >= 3 && a.includes(candAuthorClean))) {
+      score += 155; // Strong reward: the YouTube channel itself belongs to the official artist!
       artistMatched = true;
       primarySingerMatched = true;
-      break;
-    } else if (candTitle.includes(a)) {
-      score += 45;
-      artistMatched = true;
-      primarySingerMatched = true;
+      channelIsOfficialArtist = true;
       break;
     }
   }
 
+  if (!channelIsOfficialArtist) {
+    for (const a of specificSigners) {
+      if (candTitle.includes(a)) {
+        score += 30; // Artist is only mentioned in the video title, not the channel name
+        artistMatched = true;
+        break;
+      }
+    }
+  }
+
+  const officialLabelChannels = ['helicon', 'הליקון', 'mobile1', 'p.i.l', 'nmc', 'קמע', 'עננה', 'unicell', 'יוניסל'];
+  const isKnownLabelChannel = officialLabelChannels.some(lbl => candAuthor.includes(lbl));
+  if (isKnownLabelChannel) {
+    score += 75;
+    artistMatched = true;
+  }
+
   if (isFestigalTrack || candTitle.includes('פסטיגל') || candAuthor.includes('פסטיגל')) {
     if (candAuthor.includes('מוזיקה ישראלית ו-פסטיגל') || candAuthor.includes('פסטיגל - הערוץ הרשמי') || candAuthor.includes('festigal')) {
-      score += 60; // Official Festigal / Israeli Music channel
+      score += 85; // Official Festigal / Israeli Music channel
       artistMatched = true;
+      channelIsOfficialArtist = true;
     } else if (candTitle.includes('פסטיגל') || candTitle.includes('festigal')) {
       score += 20;
       if (specificSigners.length === 0) artistMatched = true;
@@ -502,35 +670,37 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
   if (isTopic) {
     const isGenericTopic = candAuthor.startsWith('release - topic') || candAuthor.startsWith('various artists - topic');
     if (primarySingerMatched || (isGenericTopic && (targetSec === 0 || Math.abs(candSec - targetSec) <= 15))) {
-      score += 95;
+      score += 110;
       artistMatched = true;
+      channelIsOfficialArtist = true;
     } else if (!isGenericTopic && specificSigners.length > 0 && !primarySingerMatched) {
       // A "- Topic" channel belonging to a DIFFERENT artist (e.g., cover/lullaby/tribute artist)!
-      score -= 180;
+      score -= 220;
     } else {
       score += 40;
     }
   }
 
   // 7. Verified / Official Channel & Studio Audio rewards
-  if (cand.isVerified && artistMatched) {
-    score += 35;
+  if (cand.isVerified && (channelIsOfficialArtist || isKnownLabelChannel)) {
+    score += 45;
   }
   const officialStudioWords = [
-    'official audio', 'אודיו רשמי', 'שיר רשמי', 'אודיו', 'audio', 'הערוץ הרשמי', 'vevo', 'official'
+    'official audio', 'אודיו רשמי', 'שיר רשמי', 'אודיו', 'audio', 'הערוץ הרשמי', 'vevo', 'official visualizer'
   ];
   for (const w of officialStudioWords) {
     if (candTitle.includes(w) || candAuthor.includes(w)) {
-      score += 30;
+      score += 35;
       break;
     }
   }
 
-  // Strongly penalize uploads from unrelated channels where the requested singer does not match
-  if (specificSigners.length > 0 && !primarySingerMatched && !artistMatched) {
-    score -= 160;
-  } else if (!artistMatched) {
-    score -= 110;
+  // Penalize third-party random user channels when the artist has an official channel
+  if (specificSigners.length > 0 && !channelIsOfficialArtist && !isKnownLabelChannel) {
+    score -= 85;
+  }
+  if (!artistMatched) {
+    score -= 120;
   }
 
   return score;
@@ -556,7 +726,7 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
 
   const cleanArtist = String(track.artist || '').replace(/\u00a0/g, ' ').trim();
   const cleanTrackTitle = String(track.title || '').replace(/\u00a0/g, ' ').trim();
-  const cacheKey = `v4:::${cleanArtist}:::${cleanTrackTitle}:::${track.durationSeconds || 0}`.toLowerCase();
+  const cacheKey = `v5:::${cleanArtist}:::${cleanTrackTitle}:::${track.durationSeconds || 0}`.toLowerCase();
   if (shouldBypassCache) {
     resolveMemCache.delete(cacheKey);
   } else if (resolveMemCache.has(cacheKey)) {
@@ -702,6 +872,7 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
     hasCustomArtwork: true,
     studioResolvedV3: true,
     studioResolvedV4: true,
+    studioResolvedV5: true,
     durationSeconds: finalDurationSec
   };
 

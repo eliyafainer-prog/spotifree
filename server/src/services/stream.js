@@ -305,16 +305,29 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
     score += 30;
   }
 
-  // 3. Penalize non-studio versions (Remix / Live / Stage / Cover / Slowed / Karaoke / Mashup)
-  const badWords = [
-    'remix', 'rework', 'bootleg', 'edit', 'remake', 'cover', 'slowed',
-    'reverb', 'sped up', 'nightcore', 'live', 'instrumental', 'karaoke', 'mashup', 'mash up',
-    'רמיקס', 'רימיקס', 'קאבר', 'לייב', 'הופעה', 'בהופעה', 'מהבמה', 'מאשאפ',
-    'מתוך המופע', 'מהמופע', 'במופע', 'חי באולפן', 'באולפן', 'קריוקי', 'מחרוזת'
+  // 3. Strictly reject non-studio versions (Remix / Cover / Bootleg / Slowed / Sped Up / Karaoke / Mashup)
+  const hardRejectWords = [
+    'remix', 'rmx', 'rework', 'bootleg', 'flip', 'vip', 'blend', 'remake', 'cover', 'slowed',
+    'reverb', 'sped up', 'spedup', 'speed up', 'nightcore', '8d', 'instrumental', 'karaoke', 'mashup', 'mash up',
+    'רמיקס', 'רימיקס', 'קאבר', 'בביצוע', 'מאשאפ', 'משאפ', 'קריוקי', 'מחרוזת', 'ווקאלי', 'ווקאלים', 'אקפלה', 'acapella',
+    'מואץ', 'גרסה מהירה', 'דיבוב', 'זומבה', 'zumba'
   ];
-  for (const bw of badWords) {
-    if (title.includes(bw) && !rawTargetTitle.includes(bw) && !queryLower.includes(bw)) {
-      score -= 160;
+  const candTokensAll = new Set(combined.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/));
+  for (const hw of hardRejectWords) {
+    const hasHw = hw.includes(' ') ? title.includes(hw) : candTokensAll.has(hw);
+    if (hasHw && !rawTargetTitle.includes(hw) && !queryLower.includes(hw)) {
+      return -999;
+    }
+  }
+
+  // Penalize Live / Stage / Edit versions unless requested
+  const softPenaltyWords = [
+    'live', 'edit', 'לייב', 'הופעה', 'בהופעה', 'מהבמה', 'מתוך המופע', 'מהמופע', 'במופע', 'חי באולפן', 'באולפן'
+  ];
+  for (const sw of softPenaltyWords) {
+    const hasSw = sw.includes(' ') ? title.includes(sw) : candTokensAll.has(sw);
+    if (hasSw && !rawTargetTitle.includes(sw) && !queryLower.includes(sw)) {
+      score -= 185;
     }
   }
 
@@ -326,7 +339,7 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
       .filter(w => w.length > 1 && !['פסטיגל', 'משתתפי', 'הפסטיגל', 'various', 'artists'].includes(w));
     if (aWords.length > 0) {
       if (aWords.some(w => username.includes(w))) {
-        score += 65; // Official artist / uploader match!
+        score += 75; // Official artist / uploader match!
       } else if (aWords.some(w => title.includes(w)) || (combined.includes('פסטיגל') && (targetArtist.includes('פסטיגל') || String(meta?.album || '').includes('פסטיגל')))) {
         score += 45;
       } else {
@@ -335,17 +348,24 @@ function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
         const candWords = candTitleClean.split(/\s+/).filter(w => w.length > 1 && w !== 'פסטיגל');
         const extraWords = candWords.filter(cw => !tWords.some(tw => cw.includes(tw) || tw.includes(cw)));
         if (extraWords.length > 0) {
-          return -999; // Rejects songs by other artists with a shared title word (e.g. "דנה ברגר לומדת לעוף")
+          return -999; // Rejects songs by other artists with a shared title word
         }
-        score -= 25;
+        score -= 35;
       }
     }
   }
 
-  // 5. Prefer progressive HTTP MP3 transcodings (0ms direct byte-range seeking)
+  if (item.user?.verified) score += 45;
+
+  // 5. Strongly prefer 160kbps High-Efficiency AAC studio quality (aac_160k) over 96kbps
+  const hasHighQualityAac = validTranscodings.some(t => t.preset === 'aac_160k' || String(t.preset || '').includes('160k'));
   const hasProgressive = validTranscodings.some(t => t.format?.protocol === 'progressive');
-  if (hasProgressive) {
-    score += 25;
+  if (hasHighQualityAac) {
+    score += 35;
+  } else if (hasProgressive) {
+    score += 15;
+  } else {
+    score -= 25; // Only 96k/64k available
   }
 
   return score;
@@ -379,7 +399,7 @@ async function searchSoundCloudApi(query, limit = 10) {
 }
 
 /**
- * Resolve a SoundCloud track's best transcoding to a direct playable URL
+ * Resolve a SoundCloud track's highest-bitrate studio transcoding to a direct playable URL
  */
 async function resolveSoundCloudTranscoding(item) {
   const transcodings = (item.media?.transcodings || []).filter(
@@ -387,11 +407,18 @@ async function resolveSoundCloudTranscoding(item) {
   );
   if (transcodings.length === 0) return null;
 
-  // Priority 1: Progressive HTTP MP3 (single file, full HTTP Range support)
-  // Priority 2: HLS fMP4 AAC (aac_160k / aac_96k) or HLS MP3 (mp3_1_0), excluding multi-bitrate mpegurl master manifests
+  // Priority 1: High-Efficiency 160kbps AAC (aac_160k fMP4 - studio quality, ~256kbps MP3 equivalent)
+  // Priority 2: Progressive HTTP MP3 (128kbps MP3)
+  // Priority 3: Other HLS fMP4/MP3 streams (excluding multi-bitrate mpegurl master manifests)
   const ordered = [
+    ...transcodings.filter(t => t.preset === 'aac_160k' || String(t.preset || '').includes('160k')),
     ...transcodings.filter(t => t.format?.protocol === 'progressive'),
-    ...transcodings.filter(t => t.format?.protocol === 'hls' && !String(t.format?.mime_type || '').includes('mpegurl')),
+    ...transcodings.filter(
+      t =>
+        t.format?.protocol === 'hls' &&
+        t.preset !== 'aac_160k' &&
+        !String(t.format?.mime_type || '').includes('mpegurl')
+    ),
     ...transcodings.filter(t => t.format?.protocol === 'hls')
   ];
 
@@ -500,11 +527,109 @@ const INVIDIOUS_INSTANCES = [
   'https://invidious.nerdvpn.de'
 ];
 
+let cachedYtVisitorId = null;
+let cachedYtVisitorExp = 0;
+
+async function getYoutubeVisitorId() {
+  if (cachedYtVisitorId && cachedYtVisitorExp > Date.now()) {
+    return cachedYtVisitorId;
+  }
+  try {
+    const r = await axios.get('https://www.youtube.com/sw.js_data', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      timeout: 2500,
+      httpsAgent
+    });
+    const raw = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+    const m = raw.match(/Cgt[a-zA-Z0-9_-]+|Cg[a-zA-Z0-9_%-]+/);
+    if (m && m[0]) {
+      cachedYtVisitorId = m[0];
+      cachedYtVisitorExp = Date.now() + 25 * 60 * 1000;
+      return cachedYtVisitorId;
+    }
+  } catch (e) {}
+  return null;
+}
+
 /**
- * Fetch direct Google CDN audio stream URL from public Invidious instances
+ * Pure-Node.js Official YouTube Studio Audio Extractor via VISIONOS 1.02 InnerTube API (~220ms, 0 child processes!)
+ * Returns direct audio/mp4 (itag=140 AAC) studio stream URL from YouTube's CDN.
  */
-async function fetchFromInvidious(videoId) {
+async function extractYoutubeDirectVisionOs(videoId, meta = {}) {
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+
+  try {
+    const visitorId = await getYoutubeVisitorId();
+    const res = await axios.post(
+      'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+      {
+        context: {
+          client: {
+            clientName: 'VISIONOS',
+            clientVersion: '1.02',
+            deviceMake: 'Apple',
+            deviceModel: 'RealityDevice17,1',
+            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+            osName: 'visionOS',
+            osVersion: '26.5.23O471',
+            hl: 'en',
+            timeZone: 'UTC',
+            utcOffsetMinutes: 0
+          }
+        },
+        videoId,
+        playbackContext: {
+          contentPlaybackContext: {
+            html5Preference: 'HTML5_PREF_WANTS',
+            signatureTimestamp: 20746
+          }
+        },
+        contentCheckOk: true,
+        racyCheckOk: true
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+          'X-Youtube-Client-Name': '101',
+          'X-Youtube-Client-Version': '1.02',
+          'Origin': 'https://www.youtube.com',
+          ...(visitorId ? { 'X-Goog-Visitor-Id': visitorId } : {})
+        },
+        timeout: 3800,
+        httpsAgent
+      }
+    );
+
+    if (res.data?.playabilityStatus?.status !== 'OK') return null;
+
+    const vidLengthSec = Number(res.data?.videoDetails?.lengthSeconds) || 0;
+    if (vidLengthSec > 0 && (vidLengthSec < 40 || vidLengthSec > 720)) return null;
+
+    const adaptive = res.data?.streamingData?.adaptiveFormats || [];
+    const audioFormats = adaptive.filter(f => f && f.mimeType && f.mimeType.startsWith('audio/') && f.url);
+    if (audioFormats.length === 0) return null;
+
+    // Prefer itag=140 (audio/mp4; codecs="mp4a.40.2" - universal AAC studio stream for iOS/Android/Desktop)
+    const m4a =
+      audioFormats.find(f => f.itag === 140) ||
+      audioFormats.find(f => f.mimeType.includes('audio/mp4') && (f.bitrate || 0) >= 120000) ||
+      audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+
+    return m4a?.url || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Fetch direct Google CDN audio stream URL from YouTube VISIONOS API or public Invidious instances
+ */
+async function fetchFromInvidious(videoId, meta = {}) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+
+  const directYt = await extractYoutubeDirectVisionOs(videoId, meta);
+  if (directYt) return directYt;
 
   const promises = INVIDIOUS_INSTANCES.map(inst =>
     axios.get(`${inst}/api/v1/videos/${videoId}`, {
@@ -580,15 +705,24 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
 
     let streamUrl = null;
 
-    // 1. Primary Fast Engine: Pure Node.js SoundCloud Studio Extractor (~300-500ms, works 100% in background <audio>)
-    try {
-      const qToUse = effectiveQuery || `${effectiveMeta.artist} ${effectiveMeta.title}`.trim();
-      if (qToUse) {
-        streamUrl = await extractSoundCloudDirect(qToUse, effectiveMeta);
-      }
-    } catch (e) {}
+    // 1. Primary Official Studio Engine: When a verified YouTube videoId is present, extract the exact official YouTube M4A (itag=140) in ~210ms!
+    if (isVideoId) {
+      try {
+        streamUrl = await extractYoutubeDirectVisionOs(videoId, effectiveMeta);
+      } catch (e) {}
+    }
 
-    // 2. If SoundCloud missed and we have a YouTube videoId whose oEmbed title wasn't checked yet, try oEmbed title
+    // 2. Secondary Fast Engine: Pure Node.js SoundCloud 160kbps AAC Studio Extractor (~300-500ms)
+    if (!streamUrl) {
+      try {
+        const qToUse = effectiveQuery || `${effectiveMeta.artist} ${effectiveMeta.title}`.trim();
+        if (qToUse) {
+          streamUrl = await extractSoundCloudDirect(qToUse, effectiveMeta);
+        }
+      } catch (e) {}
+    }
+
+    // 3. If SoundCloud missed and we have a YouTube videoId whose oEmbed title wasn't checked yet, try oEmbed title
     if (!streamUrl && isVideoId) {
       const oembed = await fetchVideoMetaFromOembed(videoId);
       if (oembed && oembed.title) {
@@ -602,9 +736,9 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       }
     }
 
-    // 3. Fallback: Invidious direct stream if videoId is available
+    // 4. Final Fallback: Invidious instances if videoId is available
     if (!streamUrl && isVideoId) {
-      streamUrl = await fetchFromInvidious(videoId);
+      streamUrl = await fetchFromInvidious(videoId, effectiveMeta);
     }
 
     if (!streamUrl) {

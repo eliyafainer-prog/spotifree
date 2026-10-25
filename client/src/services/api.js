@@ -471,9 +471,10 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
 }
 
 // Persistent resolved tracks cache in localStorage for 0ms repeat playback
-const RESOLVED_CACHE_KEY = 'spotifree_resolved_v4';
+const RESOLVED_CACHE_KEY = 'spotifree_resolved_v5';
 let persistedResolveCache = {};
 try {
+  localStorage.removeItem('spotifree_resolved_v4');
   const stored = localStorage.getItem(RESOLVED_CACHE_KEY);
   if (stored) {
     const parsed = JSON.parse(stored);
@@ -509,12 +510,12 @@ export function getCachedTrackResolution(track) {
 export async function resolveTrack(track, forceArtwork = false, forceRefresh = false) {
   const shouldRefresh = Boolean(forceRefresh || track?.forceRefresh || track?.refresh);
 
-  if (!shouldRefresh && !forceArtwork && track.hasCustomArtwork !== false && track.studioResolvedV4) {
+  if (!shouldRefresh && !forceArtwork && track.hasCustomArtwork !== false && track.studioResolvedV5) {
     if (track.streamableId && !track.streamableId.startsWith('sp_')) {
-      return { streamableId: track.streamableId, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true, studioResolvedV4: true };
+      return { streamableId: track.streamableId, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true, studioResolvedV4: true, studioResolvedV5: true };
     }
     if (track.id && !track.id.startsWith('sp_')) {
-      return { streamableId: track.id, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true, studioResolvedV4: true };
+      return { streamableId: track.id, thumbnail: track.thumbnail, hasCustomArtwork: true, studioResolvedV3: true, studioResolvedV4: true, studioResolvedV5: true };
     }
   }
 
@@ -548,6 +549,7 @@ export async function resolveTrack(track, forceArtwork = false, forceRefresh = f
   const data = await res.json();
   data.studioResolvedV3 = true;
   data.studioResolvedV4 = true;
+  data.studioResolvedV5 = true;
 
   if (clientResolveCache.size > 500) {
     const oldest = clientResolveCache.keys().next().value;
