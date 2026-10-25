@@ -640,6 +640,11 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
     return -999;
   }
   score += Math.round(matchRatio * 90);
+
+  // Pure studio clean title bonus: when candidate title is cleanly the song name without artist prefixes or noise
+  if (candCleanTokens.size > 0 && candCleanTokens.size <= titleWords.length + 1 && matchRatio >= 0.9) {
+    score += 45;
+  }
   const artistWordTokens = new Set(
     artistParts
       .join(' ')
@@ -683,7 +688,8 @@ function scoreCandidate(cand, track, extraArtistAliases = []) {
     'מגיב', 'מגיבה', 'תגובה', 'reacts', 'edits', 'אדיט', 'speed up', 'spedup', 'מואץ', 'גרסה מהירה', 'bass boost', 'tiktok', 'טיקטוק',
     'מארח את', 'מארחת את', 'אורח ב', 'אורחת ב', 'מועדון ה', 'מועדון גריי', 'בארבי', 'זאפה', 'כולי עלמא', 'בצוללת',
     'פסטיבל ', 'מצעד הגאווה', 'גירסת רוק', 'גרסת רוק', 'דיבוב', 'זומבה', 'zumba', 'rave mix',
-    'שיעור', 'תופים', 'גיטרה', 'פסנתר', 'נגינה', 'אקורדים', 'טוטוריאל', 'tutorial', 'lesson', 'drum'
+    'שיעור', 'תופים', 'גיטרה', 'פסנתר', 'נגינה', 'אקורדים', 'טוטוריאל', 'tutorial', 'lesson', 'drum',
+    'שרים', 'שרה', 'שר את', 'שרה את', 'שרים את', 'שרים ל'
   ];
   for (const w of stageAndLiveWords) {
     if ((candTitle.includes(w) || candAuthor.includes(w)) && !rawTargetTitle.includes(w) && !targetAlbum.includes(w)) {
@@ -918,16 +924,12 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
 
   const prelimTrack = { ...track, artist: cleanArtist, title: cleanTrackTitle };
 
-  // 2. Search YouTube candidates (run baseQuery and studioQuery in parallel when needed for maximum studio accuracy)
+  // 2. Search YouTube candidates (run baseQuery and studioQuery in parallel for maximum studio accuracy)
   const searchPromise = (async () => {
-    const res1 = await searchTracks(baseQuery, 12).catch(() => []);
-    if (res1 && res1.length > 0) {
-      const bestBaseScore = Math.max(...res1.map(c => scoreCandidate(c, prelimTrack)));
-      if (bestBaseScore >= 185) {
-        return res1;
-      }
-    }
-    const res2 = await searchTracks(studioQuery, 10).catch(() => []);
+    const [res1, res2] = await Promise.all([
+      searchTracks(baseQuery, 12).catch(() => []),
+      searchTracks(studioQuery, 12).catch(() => [])
+    ]);
     const combined = [...(res1 || []), ...(res2 || [])];
 
     // Fallback when primary artist is censored by YouTube search (e.g. Track #3) or collaborated under secondary/group artist

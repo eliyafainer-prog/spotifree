@@ -710,6 +710,22 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       try {
         streamUrl = await extractYoutubeDirectVisionOs(videoId, effectiveMeta);
       } catch (e) {}
+    } else if (effectiveMeta.title || effectiveQuery) {
+      // If videoId is an unresolved Spotify track ID (e.g. sp_...), resolve it accurately to the official studio track
+      try {
+        const { resolveTrackToStreamableId } = require('./importer');
+        const resolved = await resolveTrackToStreamableId({
+          title: effectiveMeta.title || effectiveQuery,
+          artist: effectiveMeta.artist || '',
+          album: effectiveMeta.album || '',
+          durationSeconds: effectiveMeta.durationSeconds || 0
+        });
+        if (resolved && resolved.streamableId && /^[a-zA-Z0-9_-]{11}$/.test(resolved.streamableId)) {
+          videoId = resolved.streamableId;
+          isVideoId = true;
+          streamUrl = await extractYoutubeDirectVisionOs(videoId, effectiveMeta);
+        }
+      } catch (e) {}
     }
 
     // 2. Secondary Fast Engine: Pure Node.js SoundCloud 160kbps AAC Studio Extractor (~300-500ms)

@@ -200,10 +200,31 @@ export function useAudioPlayer() {
       const srcAttr = audio.getAttribute('src');
       if (!srcAttr) return; // Ignore empty src reset
 
-      // Never overwrite an active local Offline Blob with network retries!
+      // If a local offline blob fails or is corrupted, fall back to streaming from network!
       if (isOfflinePlaybackRef.current || srcAttr.startsWith('blob:')) {
-        console.warn('Local offline blob playback encountered an error:', audio.error);
+        console.warn('Local offline blob playback failed, falling back to network stream...');
+        isOfflinePlaybackRef.current = false;
+        if (activeBlobUrlRef.current) {
+          revokeOfflineObjectUrl(activeBlobUrlRef.current);
+          activeBlobUrlRef.current = null;
+        }
+        if (currentTrackRef.current && typeof navigator !== 'undefined' && navigator.onLine) {
+          const networkUrl = getPlayableAudioUrl(currentTrackRef.current);
+          audioRef.current.src = networkUrl;
+          audioRef.current.load();
+          audioRef.current.play().then(() => {
+            setIsPlaying(true);
+            setIsLoading(false);
+          }).catch(() => {
+            setIsLoading(false);
+            setIsPlaying(false);
+            setPlaybackError('שגיאה בניגון השיר');
+          });
+          return;
+        }
         setIsLoading(false);
+        setIsPlaying(false);
+        setPlaybackError('שגיאה בניגון הקובץ השמור');
         return;
       }
 
@@ -430,15 +451,22 @@ export function useAudioPlayer() {
                 onReadyCallback(e.target);
               },
               onStateChange: (e) => {
+                if (activeEngineRef.current !== 'yt') {
+                  try {
+                    e.target.pauseVideo();
+                    e.target.mute();
+                  } catch (err) {}
+                  return;
+                }
                 if (e.data === 1) { // PLAYING
                   isTransitioningRef.current = false;
                   setIsPlaying(true);
                   setIsLoading(false);
                 } else if (e.data === 2) { // PAUSED
-                  if (!userPausedRef.current) {
+                  if (!userPausedRef.current && activeEngineRef.current === 'yt') {
                     console.log('System auto-paused YT player (background), forcing resume...');
                     setTimeout(() => {
-                      if (!userPausedRef.current) e.target.playVideo();
+                      if (!userPausedRef.current && activeEngineRef.current === 'yt') e.target.playVideo();
                     }, 100);
                   } else {
                     setIsPlaying(false);
@@ -521,9 +549,13 @@ export function useAudioPlayer() {
     isTransitioningRef.current = true;
     setCurrentTime(0);
 
-    // Stop and pause YouTube player so it doesn't conflict
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.pauseVideo === 'function') {
-      try { ytPlayerRef.current.pauseVideo(); } catch (e) {}
+    // Stop, mute, and pause YouTube player so it never overlaps or plays in background!
+    if (ytPlayerRef.current) {
+      try {
+        if (typeof ytPlayerRef.current.mute === 'function') ytPlayerRef.current.mute();
+        if (typeof ytPlayerRef.current.stopVideo === 'function') ytPlayerRef.current.stopVideo();
+        if (typeof ytPlayerRef.current.pauseVideo === 'function') ytPlayerRef.current.pauseVideo();
+      } catch (e) {}
     }
 
     activeEngineRef.current = 'audio';

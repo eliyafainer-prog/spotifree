@@ -2,7 +2,7 @@ const LIKED_SONGS_KEY = 'spotifree_liked_songs';
 const PLAYLISTS_KEY = 'spotifree_playlists';
 const RECENT_KEY = 'spotifree_recent_tracks';
 const PLAYBACK_STATE_KEY = 'spotifree_last_playback';
-const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v6';
+const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v7';
 
 // One-time migration: clear old non-studio streamableId on Spotify-imported tracks while keeping their cover artwork intact
 try {
@@ -12,7 +12,7 @@ try {
       return list.map(t => {
         if (!t || typeof t !== 'object') return t;
         const origId = String(t.originalId || t.id || '');
-        if ((origId.startsWith('sp_') || t.source === 'spotify') && !t.studioResolvedV6) {
+        if ((origId.startsWith('sp_') || t.source === 'spotify') && !t.studioResolvedV7) {
           return {
             ...t,
             originalId: origId.startsWith('sp_') ? origId : (t.originalId || `sp_${t.spotifyId || t.title}`),
@@ -22,6 +22,7 @@ try {
             studioResolvedV4: false,
             studioResolvedV5: false,
             studioResolvedV6: false,
+            studioResolvedV7: false,
             durationSeconds: (t.durationSeconds && t.durationSeconds <= 420) ? t.durationSeconds : 0
           };
         }
@@ -243,6 +244,7 @@ export function updateTrackInPlaylists(resolvedTrack) {
             studioResolvedV4: true,
             studioResolvedV5: true,
             studioResolvedV6: true,
+            studioResolvedV7: true,
             duration: finalDurStr,
             durationSeconds: finalSec
           };
