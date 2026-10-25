@@ -14,7 +14,9 @@ import {
   ChevronUp,
   ChevronDown,
   MoreVertical,
-  Check
+  Check,
+  Download,
+  Mic2
 } from 'lucide-react';
 import { prefetchNextTracks } from '../services/api';
 
@@ -32,6 +34,7 @@ export function TrackRow({
   isQueuedDownload = false,
   downloadProgress = 0,
   onDownload,
+  onExportTrack,
   onOpenAddToPlaylist,
   onRemoveFromPlaylist,
   isReorderMode = false,
@@ -192,6 +195,15 @@ export function TrackRow({
                 <ArrowDownCircle className="w-3.5 h-3.5 fill-spotify-green text-black flex-shrink-0" />
               ) : null}
 
+              {track?.lyrics && (track.lyrics.hasSynced || track.lyrics.plain?.length > 0) && (
+                <span
+                  title="מילות השיר שמורות לאופליין"
+                  className="inline-flex items-center px-1.5 py-0.5 rounded bg-spotify-green/15 text-spotify-green text-[9px] font-bold flex-shrink-0"
+                >
+                  מילים
+                </span>
+              )}
+
               <span
                 className="text-[13px] sm:text-xs text-[#b3b3b3] group-hover:text-white transition-colors truncate leading-snug"
                 title={track.artist}
@@ -276,6 +288,17 @@ export function TrackRow({
               <Heart className="w-4 h-4" />
             )}
           </button>
+
+          {/* Desktop Export as MP3 File */}
+          {onExportTrack && (
+            <button
+              onClick={() => onExportTrack(track)}
+              title="שמור כקובץ MP3 במכשיר"
+              className="hidden sm:inline-flex p-1.5 text-[#b3b3b3] hover:text-spotify-green opacity-60 group-hover:opacity-100 transition-opacity"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+          )}
 
           {/* Desktop Remove from Playlist / Offline */}
           {onRemoveFromPlaylist && (
@@ -380,6 +403,19 @@ export function TrackRow({
                       ? 'ממתין בתור להורדה...'
                       : 'הורד להאזנה אופליין'}
                   </span>
+                </button>
+              )}
+
+              {onExportTrack && (
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onExportTrack(track);
+                  }}
+                  className="flex items-center gap-4 py-3 px-2 rounded-lg active:bg-white/10 text-spotify-green text-sm font-medium"
+                >
+                  <Download className="w-5 h-5" />
+                  <span>שמור כקובץ MP3 במכשיר</span>
                 </button>
               )}
 

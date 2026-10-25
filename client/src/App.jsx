@@ -46,7 +46,15 @@ import {
   isSameTrack
 } from './services/storage';
 import { recordTrackPlay, recordListeningSeconds } from './services/analytics';
-import { saveTrackOffline, getAllOfflineTracks, buildDownloadedIdSet, isTrackInIdSet, getTrackNormKey } from './services/offlineStorage';
+import {
+  saveTrackOffline,
+  getAllOfflineTracks,
+  getOfflineTrack,
+  saveOfflineTrackLyrics,
+  buildDownloadedIdSet,
+  isTrackInIdSet,
+  getTrackNormKey
+} from './services/offlineStorage';
 
 import { Sidebar, PlaylistThumb } from './components/Sidebar';
 import { MobileNav } from './components/MobileNav';
@@ -138,7 +146,19 @@ export default function App() {
   const [lyricsData, setLyricsData] = useState({ synced: [], plain: [], hasSynced: false });
   const [trackForAddToPlaylist, setTrackForAddToPlaylist] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
+  const [isNetworkOffline, setIsNetworkOffline] = useState(() => typeof navigator !== 'undefined' ? !navigator.onLine : false);
   const toastTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    const handleOnline = () => setIsNetworkOffline(false);
+    const handleOffline = () => setIsNetworkOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const showToast = useCallback((msg) => {
     setToastMessage(msg);
@@ -269,11 +289,14 @@ export default function App() {
             } catch (e) {}
           }
 
-          const blob = await downloadTrackAudioBlob(targetTrack, (pct) => {
-            updateProgressForKeys(allKeys, pct);
-          });
+          const [blob, fetchedLyrics] = await Promise.all([
+            downloadTrackAudioBlob(targetTrack, (pct) => {
+              updateProgressForKeys(allKeys, pct);
+            }),
+            getLyrics(targetTrack.title, targetTrack.artist, targetTrack.durationSeconds).catch(() => null)
+          ]);
 
-          await saveTrackOffline(targetTrack, blob);
+          await saveTrackOffline(targetTrack, blob, fetchedLyrics);
 
           allKeys.forEach(k => downloadedIdsRef.current.add(k));
           setDownloadedIds(new Set(downloadedIdsRef.current));
@@ -454,13 +477,32 @@ export default function App() {
     if (!player.currentTrack) return;
 
     let isMounted = true;
-    getLyrics(player.currentTrack.title, player.currentTrack.artist, player.currentTrack.durationSeconds)
-      .then(data => {
+    const track = player.currentTrack;
+
+    (async () => {
+      // 1. Check if lyrics are already saved in Offline Storage (IndexedDB) for instant & offline playback
+      try {
+        const offlineRecord = await getOfflineTrack(track);
+        if (
+          offlineRecord?.lyrics &&
+          (offlineRecord.lyrics.hasSynced || (offlineRecord.lyrics.plain && offlineRecord.lyrics.plain.length > 0))
+        ) {
+          if (isMounted) setLyricsData(offlineRecord.lyrics);
+          return;
+        }
+      } catch (e) {}
+
+      // 2. Otherwise fetch from backend lyrics API (and cache into IndexedDB if track is downloaded)
+      try {
+        const data = await getLyrics(track.title, track.artist, track.durationSeconds);
         if (isMounted) setLyricsData(data);
-      })
-      .catch(() => {
+        if (data && (data.hasSynced || (data.plain && data.plain.length > 0))) {
+          saveOfflineTrackLyrics(track, data).catch(() => {});
+        }
+      } catch {
         if (isMounted) setLyricsData({ synced: [], plain: [], hasSynced: false });
-      });
+      }
+    })();
 
     return () => { isMounted = false; };
   }, [player.currentTrack]);
@@ -672,6 +714,22 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen h-[100dvh] w-screen overflow-hidden bg-black text-white select-none">
+      {/* Auto-Offline Detection Banner */}
+      {isNetworkOffline && currentView !== 'offline' && (
+        <div className="bg-emerald-950/90 border-b border-spotify-green/40 px-4 py-2 flex items-center justify-between text-xs z-50 flex-shrink-0">
+          <div className="flex items-center gap-2 text-white font-semibold">
+            <ArrowDownCircle className="w-4 h-4 text-spotify-green flex-shrink-0" />
+            <span>אין חיבור לאינטרנט כעת • השירים שהורדת זמינים להאזנה מלאה באופליין!</span>
+          </div>
+          <button
+            onClick={() => setCurrentView('offline')}
+            className="px-3 py-1 rounded-full bg-spotify-green text-black font-extrabold text-xs hover:scale-105 transition-transform flex-shrink-0"
+          >
+            עבור לאופליין ({downloadedTracksCount})
+          </button>
+        </div>
+      )}
+
       {/* ==================== DESKTOP GLOBAL TOP BAR (Exact Match to Image 1) ==================== */}
       <header className="hidden md:flex items-center justify-between h-16 px-4 bg-black flex-shrink-0 z-30">
         {/* Right side (RTL): Official Spotify White Logo */}

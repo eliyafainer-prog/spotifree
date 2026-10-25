@@ -1,196 +1,322 @@
 const axios = require('axios');
 
-// In-memory cache for instant 0ms responses on repeat lookups
+// Fast in-memory cache for fetched lyrics (prevents redundant API calls)
 const lyricsCache = new Map();
+const MAX_LYRICS_CACHE = 500;
 
 /**
- * Parse standard LRC format string into structured array
- * Example: "[00:12.34] Hello world" -> { time: 12.34, text: "Hello world" }
+ * Clean track or artist strings from YouTube/Spotify noise for higher lyrics hit-rate
  */
-function parseLrc(lrcString) {
-  if (!lrcString) return [];
-  const lines = lrcString.split('\n');
-  const result = [];
-  const regex = /\[(\d{2}):(\d{2})\.?(\d{2,3})?\](.*)/;
-
-  for (const line of lines) {
-    const match = line.match(regex);
-    if (match) {
-      const minutes = parseInt(match[1], 10);
-      const seconds = parseInt(match[2], 10);
-      const milliseconds = match[3] ? parseInt(match[3].padEnd(3, '0').slice(0, 3), 10) : 0;
-      const totalSeconds = minutes * 60 + seconds + milliseconds / 1000;
-      const text = match[4].trim();
-
-      if (text) {
-        result.push({
-          time: totalSeconds,
-          text: text
-        });
-      }
-    }
-  }
-
-  return result.sort((a, b) => a.time - b.time);
-}
-
-/**
- * Clean track title and artist of YouTube clutter, brackets, and extra descriptions
- */
-function cleanText(text) {
-  if (!text) return '';
+function cleanText(text = '') {
   return text
-    .replace(/\s*[\(\[](?:קליפ רשמי|קליפ|official\s*(?:music\s*)?video|official\s*audio|lyrics?|visualizer|hd|4k|audio|live|remaster(?:ed)?|גרסת במה|אודיו רשמי)[\]\)]/gi, '')
-    .replace(/\s*-\s*(?:קליפ רשמי|קליפ|official\s*(?:music\s*)?video|official\s*audio|lyrics?|audio|visualizer)/gi, '')
-    .replace(/\b(?:קליפ רשמי|קליפ|official\s*(?:music\s*)?video|official\s*audio|visualizer|אודיו רשמי)\b/gi, '')
-    .replace(/["'״׳]/g, '')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/\((?:official|video|audio|lyrics|lyric|live|remix|remastered|hd|hq|4k|prod\.?[^\)]*|מתוך[^\)]*|קליפ[^\)]*|ליריקס[^\)]*)\)/gi, '')
+    .replace(/\[(?:official|video|audio|lyrics|lyric|live|remix|remastered|hd|hq|4k|prod\.?[^\]]*|מתוך[^\]]*|קליפ[^\]]*|ליריקס[^\]]*)\]/gi, '')
+    .replace(/\b(?:feat\.?|ft\.?|featuring|prod\.?\s+by)\b.*/gi, '')
+    .replace(/(?:\s+עם\s+|\s+מארח את\s+|\s+מארחת את\s+).*/gi, '')
+    .replace(/-\s*(?:official\s*(?:music\s*)?video|official\s*audio|קליפ\s*רשמי|הקליפ\s*הרשמי|מילים|ליריקס).*$/gi, '')
+    .replace(/[|\/\/]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
 /**
- * Generate intelligent search candidates for track title and artist
+ * Generate multiple search query candidates for Hebrew/international tracks
  */
-function getSearchCandidates(trackName, artistName) {
+function getSearchCandidates(trackName = '', artistName = '') {
   const candidates = [];
-  const cleanTrack = cleanText(trackName);
-  const cleanArtist = cleanText(artistName);
+  const seen = new Set();
 
-  // If track name contains the artist's name (e.g. "טל מוסרי איש השאלות")
-  if (cleanArtist && cleanTrack.toLowerCase().includes(cleanArtist.toLowerCase())) {
-    const trackWithoutArtist = cleanTrack
-      .replace(new RegExp(cleanArtist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '')
-      .replace(/^[\s\-_:]+|[\s\-_:]+$/g, '')
-      .trim();
-    if (trackWithoutArtist && trackWithoutArtist.length >= 2) {
-      candidates.push({ track: trackWithoutArtist, artist: cleanArtist });
-      candidates.push({ query: trackWithoutArtist });
+  const addCandidate = (t, a) => {
+    const cleanT = (t || '').trim();
+    const cleanA = (a || '').trim();
+    if (!cleanT) return;
+    const key = `${cleanT.toLowerCase()}___${cleanA.toLowerCase()}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      candidates.push({ track: cleanT, artist: cleanA });
+    }
+  };
+
+  const t1 = cleanText(trackName);
+  const a1 = cleanText(artistName)
+    .replace(/\s*-\s*Topic$/i, '')
+    .replace(/VEVO$/i, '')
+    .replace(/Official$/i, '')
+    .trim();
+
+  addCandidate(t1, a1);
+
+  // If title contains "Artist - Song" or "Song - Artist", try splitting both ways
+  if (t1.includes(' - ')) {
+    const parts = t1.split(' - ').map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      addCandidate(parts[1], parts[0]);
+      addCandidate(parts[0], parts[1]);
+      addCandidate(parts[1], a1);
+      addCandidate(parts[0], a1);
     }
   }
 
-  // If track name has "Artist - Song" format (very common in YouTube titles)
-  if (cleanTrack.includes(' - ')) {
-    const [partA, partB] = cleanTrack.split(' - ').map(s => s.trim());
-    candidates.push({ track: partB, artist: partA });
-    candidates.push({ track: partA, artist: partB });
-    candidates.push({ query: `${partB} ${partA}` });
-    candidates.push({ query: partB });
-    candidates.push({ query: partA });
-  }
+  // Strip anything left in parentheses or brackets
+  const t2 = t1.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').trim();
+  const a2 = a1.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').split(/[,&/]/)[0].trim();
 
-  // Standard clean track & artist
-  candidates.push({ track: cleanTrack, artist: cleanArtist });
-  candidates.push({ query: `${cleanTrack} ${cleanArtist}` });
-  candidates.push({ query: cleanTrack });
+  addCandidate(t2, a2);
 
-  // Original uncleaned as fallback
-  if (trackName && trackName !== cleanTrack) {
-    candidates.push({ query: trackName });
+  // Also try first artist if multiple artists are separated by comma or '&'
+  if (a2 !== a1) {
+    addCandidate(t1, a2);
   }
 
   return candidates;
 }
 
 /**
- * Fetch lyrics from LRCLIB with smart multi-tier query strategy
+ * Parse LRC formatted string into array of { time, text } objects
+ * Example line: "[00:12.50] Hello world" -> { time: 12.5, text: "Hello world" }
  */
-async function getLyrics(trackName, artistName, durationSeconds = null) {
-  if (!trackName) {
-    return { synced: [], plain: [], hasSynced: false, instrumental: false };
+function parseLrc(lrcText) {
+  if (!lrcText || typeof lrcText !== 'string') return [];
+
+  const lines = lrcText.split('\n');
+  const synced = [];
+  const timeRegex = /\[(\d{2,3}):(\d{2})(?:\.(\d{1,3}))?\]/g;
+
+  for (const line of lines) {
+    const matches = [...line.matchAll(timeRegex)];
+    if (matches.length === 0) continue;
+
+    const text = line.replace(timeRegex, '').trim();
+    if (!text) continue;
+
+    for (const match of matches) {
+      const minutes = parseInt(match[1], 10);
+      const seconds = parseInt(match[2], 10);
+      const msStr = match[3] || '0';
+      const ms = parseInt(msStr.padEnd(3, '0'), 10);
+      const time = minutes * 60 + seconds + ms / 1000;
+
+      synced.push({
+        time: Math.round(time * 100) / 100,
+        text
+      });
+    }
   }
 
-  const cacheKey = `${trackName}_${artistName || ''}_${durationSeconds || ''}`.toLowerCase();
+  return synced.sort((a, b) => a.time - b.time);
+}
+
+/**
+ * Format raw LRCLIB record into client response object
+ */
+function formatLyricsResponse(record, source = 'lrclib') {
+  const synced = record.syncedLyrics ? parseLrc(record.syncedLyrics) : [];
+  const plain = record.plainLyrics
+    ? record.plainLyrics
+        .split('\n')
+        .map(l => l.trim())
+        .filter((l, idx, arr) => l !== '' || (idx > 0 && arr[idx - 1] !== ''))
+    : [];
+
+  return {
+    trackName: record.trackName || '',
+    artistName: record.artistName || '',
+    hasSynced: synced.length > 0,
+    synced,
+    plain,
+    source
+  };
+}
+
+/**
+ * Secondary fallback: Query lyrics.ovh or lyrist for plain lyrics if LRCLIB has no match
+ */
+async function fetchFallbackPlainLyrics(candidates) {
+  for (const cand of candidates.slice(0, 3)) {
+    if (!cand.track || !cand.artist) continue;
+
+    // 1. Try lyrics.ovh
+    try {
+      const ovhRes = await axios.get(
+        `https://api.lyrics.ovh/v1/${encodeURIComponent(cand.artist)}/${encodeURIComponent(cand.track)}`,
+        { timeout: 3500 }
+      );
+      if (ovhRes.data && ovhRes.data.lyrics && ovhRes.data.lyrics.trim().length > 20) {
+        const cleanedPlain = ovhRes.data.lyrics
+          .replace(/^Paroles de la chanson.*?\n/i, '')
+          .replace(/\r\n/g, '\n')
+          .trim();
+        return formatLyricsResponse(
+          {
+            trackName: cand.track,
+            artistName: cand.artist,
+            plainLyrics: cleanedPlain
+          },
+          'lyrics.ovh'
+        );
+      }
+    } catch (e) {
+      // Proceed to next fallback
+    }
+
+    // 2. Try lyrist
+    try {
+      const lyristRes = await axios.get(
+        `https://lyrist.vercel.app/api/${encodeURIComponent(cand.track)}/${encodeURIComponent(cand.artist)}`,
+        { timeout: 3500 }
+      );
+      if (lyristRes.data && lyristRes.data.lyrics && lyristRes.data.lyrics.trim().length > 20) {
+        return formatLyricsResponse(
+          {
+            trackName: lyristRes.data.title || cand.track,
+            artistName: lyristRes.data.artist || cand.artist,
+            plainLyrics: lyristRes.data.lyrics
+          },
+          'lyrist'
+        );
+      }
+    } catch (e) {
+      // Proceed
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetch synced or plain lyrics from LRCLIB (+ multi-source fallback)
+ */
+async function getLyrics(trackName, artistName, durationSeconds = null) {
+  const cacheKey = `${(trackName || '').toLowerCase().trim()}__${(artistName || '').toLowerCase().trim()}`;
   if (lyricsCache.has(cacheKey)) {
     return lyricsCache.get(cacheKey);
   }
 
   const candidates = getSearchCandidates(trackName, artistName);
   const headers = {
-    'User-Agent': 'SpotiFreeApp/2.0 (https://github.com/spotifree)'
+    'User-Agent': 'SpotiFree/2.0 (https://github.com/spotifree)'
   };
 
-  for (const candidate of candidates) {
+  for (const cand of candidates) {
     try {
-      let items = [];
-
-      // 1. Try structured search if track and artist are available
-      if (candidate.track && candidate.artist) {
-        const res = await axios.get('https://lrclib.net/api/search', {
-          params: {
-            track_name: candidate.track,
-            artist_name: candidate.artist
-          },
-          headers,
-          timeout: 4000
-        });
-        if (Array.isArray(res.data) && res.data.length > 0) {
-          items = res.data;
-        }
+      // 1. Try exact match endpoint first
+      const params = {
+        track_name: cand.track,
+        artist_name: cand.artist
+      };
+      if (durationSeconds && durationSeconds > 0) {
+        params.duration = Math.round(durationSeconds);
       }
 
-      // 2. Try text search if no items yet
-      if (items.length === 0 && candidate.query) {
-        const res = await axios.get('https://lrclib.net/api/search', {
-          params: { q: candidate.query },
+      try {
+        const exactRes = await axios.get('https://lrclib.net/api/get', {
+          params,
           headers,
-          timeout: 4000
+          timeout: 4500
         });
-        if (Array.isArray(res.data) && res.data.length > 0) {
-          items = res.data;
-        }
-      }
-
-      if (items.length > 0) {
-        // Sort items: 1. Synced lyrics first! 2. Closest duration match
-        items.sort((a, b) => {
-          const aSynced = a.syncedLyrics ? 1 : 0;
-          const bSynced = b.syncedLyrics ? 1 : 0;
-          if (aSynced !== bSynced) return bSynced - aSynced;
-
-          if (durationSeconds) {
-            const aDiff = Math.abs((a.duration || 0) - durationSeconds);
-            const bDiff = Math.abs((b.duration || 0) - durationSeconds);
-            return aDiff - bDiff;
+        if (exactRes.data && (exactRes.data.syncedLyrics || exactRes.data.plainLyrics)) {
+          const formatted = formatLyricsResponse(exactRes.data, 'lrclib');
+          if (lyricsCache.size >= MAX_LYRICS_CACHE) {
+            const firstKey = lyricsCache.keys().next().value;
+            lyricsCache.delete(firstKey);
           }
-          return 0;
+          lyricsCache.set(cacheKey, formatted);
+          return formatted;
+        }
+      } catch (e) {
+        // Fallback to search endpoint if 404 or timeout
+      }
+
+      // 2. Fallback to structured search (track_name + artist_name) and general query search
+      let results = [];
+      try {
+        const searchStructured = await axios.get('https://lrclib.net/api/search', {
+          params: { track_name: cand.track, artist_name: cand.artist },
+          headers,
+          timeout: 4500
         });
+        if (Array.isArray(searchStructured.data)) {
+          results = searchStructured.data;
+        }
+      } catch (e) {}
 
-        const best = items[0];
-        const synced = best.syncedLyrics ? parseLrc(best.syncedLyrics) : [];
-        const plain = best.plainLyrics
-          ? best.plainLyrics.split('\n').map(l => l.trim()).filter(Boolean)
-          : [];
+      if (results.length === 0) {
+        const searchRes = await axios.get('https://lrclib.net/api/search', {
+          params: { q: `${cand.track} ${cand.artist}`.trim() },
+          headers,
+          timeout: 4500
+        });
+        results = Array.isArray(searchRes.data) ? searchRes.data : [];
+      }
 
-        if (synced.length > 0 || plain.length > 0) {
-          const result = {
-            synced,
-            plain,
-            hasSynced: synced.length > 0,
-            instrumental: !!best.instrumental,
-            trackName: best.trackName || trackName,
-            artistName: best.artistName || artistName
-          };
-          lyricsCache.set(cacheKey, result);
-          return result;
+      // If still empty and track name is distinctive, try searching by track_name alone and matching artist loosely
+      if (results.length === 0 && cand.track.length >= 3) {
+        try {
+          const trackOnlyRes = await axios.get('https://lrclib.net/api/search', {
+            params: { track_name: cand.track },
+            headers,
+            timeout: 4500
+          });
+          if (Array.isArray(trackOnlyRes.data) && trackOnlyRes.data.length > 0) {
+            const artistLower = cand.artist.toLowerCase();
+            const filtered = trackOnlyRes.data.filter(r => {
+              const rArtist = (r.artistName || '').toLowerCase();
+              return !artistLower || rArtist.includes(artistLower) || artistLower.includes(rArtist);
+            });
+            results = filtered.length > 0 ? filtered : trackOnlyRes.data.slice(0, 5);
+          }
+        } catch (e) {}
+      }
+
+      if (results.length > 0) {
+        // Score candidates: strongly prefer syncedLyrics and closest duration
+        const scored = results
+          .filter(r => r.syncedLyrics || r.plainLyrics)
+          .map(r => {
+            let score = 0;
+            if (r.syncedLyrics) score += 100;
+            if (r.plainLyrics) score += 20;
+            if (durationSeconds && r.duration) {
+              const diff = Math.abs(r.duration - durationSeconds);
+              if (diff <= 3) score += 50;
+              else if (diff <= 10) score += 25;
+              else if (diff > 45) score -= 40;
+            }
+            const tLower = (r.trackName || '').toLowerCase();
+            const candLower = cand.track.toLowerCase();
+            if (tLower === candLower) score += 30;
+            return { record: r, score };
+          })
+          .sort((a, b) => b.score - a.score);
+
+        if (scored.length > 0) {
+          const formatted = formatLyricsResponse(scored[0].record, 'lrclib');
+          if (lyricsCache.size >= MAX_LYRICS_CACHE) {
+            const firstKey = lyricsCache.keys().next().value;
+            lyricsCache.delete(firstKey);
+          }
+          lyricsCache.set(cacheKey, formatted);
+          return formatted;
         }
       }
     } catch (err) {
-      // Continue to next candidate
+      console.error('Lyrics search error for candidate:', cand, err.message);
     }
   }
 
-  const emptyResult = {
-    synced: [],
-    plain: [],
-    hasSynced: false,
-    instrumental: false
-  };
-  lyricsCache.set(cacheKey, emptyResult);
-  return emptyResult;
+  // 3. Try secondary fallback providers for plain lyrics
+  const fallbackResult = await fetchFallbackPlainLyrics(candidates);
+  if (fallbackResult) {
+    if (lyricsCache.size >= MAX_LYRICS_CACHE) {
+      const firstKey = lyricsCache.keys().next().value;
+      lyricsCache.delete(firstKey);
+    }
+    lyricsCache.set(cacheKey, fallbackResult);
+    return fallbackResult;
+  }
+
+  return { hasSynced: false, synced: [], plain: [] };
 }
 
 module.exports = {
-  getLyrics,
-  parseLrc,
-  cleanText
+  getLyrics
 };

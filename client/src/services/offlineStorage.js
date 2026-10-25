@@ -52,9 +52,9 @@ async function fetchCoverAsDataUrl(url) {
 }
 
 /**
- * Save track and audio blob to IndexedDB (with cached offline artwork and all ID aliases)
+ * Save track, audio blob, and optional lyrics data to IndexedDB (with cached offline artwork and all ID aliases)
  */
-export async function saveTrackOffline(track, audioBlob) {
+export async function saveTrackOffline(track, audioBlob, lyricsData = null) {
   if (!track || !audioBlob) throw new Error('Track and audioBlob are required');
   const cachedThumb = await fetchCoverAsDataUrl(track.thumbnail);
   const db = await openDB();
@@ -79,6 +79,7 @@ export async function saveTrackOffline(track, audioBlob) {
       durationSeconds: track.durationSeconds,
       audioBlob: audioBlob,
       sizeBytes: audioBlob.size,
+      lyrics: lyricsData || track.lyrics || null,
       downloadedAt: Date.now()
     };
 
@@ -86,6 +87,28 @@ export async function saveTrackOffline(track, audioBlob) {
     request.onsuccess = () => resolve(record);
     request.onerror = () => reject(request.error);
   });
+}
+
+/**
+ * Update lyrics on an already-saved offline track record
+ */
+export async function saveOfflineTrackLyrics(trackOrId, lyricsData) {
+  if (!trackOrId || !lyricsData) return false;
+  try {
+    const existing = await getOfflineTrack(trackOrId);
+    if (!existing) return false;
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const updated = { ...existing, lyrics: lyricsData };
+      const req = store.put(updated);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => resolve(false);
+    });
+  } catch {
+    return false;
+  }
 }
 
 export function getTrackNormKey(track) {
@@ -254,6 +277,114 @@ export async function deleteOfflineTrack(trackId) {
 }
 
 /**
+ * Read audio file duration using a temporary HTMLAudioElement
+ */
+function probeAudioDuration(blob) {
+  return new Promise((resolve) => {
+    try {
+      const url = URL.createObjectURL(blob);
+      const tempAudio = new Audio();
+      const cleanup = () => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(0);
+      }, 2500);
+      tempAudio.onloadedmetadata = () => {
+        clearTimeout(timer);
+        const dur = isFinite(tempAudio.duration) ? Math.round(tempAudio.duration) : 0;
+        cleanup();
+        resolve(dur);
+      };
+      tempAudio.onerror = () => {
+        clearTimeout(timer);
+        cleanup();
+        resolve(0);
+      };
+      tempAudio.src = url;
+    } catch {
+      resolve(0);
+    }
+  });
+}
+
+function formatSecToDuration(secs) {
+  if (!secs || secs <= 0) return '3:30';
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+/**
+ * Import local audio files (.mp3, .m4a, .wav, .ogg, .flac) from user's device into Offline Storage
+ */
+export async function importLocalAudioFiles(fileList) {
+  if (!fileList || fileList.length === 0) return [];
+  const imported = [];
+
+  for (const file of Array.from(fileList)) {
+    if (!file) continue;
+    const rawName = file.name.replace(/\.[^/.]+$/, '').trim();
+    let artist = 'קובץ מקומי';
+    let title = rawName;
+
+    if (rawName.includes(' - ')) {
+      const parts = rawName.split(' - ');
+      artist = parts[0].trim() || 'קובץ מקומי';
+      title = parts.slice(1).join(' - ').trim() || rawName;
+    }
+
+    const durationSeconds = await probeAudioDuration(file);
+    const id = `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    const trackObj = {
+      id,
+      streamableId: id,
+      originalId: id,
+      title,
+      artist,
+      album: 'קבצים מקומיים',
+      thumbnail: '',
+      duration: formatSecToDuration(durationSeconds),
+      durationSeconds: durationSeconds || 210,
+      isLocalFile: true
+    };
+
+    const saved = await saveTrackOffline(trackObj, file, null);
+    imported.push(saved);
+  }
+
+  return imported;
+}
+
+/**
+ * Export an offline track's audioBlob to the user's device as an MP3 file
+ */
+export async function exportOfflineTrackToDevice(track) {
+  const record = track?.audioBlob ? track : await getOfflineTrack(track);
+  if (!record || !record.audioBlob) {
+    throw new Error('לא נמצא קובץ שמע שמור עבור שיר זה');
+  }
+
+  const safeTitle = `${record.artist || ''} - ${record.title || 'Track'}`
+    .replace(/[\\/:*?"<>|]/g, '')
+    .trim();
+  const filename = `${safeTitle || 'SpotiFree-Track'}.mp3`;
+
+  const url = URL.createObjectURL(record.audioBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/**
  * Format bytes to readable MB string
  */
 export function formatBytes(bytes) {
@@ -263,14 +394,19 @@ export function formatBytes(bytes) {
 }
 
 /**
- * Calculate total offline storage used
+ * Calculate total storage used by offline tracks
  */
 export async function getOfflineStorageUsage() {
   const tracks = await getAllOfflineTracks();
-  const totalBytes = tracks.reduce((acc, t) => acc + (t.sizeBytes || 0), 0);
+  const totalBytes = tracks.reduce((sum, t) => sum + (t.sizeBytes || 0), 0);
   return {
+    count: tracks.length,
+    bytes: totalBytes,
     totalBytes,
     formatted: formatBytes(totalBytes),
-    count: tracks.length
+    formattedSize: formatBytes(totalBytes)
   };
 }
+
+export const getOfflineStorageStats = getOfflineStorageUsage;
+

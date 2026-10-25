@@ -18,15 +18,21 @@ import {
   Plus,
   ListPlus,
   ArrowRight,
-  Check
+  Check,
+  Upload,
+  Mic2
 } from 'lucide-react';
 import {
   getAllOfflineTracks,
   deleteOfflineTrack,
   getOfflineStorageUsage,
   saveOfflineTracksOrder,
-  isTrackInIdSet
+  isTrackInIdSet,
+  importLocalAudioFiles,
+  exportOfflineTrackToDevice,
+  saveOfflineTrackLyrics
 } from '../services/offlineStorage';
+import { getLyrics } from '../services/api';
 import { isSameTrack } from '../services/storage';
 import { TrackRow } from './TrackRow';
 import { PlaylistThumb } from './Sidebar';
@@ -65,8 +71,54 @@ export function OfflineView({
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newPlaylistTitle, setNewPlaylistTitle] = useState('');
   const [selectedTrackIds, setSelectedTrackIds] = useState(new Set());
+  const [isImportingFiles, setIsImportingFiles] = useState(false);
+  const [isSyncingLyrics, setIsSyncingLyrics] = useState(false);
 
+  const fileInputRef = useRef(null);
   const draggedIndexRef = useRef(null);
+
+  const handleImportLocalFiles = async (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setIsImportingFiles(true);
+    try {
+      await importLocalAudioFiles(files);
+      await loadData();
+      if (onTrackDeleted) onTrackDeleted();
+    } catch (err) {
+      console.error('Failed to import local audio files:', err);
+    } finally {
+      setIsImportingFiles(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleExportTrack = async (track) => {
+    try {
+      await exportOfflineTrackToDevice(track);
+    } catch (err) {
+      console.error('Export track failed:', err);
+    }
+  };
+
+  const handleSyncOfflineLyrics = async () => {
+    if (isSyncingLyrics || tracks.length === 0) return;
+    setIsSyncingLyrics(true);
+    try {
+      const missing = tracks.filter(t => !t.lyrics || (!t.lyrics.hasSynced && !(t.lyrics.plain?.length > 0)));
+      for (const t of missing) {
+        try {
+          const lyr = await getLyrics(t.title, t.artist, t.durationSeconds);
+          if (lyr && (lyr.hasSynced || (lyr.plain && lyr.plain.length > 0))) {
+            await saveOfflineTrackLyrics(t, lyr);
+          }
+        } catch {}
+      }
+      await loadData();
+    } finally {
+      setIsSyncingLyrics(false);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -334,8 +386,17 @@ export function OfflineView({
 
         {/* Authentic Spotify Controls Bar (Create Playlist from Offline + Reorder on Right, Smart Shuffle + 56px Green Play Circle on Left) */}
         <div className="relative z-10 flex items-center justify-between mt-5 pt-1 flex-wrap gap-3">
-          {/* Right side in RTL: Create Playlist from Offline + Reorder Mode */}
+          {/* Right side in RTL: Create Playlist from Offline + Import MP3 + Sync Lyrics + Reorder Mode */}
           <div className="flex items-center gap-2.5 flex-wrap">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac"
+              multiple
+              onChange={handleImportLocalFiles}
+              className="hidden"
+            />
+
             <button
               onClick={openCreateModal}
               className="flex items-center gap-1.5 text-xs font-extrabold px-4 py-2 rounded-full bg-spotify-green text-black hover:bg-spotify-green-hover shadow-lg shadow-spotify-green/20 transition-all hover:scale-105 active:scale-95"
@@ -344,6 +405,36 @@ export function OfflineView({
               <Plus className="w-4 h-4 stroke-[3]" />
               <span>צור פלייליסט מאופליין</span>
             </button>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isImportingFiles}
+              className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all"
+              title="ייבא קובצי שמע (MP3, M4A, WAV) מהמכשיר להאזנה באופליין"
+            >
+              {isImportingFiles ? (
+                <Loader2 className="w-4 h-4 animate-spin text-spotify-green" />
+              ) : (
+                <Upload className="w-4 h-4 text-spotify-green" />
+              )}
+              <span>{isImportingFiles ? 'מייבא קבצים...' : 'ייבוא MP3 מהמכשיר'}</span>
+            </button>
+
+            {tracks.length > 0 && (
+              <button
+                onClick={handleSyncOfflineLyrics}
+                disabled={isSyncingLyrics}
+                className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all"
+                title="הורד ושמור מילים לכל השירים באופליין"
+              >
+                {isSyncingLyrics ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-spotify-green" />
+                ) : (
+                  <Mic2 className="w-4 h-4 text-spotify-green" />
+                )}
+                <span>{isSyncingLyrics ? 'שומר מילים לאופליין...' : 'שמור מילים לאופליין'}</span>
+              </button>
+            )}
 
             {tracks.length > 1 && (
               <button
@@ -548,6 +639,7 @@ export function OfflineView({
               isLiked={likedSongs.some(s => isSameTrack(s, track))}
               onToggleLike={onToggleLike}
               isDownloaded={true}
+              onExportTrack={handleExportTrack}
               onOpenAddToPlaylist={onOpenAddToPlaylist}
               onRemoveFromPlaylist={() => handleDeleteTrack(track.id)}
               isReorderMode={isReorderMode}
