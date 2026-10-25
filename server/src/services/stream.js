@@ -662,6 +662,7 @@ async function fetchFromInvidious(videoId, meta = {}) {
  * Get audio stream URL for a given video ID or search query (~300-500ms, 0MB child process overhead)
  */
 async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = true, meta = null) {
+  const isVideoId = Boolean(videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId));
   const effectiveQuery = fallbackQuery ? fallbackQuery.trim() : null;
   const cacheKey = (videoId && !videoId.startsWith('sp_') && videoId !== 'query')
     ? videoId
@@ -669,7 +670,12 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
 
   const cached = urlCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() && isValidCachedStreamUrl(cached.url)) {
-    return cached.url;
+    // If cacheKey is a YouTube videoId, reject any stale .m3u8 from SoundCloud and re-extract pure YouTube M4A!
+    if (isVideoId && cached.url.includes('.m3u8')) {
+      urlCache.delete(cacheKey);
+    } else {
+      return cached.url;
+    }
   }
 
   if (inFlightRequests.has(cacheKey)) {

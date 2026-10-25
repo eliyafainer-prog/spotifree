@@ -275,15 +275,44 @@ export function useAudioPlayer() {
               audioRef.current.src = directUrl;
               audioRef.current.load();
               audioRef.current.play().catch(() => {});
+            } else if (
+              currentTrackRef.current?.streamableId &&
+              /^[a-zA-Z0-9_-]{11}$/.test(currentTrackRef.current.streamableId) &&
+              typeof playViaYouTubePlayerRef.current === 'function'
+            ) {
+              console.log('Failing over to client YouTube player for reliable playback...');
+              playViaYouTubePlayerRef.current(currentTrackRef.current);
             } else {
               setIsLoading(false);
+              setIsPlaying(false);
+              setPlaybackError('לא נמצא מקור שמע זמין לשיר זה');
             }
           }).catch(() => {
             if (playSessionIdRef.current !== activeSession || userPausedRef.current) return;
-            setIsLoading(false);
+            if (
+              currentTrackRef.current?.streamableId &&
+              /^[a-zA-Z0-9_-]{11}$/.test(currentTrackRef.current.streamableId) &&
+              typeof playViaYouTubePlayerRef.current === 'function'
+            ) {
+              console.log('Failing over to client YouTube player for reliable playback...');
+              playViaYouTubePlayerRef.current(currentTrackRef.current);
+            } else {
+              setIsLoading(false);
+              setIsPlaying(false);
+              setPlaybackError('לא נמצא מקור שמע זמין לשיר זה');
+            }
           });
           return;
         }
+      }
+      if (
+        currentTrackRef.current?.streamableId &&
+        /^[a-zA-Z0-9_-]{11}$/.test(currentTrackRef.current.streamableId) &&
+        typeof playViaYouTubePlayerRef.current === 'function'
+      ) {
+        console.log('Failing over to client YouTube player for reliable playback...');
+        playViaYouTubePlayerRef.current(currentTrackRef.current);
+        return;
       }
       setIsLoading(false);
       setIsPlaying(false);

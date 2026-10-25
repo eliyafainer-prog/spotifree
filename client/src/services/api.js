@@ -352,7 +352,7 @@ export async function fetchDirectStreamUrl(track) {
     const res = await fetchWithFailover(`/api/stream/${encodeURIComponent(vid)}?q=${fallbackQuery}&dur=${dur}&title=${title}&artist=${artist}&album=${album}`);
     if (res && res.ok) {
       const data = await res.json();
-      if (data.streamUrl) return data.streamUrl;
+      if (data.streamUrl && !data.streamUrl.includes('.m3u8')) return data.streamUrl;
     }
   } catch (e) {}
 
