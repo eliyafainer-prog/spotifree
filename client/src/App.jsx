@@ -522,8 +522,15 @@ export default function App() {
     }
   }, [currentView, likedSongs]);
 
+  const currentTrackKey = player.currentTrack
+    ? `${player.currentTrack.title || ''}_${player.currentTrack.artist || ''}`
+    : '';
+
   useEffect(() => {
-    if (!player.currentTrack) return;
+    if (!player.currentTrack) {
+      setLyricsData({ synced: [], plain: [], hasSynced: false });
+      return;
+    }
 
     let isMounted = true;
     const track = player.currentTrack;
@@ -544,9 +551,11 @@ export default function App() {
       // 2. Otherwise fetch from backend lyrics API (and cache into IndexedDB if track is downloaded)
       try {
         const data = await getLyrics(track.title, track.artist, track.durationSeconds);
-        if (isMounted) setLyricsData(data);
-        if (data && (data.hasSynced || (data.plain && data.plain.length > 0))) {
-          saveOfflineTrackLyrics(track, data).catch(() => {});
+        if (isMounted && data) {
+          setLyricsData(data);
+          if (data.hasSynced || (data.plain && data.plain.length > 0)) {
+            saveOfflineTrackLyrics(track, data).catch(() => {});
+          }
         }
       } catch {
         if (isMounted) setLyricsData({ synced: [], plain: [], hasSynced: false });
@@ -554,7 +563,7 @@ export default function App() {
     })();
 
     return () => { isMounted = false; };
-  }, [player.currentTrack]);
+  }, [currentTrackKey]);
 
   // Live debounced search as the user types (320ms)
   useEffect(() => {
@@ -741,8 +750,8 @@ export default function App() {
 
   // Find active lyric lines for the Desktop Left Panel preview card (Image 1)
   const previewLyricsLines = React.useMemo(() => {
-    if (lyricsData?.hasSynced && lyricsData.synced?.length > 0) {
-      let activeIdx = 0;
+    if (lyricsData?.hasSynced && Array.isArray(lyricsData.synced) && lyricsData.synced.length > 0) {
+      let activeIdx = -1;
       for (let i = 0; i < lyricsData.synced.length; i++) {
         if (player.currentTime >= lyricsData.synced[i].time) {
           activeIdx = i;
@@ -750,13 +759,20 @@ export default function App() {
           break;
         }
       }
-      return lyricsData.synced.slice(Math.max(0, activeIdx - 1), activeIdx + 3).map((l, idx) => ({
+      if (activeIdx < 0) {
+        return lyricsData.synced.slice(0, 4).map((l) => ({
+          text: l.text,
+          isCurrent: false
+        }));
+      }
+      const start = Math.max(0, activeIdx - 1);
+      return lyricsData.synced.slice(start, start + 4).map((l) => ({
         text: l.text,
-        isCurrent: idx === (activeIdx > 0 ? 1 : 0)
+        isCurrent: l.text === lyricsData.synced[activeIdx]?.text
       }));
     }
     if (lyricsData?.plain?.length > 0) {
-      return lyricsData.plain.slice(0, 4).map((t, idx) => ({ text: t, isCurrent: idx === 0 }));
+      return lyricsData.plain.slice(0, 4).map((t) => ({ text: t, isCurrent: false }));
     }
     return null;
   }, [lyricsData, player.currentTime]);
@@ -1924,7 +1940,7 @@ export default function App() {
                 <div className="flex flex-col gap-1.5 text-right py-1">
                   {previewLyricsLines.map((line, i) => (
                     <p
-                      key={i}
+                      key={`${line.text}_${i}`}
                       className={`font-extrabold leading-snug transition-colors ${
                         line.isCurrent ? 'text-white text-lg' : 'text-white/50 text-base'
                       }`}

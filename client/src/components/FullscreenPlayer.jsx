@@ -324,7 +324,7 @@ export function FullscreenPlayer({
             <div className="flex flex-col gap-1.5 text-right py-1">
               {previewLyricsLines.map((line, i) => (
                 <p
-                  key={i}
+                  key={`${line.text}_${i}`}
                   className={`font-extrabold leading-snug transition-colors ${
                     line.isCurrent ? 'text-white text-lg' : 'text-white/50 text-base'
                   }`}

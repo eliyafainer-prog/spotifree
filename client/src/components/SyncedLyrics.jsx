@@ -35,24 +35,20 @@ export function SyncedLyrics({
   const containerRef = useRef(null);
   const [userScrolled, setUserScrolled] = useState(false);
   const scrollTimeoutRef = useRef(null);
+  const isAutoScrollingRef = useRef(false);
 
   const { synced = [], plain = [], hasSynced = false } = lyricsData || {};
 
-  // Use native LRC synced lines if available; otherwise auto-sync plain lines across the track duration
+  // Only use truly synced LRC timestamps; never generate fake linear timings that desync from the vocals
   const effectiveSynced = useMemo(() => {
-    if (hasSynced && synced.length > 0) return synced;
-    const nonEmptyPlain = plain.filter(l => l && l.trim().length > 0);
-    if (nonEmptyPlain.length === 0) return [];
-    const totalDur = duration > 20 ? duration : (Number(currentTrack?.durationSeconds) || 180);
-    const usableStart = Math.min(8, totalDur * 0.05);
-    const usableSpan = Math.max(30, totalDur * 0.88 - usableStart);
-    return nonEmptyPlain.map((text, idx) => ({
-      time: Math.round((usableStart + (idx / nonEmptyPlain.length) * usableSpan) * 100) / 100,
-      text
-    }));
-  }, [hasSynced, synced, plain, duration, currentTrack?.durationSeconds]);
+    if (hasSynced && Array.isArray(synced) && synced.length > 0) {
+      return synced;
+    }
+    return [];
+  }, [hasSynced, synced]);
 
   const isSyncedActive = effectiveSynced.length > 0;
+  const hasPlainLyrics = !isSyncedActive && Array.isArray(plain) && plain.filter(l => l && l.trim().length > 0).length > 0;
 
   // Find index of currently active line based on playback time
   let activeIndex = -1;
@@ -66,18 +62,33 @@ export function SyncedLyrics({
     }
   }
 
-  // Smoothly auto-scroll active line into the middle of the screen unless the user manually scrolls
+  // Smoothly auto-scroll container without scrolling the entire document or triggering scroll fighting
   useEffect(() => {
-    if (!userScrolled && activeLineRef.current && containerRef.current) {
-      activeLineRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center'
-      });
-    }
+    if (userScrolled || activeIndex < 0 || !containerRef.current || !activeLineRef.current) return;
+
+    const container = containerRef.current;
+    const activeEl = activeLineRef.current;
+
+    const containerRect = container.getBoundingClientRect();
+    const activeRect = activeEl.getBoundingClientRect();
+    const targetScrollTop = container.scrollTop + (activeRect.top - containerRect.top) - (containerRect.height / 2) + (activeRect.height / 2);
+
+    isAutoScrollingRef.current = true;
+    container.scrollTo({
+      top: Math.max(0, targetScrollTop),
+      behavior: 'smooth'
+    });
+
+    const resetTimer = setTimeout(() => {
+      isAutoScrollingRef.current = false;
+    }, 450);
+
+    return () => clearTimeout(resetTimer);
   }, [activeIndex, userScrolled]);
 
-  // Handle user manual scroll: pause auto-scroll for 3.5 seconds then resume smoothly
+  // Handle manual user scrolling: ignore programmatic scrolls to avoid jitter loops
   const handleScroll = () => {
+    if (isAutoScrollingRef.current) return;
     setUserScrolled(true);
     if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
     scrollTimeoutRef.current = setTimeout(() => {
@@ -140,12 +151,16 @@ export function SyncedLyrics({
               <span className="text-xs md:text-sm text-spotify-subtext truncate max-w-xs">
                 {currentTrack?.artist}
               </span>
-              {isSyncedActive && (
+              {isSyncedActive ? (
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-spotify-green/20 text-spotify-green border border-spotify-green/30 shadow-sm">
                   <Sparkles className="w-3 h-3 animate-pulse" />
                   מסונכרן לקצב
                 </span>
-              )}
+              ) : hasPlainLyrics ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-white/10 text-white/70 border border-white/15">
+                  מילים מלאות
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
@@ -173,7 +188,7 @@ export function SyncedLyrics({
 
             return (
               <div
-                key={idx}
+                key={`${line.time}_${idx}`}
                 ref={isActive ? activeLineRef : null}
                 onClick={() => onSeek && onSeek(line.time)}
                 className={`cursor-pointer transition-all duration-300 py-1.5 px-2 rounded-lg origin-right select-none ${
@@ -190,6 +205,20 @@ export function SyncedLyrics({
               </div>
             );
           })
+        ) : hasPlainLyrics ? (
+          // Plain Lyrics Mode (Authentic Spotify: clean, readable static text with no fake timing)
+          <div className="flex flex-col gap-4 py-4 text-white/90">
+            {plain
+              .filter(l => l && l.trim().length > 0)
+              .map((line, idx) => (
+                <p
+                  key={idx}
+                  className="font-bold text-lg sm:text-xl md:text-2xl leading-relaxed text-white/80 hover:text-white transition-colors"
+                >
+                  {line}
+                </p>
+              ))}
+          </div>
         ) : (
           // Empty State
           <div className="flex flex-col items-center justify-center gap-4 my-auto text-spotify-subtext py-16 text-center">
