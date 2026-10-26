@@ -357,6 +357,7 @@ export function PlayerBar({
               value={currentTime}
               onChange={(e) => onSeek(parseFloat(e.target.value))}
               style={{
+                '--slider-pct': `${progressPercent}%`,
                 background: `linear-gradient(to right, #ffffff ${progressPercent}%, rgba(255, 255, 255, 0.25) ${progressPercent}%)`
               }}
               className="spotify-slider flex-1"
@@ -392,6 +393,7 @@ export function PlayerBar({
               value={currentVolume}
               onChange={(e) => onSetVolume(parseFloat(e.target.value))}
               style={{
+                '--volume-pct': `${volumePercent}%`,
                 background: `linear-gradient(to right, #ffffff ${volumePercent}%, rgba(255, 255, 255, 0.25) ${volumePercent}%)`
               }}
               className="spotify-slider w-24"

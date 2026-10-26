@@ -82,6 +82,17 @@
   opacity: 1;
 }
 
+/* Authentic Spotify green progress highlight on hover and scrubbing */
+.group:hover .spotify-slider[style*="--slider-pct"],
+.spotify-slider:active[style*="--slider-pct"] {
+  background: linear-gradient(to right, #1ed760 var(--slider-pct, 0%), rgba(255, 255, 255, 0.25) var(--slider-pct, 0%)) !important;
+}
+
+.group:hover .spotify-slider[style*="--volume-pct"],
+.spotify-slider:active[style*="--volume-pct"] {
+  background: linear-gradient(to right, #1ed760 var(--volume-pct, 0%), rgba(255, 255, 255, 0.25) var(--volume-pct, 0%)) !important;
+}
+
 /* Equalizer animated bars */
 @keyframes eqBar1 {
   0%, 100% { height: 30%; }

@@ -185,7 +185,7 @@ export function PlaylistView({
   };
 
   return (
-    <div className="flex flex-col animate-fadeIn pb-20 -mx-4 md:-mx-6 -mt-4 md:-mt-6">
+    <div className="flex flex-col animate-fadeIn pb-36 md:pb-24 -mx-4 md:-mx-6 -mt-4 md:-mt-6">
       {/* Authentic Full-Bleed Ambient Gradient Header */}
       <div className="relative overflow-hidden pt-5 pb-5 px-4 md:px-8">
         {/* Ambient blurred background from cover artwork */}
@@ -333,10 +333,46 @@ export function PlaylistView({
           </div>
         </div>
 
-        {/* Authentic Spotify Controls Bar (Secondary icons on right, Big Green Play + Shuffle on left in RTL) */}
+        {/* Authentic Spotify Controls Bar (Primary 56px Green Play + Shuffle on right, Actions & Tools) */}
         <div className="relative z-10 flex items-center justify-between mt-5 pt-1">
-          {/* Right side in RTL: Download All + Reorder + Delete */}
-          <div className="flex items-center gap-3.5">
+          {/* Right side in RTL: Iconic Spotify 56px Green Play Circle + Shuffle + Download + Actions */}
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handlePlayAll}
+              disabled={processedTracks.length === 0}
+              title={isPlaylistCurrentlyPlaying && isPlaying ? 'השהה' : 'נגן'}
+              className="w-14 h-14 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_8px_24px_rgba(30,215,96,0.35)] flex-shrink-0"
+            >
+              {isPlaylistCurrentlyPlaying && isPlaying ? (
+                <Pause className="w-7 h-7 fill-black text-black" />
+              ) : (
+                <Play className="w-7 h-7 fill-black text-black translate-x-0.5" />
+              )}
+            </button>
+
+            <button
+              onClick={handleShuffleButton}
+              disabled={processedTracks.length === 0}
+              title={
+                shuffleMode === 'smart'
+                  ? 'ערבוב חכם פעיל ✨'
+                  : shuffleMode === 'standard'
+                  ? 'ערבוב פעיל'
+                  : 'ערבוב כבוי'
+              }
+              className={`relative p-2 transition-transform active:scale-95 ${
+                shuffleMode !== 'off' ? 'text-spotify-green' : 'text-[#b3b3b3] hover:text-white'
+              }`}
+            >
+              <Shuffle className="w-6 h-6" />
+              {shuffleMode === 'smart' && (
+                <Sparkles className="w-3.5 h-3.5 text-spotify-green fill-spotify-green absolute top-0.5 right-0.5 animate-pulse" />
+              )}
+              {shuffleMode !== 'off' && (
+                <span className="w-1.5 h-1.5 rounded-full bg-spotify-green absolute bottom-0.5 left-1/2 -translate-x-1/2" />
+              )}
+            </button>
+
             {onDownloadTrack && rawTracks.length > 0 && (
               <button
                 onClick={handleDownloadAll}
@@ -347,7 +383,7 @@ export function PlaylistView({
                     ? `מוריד פלייליסט לאופליין (${downloadedCount}/${rawTracks.length})`
                     : downloadedCount > 0 ? `הורד שירים שנותרו (${rawTracks.length - downloadedCount} נותרו)` : 'הורד את כל הפלייליסט להאזנה אופליין'
                 }
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full transition-all active:scale-95 ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all active:scale-95 ${
                   allDownloaded
                     ? 'bg-spotify-green/15 text-spotify-green border border-spotify-green/30'
                     : anyDownloading
@@ -371,7 +407,7 @@ export function PlaylistView({
                   <>
                     <ArrowDownCircle className="w-5 h-5" />
                     <span className="text-xs font-semibold">
-                      {downloadedCount > 0 ? `הורד שירים שנותרו (${rawTracks.length - downloadedCount} נותרו)` : 'הורד לאופליין'}
+                      {downloadedCount > 0 ? `הורד (${rawTracks.length - downloadedCount} נותרו)` : 'הורד לאופליין'}
                     </span>
                   </>
                 )}
@@ -408,45 +444,6 @@ export function PlaylistView({
                 <Trash2 className="w-5 h-5" />
               </button>
             )}
-          </div>
-
-          {/* Left side in RTL: Iconic Spotify Shuffle + 56px Green Play Circle */}
-          <div className="flex items-center gap-5">
-            <button
-              onClick={handleShuffleButton}
-              disabled={processedTracks.length === 0}
-              title={
-                shuffleMode === 'smart'
-                  ? 'ערבוב חכם פעיל ✨'
-                  : shuffleMode === 'standard'
-                  ? 'ערבוב פעיל'
-                  : 'ערבוב כבוי'
-              }
-              className={`relative p-2 transition-transform active:scale-95 ${
-                shuffleMode !== 'off' ? 'text-spotify-green' : 'text-[#b3b3b3] hover:text-white'
-              }`}
-            >
-              <Shuffle className="w-6 h-6" />
-              {shuffleMode === 'smart' && (
-                <Sparkles className="w-3.5 h-3.5 text-spotify-green fill-spotify-green absolute top-0.5 right-0.5 animate-pulse" />
-              )}
-              {shuffleMode !== 'off' && (
-                <span className="w-1.5 h-1.5 rounded-full bg-spotify-green absolute bottom-0.5 left-1/2 -translate-x-1/2" />
-              )}
-            </button>
-
-            <button
-              onClick={handlePlayAll}
-              disabled={processedTracks.length === 0}
-              title={isPlaylistCurrentlyPlaying && isPlaying ? 'השהה' : 'נגן'}
-              className="w-14 h-14 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_8px_24px_rgba(30,215,96,0.35)]"
-            >
-              {isPlaylistCurrentlyPlaying && isPlaying ? (
-                <Pause className="w-7 h-7 fill-black text-black" />
-              ) : (
-                <Play className="w-7 h-7 fill-black text-black translate-x-0.5" />
-              )}
-            </button>
           </div>
         </div>
       </div>

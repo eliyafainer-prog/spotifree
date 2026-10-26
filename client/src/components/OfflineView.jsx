@@ -274,7 +274,7 @@ export function OfflineView({
   const ambientCover = tracks.find(t => t?.thumbnail)?.thumbnail || '';
 
   return (
-    <div className="flex flex-col animate-fadeIn pb-20 -mx-4 md:-mx-6 -mt-4 md:-mt-6 select-none">
+    <div className="flex flex-col animate-fadeIn pb-36 md:pb-24 -mx-4 md:-mx-6 -mt-4 md:-mt-6 select-none">
       {/* ==================== FULL-BLEED AMBIENT GRADIENT HEADER (Matches PlaylistView) ==================== */}
       <div className="relative overflow-hidden pt-5 pb-5 px-4 md:px-8">
         {ambientCover ? (
@@ -384,82 +384,23 @@ export function OfflineView({
           </div>
         </div>
 
-        {/* Authentic Spotify Controls Bar (Create Playlist from Offline + Reorder on Right, Smart Shuffle + 56px Green Play Circle on Left) */}
+        {/* Authentic Spotify Controls Bar (56px Green Play Circle + Shuffle on Right, Tools & Actions) */}
         <div className="relative z-10 flex items-center justify-between mt-5 pt-1 flex-wrap gap-3">
-          {/* Right side in RTL: Create Playlist from Offline + Import MP3 + Sync Lyrics + Reorder Mode */}
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac"
-              multiple
-              onChange={handleImportLocalFiles}
-              className="hidden"
-            />
-
+          {/* Right side in RTL: 56px Green Play Circle + Shuffle + Offline Actions */}
+          <div className="flex items-center gap-3.5 flex-wrap">
             <button
-              onClick={openCreateModal}
-              className="flex items-center gap-1.5 text-xs font-extrabold px-4 py-2 rounded-full bg-spotify-green text-black hover:bg-spotify-green-hover shadow-lg shadow-spotify-green/20 transition-all hover:scale-105 active:scale-95"
-              title="צור פלייליסט חדש מהשירים שהורדו לאופליין"
+              onClick={handlePlayAll}
+              disabled={processedTracks.length === 0}
+              title={isOfflineCurrentlyPlaying && isPlaying ? 'השהה' : 'נגן'}
+              className="w-14 h-14 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_8px_24px_rgba(30,215,96,0.35)] flex-shrink-0"
             >
-              <Plus className="w-4 h-4 stroke-[3]" />
-              <span>צור פלייליסט מאופליין</span>
-            </button>
-
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isImportingFiles}
-              className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all"
-              title="ייבא קובצי שמע (MP3, M4A, WAV) מהמכשיר להאזנה באופליין"
-            >
-              {isImportingFiles ? (
-                <Loader2 className="w-4 h-4 animate-spin text-spotify-green" />
+              {isOfflineCurrentlyPlaying && isPlaying ? (
+                <Pause className="w-7 h-7 fill-black text-black" />
               ) : (
-                <Upload className="w-4 h-4 text-spotify-green" />
+                <Play className="w-7 h-7 fill-black text-black translate-x-0.5" />
               )}
-              <span>{isImportingFiles ? 'מייבא קבצים...' : 'ייבוא MP3 מהמכשיר'}</span>
             </button>
 
-            {tracks.length > 0 && (
-              <button
-                onClick={handleSyncOfflineLyrics}
-                disabled={isSyncingLyrics}
-                className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all"
-                title="הורד ושמור מילים לכל השירים באופליין"
-              >
-                {isSyncingLyrics ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-spotify-green" />
-                ) : (
-                  <Mic2 className="w-4 h-4 text-spotify-green" />
-                )}
-                <span>{isSyncingLyrics ? 'שומר מילים לאופליין...' : 'שמור מילים לאופליין'}</span>
-              </button>
-            )}
-
-            {tracks.length > 1 && (
-              <button
-                onClick={() => {
-                  if (!isReorderMode) {
-                    setSortBy('custom');
-                    setFilterQuery('');
-                  }
-                  setIsReorderMode(prev => !prev);
-                }}
-                title={isReorderMode ? 'סיים סידור שירים' : 'ערוך סדר שירים'}
-                className={`flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full border transition-all ${
-                  isReorderMode
-                    ? 'bg-white text-black border-white font-bold'
-                    : 'border-white/25 text-[#b3b3b3] hover:text-white hover:border-white'
-                }`}
-              >
-                <MoveVertical className="w-4 h-4" />
-                <span>{isReorderMode ? 'סיום סידור' : 'עריכת סדר'}</span>
-              </button>
-            )}
-          </div>
-
-          {/* Left side in RTL: Smart Shuffle + 56px Green Play Circle */}
-          <div className="flex items-center gap-5">
             <button
               onClick={handleShuffleButton}
               disabled={processedTracks.length === 0}
@@ -483,18 +424,74 @@ export function OfflineView({
               )}
             </button>
 
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac"
+              multiple
+              onChange={handleImportLocalFiles}
+              className="hidden"
+            />
+
             <button
-              onClick={handlePlayAll}
-              disabled={processedTracks.length === 0}
-              title={isOfflineCurrentlyPlaying && isPlaying ? 'השהה' : 'נגן'}
-              className="w-14 h-14 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_8px_24px_rgba(30,215,96,0.35)]"
+              onClick={openCreateModal}
+              className="flex items-center gap-1.5 text-xs font-extrabold px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/15 shadow-sm transition-all hover:scale-105 active:scale-95"
+              title="צור פלייליסט חדש מהשירים שהורדו לאופליין"
             >
-              {isOfflineCurrentlyPlaying && isPlaying ? (
-                <Pause className="w-7 h-7 fill-black text-black" />
-              ) : (
-                <Play className="w-7 h-7 fill-black text-black translate-x-0.5" />
-              )}
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>צור פלייליסט מאופליין</span>
             </button>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isImportingFiles}
+              className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all"
+              title="ייבא קובצי שמע (MP3, M4A, WAV) מהמכשיר להאזנה באופליין"
+            >
+              {isImportingFiles ? (
+                <Loader2 className="w-4 h-4 animate-spin text-spotify-green" />
+              ) : (
+                <Upload className="w-4 h-4 text-spotify-green" />
+              )}
+              <span>{isImportingFiles ? 'מייבא...' : 'ייבוא MP3 מהמכשיר'}</span>
+            </button>
+
+            {tracks.length > 0 && (
+              <button
+                onClick={handleSyncOfflineLyrics}
+                disabled={isSyncingLyrics}
+                className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all"
+                title="הורד ושמור מילים לכל השירים באופליין"
+              >
+                {isSyncingLyrics ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-spotify-green" />
+                ) : (
+                  <Mic2 className="w-4 h-4 text-spotify-green" />
+                )}
+                <span>{isSyncingLyrics ? 'שומר מילים...' : 'שמור מילים'}</span>
+              </button>
+            )}
+
+            {tracks.length > 1 && (
+              <button
+                onClick={() => {
+                  if (!isReorderMode) {
+                    setSortBy('custom');
+                    setFilterQuery('');
+                  }
+                  setIsReorderMode(prev => !prev);
+                }}
+                title={isReorderMode ? 'סיים סידור שירים' : 'ערוך סדר שירים'}
+                className={`flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full border transition-all ${
+                  isReorderMode
+                    ? 'bg-white text-black border-white font-bold'
+                    : 'border-white/25 text-[#b3b3b3] hover:text-white hover:border-white'
+                }`}
+              >
+                <MoveVertical className="w-4 h-4" />
+                <span>{isReorderMode ? 'סיום סידור' : 'עריכת סדר'}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
