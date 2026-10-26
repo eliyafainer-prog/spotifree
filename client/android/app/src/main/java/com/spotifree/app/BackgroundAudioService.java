@@ -57,6 +57,7 @@ public class BackgroundAudioService extends Service {
     private String currentArtist = "No song playing";
     private String currentThumbnailUrl = null;
     private Bitmap cachedArtwork = null;
+    private boolean isServicePlaying = false;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private Runnable progressRunnable;
 
@@ -282,15 +283,33 @@ public class BackgroundAudioService extends Service {
                 updateForegroundNotification();
                 break;
 
+            case "PREV_CLICK":
+                BackgroundAudioPlugin.dispatchMediaAction("prev");
+                break;
+
+            case "NEXT_CLICK":
+                BackgroundAudioPlugin.dispatchMediaAction("next");
+                break;
+
             case ACTION_PAUSE:
-                if (player != null) {
+                if (player != null && player.isPlaying()) {
                     player.pause();
+                } else {
+                    isServicePlaying = false;
+                    releaseLocks();
+                    BackgroundAudioPlugin.dispatchMediaAction("pause");
+                    updateForegroundNotification();
                 }
                 break;
 
             case ACTION_RESUME:
-                if (player != null) {
+                if (player != null && player.getMediaItemCount() > 0 && player.getPlaybackState() != Player.STATE_IDLE) {
                     player.play();
+                } else {
+                    isServicePlaying = true;
+                    acquireLocks();
+                    BackgroundAudioPlugin.dispatchMediaAction("play");
+                    updateForegroundNotification();
                 }
                 break;
 
@@ -305,11 +324,18 @@ public class BackgroundAudioService extends Service {
                 String metaTitle = intent.getStringExtra("title");
                 String metaArtist = intent.getStringExtra("artist");
                 String metaThumb = intent.getStringExtra("thumbnail");
+                boolean metaIsPlaying = intent.getBooleanExtra("isPlaying", false);
                 if (metaTitle != null) currentTitle = metaTitle;
                 if (metaArtist != null) currentArtist = metaArtist;
                 if (metaThumb != null && !metaThumb.equals(currentThumbnailUrl)) {
                     currentThumbnailUrl = metaThumb;
                     loadArtworkAsync(currentThumbnailUrl);
+                }
+                isServicePlaying = metaIsPlaying;
+                if (isServicePlaying) {
+                    acquireLocks();
+                } else if (player == null || !player.isPlaying()) {
+                    releaseLocks();
                 }
                 updateForegroundNotification();
                 break;
@@ -319,6 +345,7 @@ public class BackgroundAudioService extends Service {
                 if (player != null) {
                     player.stop();
                 }
+                isServicePlaying = false;
                 releaseLocks();
                 stopForeground(true);
                 stopSelf();
@@ -340,7 +367,7 @@ public class BackgroundAudioService extends Service {
                 this, 0, contentIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        boolean isCurrentlyPlaying = player != null && player.isPlaying();
+        boolean isCurrentlyPlaying = (player != null && player.isPlaying()) || isServicePlaying;
 
         Intent prevIntent = new Intent(this, BackgroundAudioService.class).setAction("PREV_CLICK");
         PendingIntent pPrev = PendingIntent.getService(this, 1, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);

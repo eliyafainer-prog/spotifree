@@ -111,13 +111,20 @@ public class BackgroundAudioPlugin extends Plugin {
         String title = call.getString("title", "SpotiFree");
         String artist = call.getString("artist", "Playing audio");
         String thumbnail = call.getString("thumbnail", "");
+        Boolean isPlaying = call.getBoolean("isPlaying", false);
 
         Intent intent = new Intent(context, BackgroundAudioService.class);
         intent.setAction(BackgroundAudioService.ACTION_UPDATE_META);
         intent.putExtra("title", title);
         intent.putExtra("artist", artist);
         intent.putExtra("thumbnail", thumbnail);
-        context.startService(intent);
+        intent.putExtra("isPlaying", isPlaying);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
 
         call.resolve();
     }

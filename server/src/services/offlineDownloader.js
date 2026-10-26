@@ -1,5 +1,6 @@
 const axios = require('axios');
 const https = require('https');
+const { spawn, execSync } = require('child_process');
 const {
   getAudioStreamUrl,
   evictStreamCache,
@@ -13,6 +14,18 @@ const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
 
 let scClientId = 'tHVbSbDP4TaoMbPppngv6Tdry83vNbMQ';
 let scRefreshPromise = null;
+let cachedFfmpegAvailable = null;
+
+function isFfmpegAvailable() {
+  if (cachedFfmpegAvailable !== null) return cachedFfmpegAvailable;
+  try {
+    execSync('ffmpeg -version', { stdio: 'ignore' });
+    cachedFfmpegAvailable = true;
+  } catch (e) {
+    cachedFfmpegAvailable = false;
+  }
+  return cachedFfmpegAvailable;
+}
 
 async function refreshScClientId() {
   if (scRefreshPromise) return scRefreshPromise;
@@ -80,26 +93,31 @@ async function resolveScStreamUrl(item) {
   );
   if (transcodings.length === 0) return null;
 
-  // Priority 1: High-Efficiency 160kbps AAC (aac_160k fMP4 studio quality)
-  // Priority 2: Progressive HTTP MP3 (128kbps MP3)
-  // Priority 3: Other HLS streams (excluding multi-bitrate mpegurl master manifests)
+  // STRICT PRIORITY FOR 0ms INSTANT PLAYBACK & BACKGROUND STABILITY:
+  // Priority 1: Progressive direct HTTP MP3 (128k MP3, instant 0ms decode, no fMP4 fragmented stalls)
+  // Priority 2: HLS with audio/mpeg (MP3 HLS, standard audio frames)
+  // Priority 3: High-efficiency studio AAC (aac_160k fMP4 / HLS)
+  // Priority 4: Other HLS streams
+  const isProgressive = t => t.format?.protocol === 'progressive';
+  const isMp3Hls = t => t.format?.protocol === 'hls' && (
+    String(t.format?.mime_type || '').includes('mpeg') ||
+    String(t.preset || '').toLowerCase().includes('mp3')
+  );
+  const isAacHls = t => t.format?.protocol === 'hls' && !isMp3Hls(t);
+
   const ordered = [
-    ...transcodings.filter(t => t.preset === 'aac_160k' || String(t.preset || '').includes('160k')),
-    ...transcodings.filter(t => t.format?.protocol === 'progressive'),
-    ...transcodings.filter(
-      t =>
-        t.format?.protocol === 'hls' &&
-        t.preset !== 'aac_160k' &&
-        !String(t.format?.mime_type || '').includes('mpegurl')
-    ),
-    ...transcodings.filter(t => t.format?.protocol === 'hls')
+    ...transcodings.filter(isProgressive),
+    ...transcodings.filter(isMp3Hls),
+    ...transcodings.filter(isAacHls),
+    ...transcodings.filter(t => !isProgressive(t) && !isMp3Hls(t) && !isAacHls(t))
   ];
 
   for (const trans of ordered) {
-    try {
-      const res = await axios.get(trans.url, {
+    const isProg = isProgressive(trans);
+    const fetchTrans = async (cid) => {
+      return await axios.get(trans.url, {
         params: {
-          client_id: scClientId,
+          client_id: cid,
           ...(item.track_authorization ? { track_authorization: item.track_authorization } : {})
         },
         timeout: 3500,
@@ -107,10 +125,28 @@ async function resolveScStreamUrl(item) {
         maxRedirects: 5,
         headers: buildUpstreamHeaders(trans.url)
       });
+    };
+
+    try {
+      const res = await fetchTrans(scClientId);
       if (res.data?.url && !res.data.url.includes('/preview/') && !res.data.url.includes('_preview')) {
         return res.data.url;
       }
-    } catch (e) {}
+    } catch (e) {
+      const status = e.response?.status;
+      // If progressive request failed with 401/403, immediately refresh scClientId and retry before falling back to HLS
+      if (isProg && (status === 401 || status === 403)) {
+        try {
+          const freshCid = await refreshScClientId();
+          if (freshCid) {
+            const retryRes = await fetchTrans(freshCid);
+            if (retryRes.data?.url && !retryRes.data.url.includes('/preview/') && !retryRes.data.url.includes('_preview')) {
+              return retryRes.data.url;
+            }
+          }
+        } catch (e2) {}
+      }
+    }
   }
   return null;
 }
@@ -526,7 +562,16 @@ function scoreOfflineCandidate(item, meta = {}, parsedMeta = null, allowLiveOrRe
     else score -= 90;
   }
 
-  if (transcodings.some(t => t.format?.protocol === 'progressive')) score += 15;
+  // Absolute priority for progressive direct MP3 (+160) and MP3 HLS (+100) over fMP4/AAC
+  const hasProgressive = transcodings.some(t => t.format?.protocol === 'progressive');
+  const hasMp3Hls = transcodings.some(t =>
+    t.format?.protocol === 'hls' && (
+      String(t.format?.mime_type || '').includes('mpeg') ||
+      String(t.preset || '').toLowerCase().includes('mp3')
+    )
+  );
+  if (hasProgressive) score += 160;
+  else if (hasMp3Hls) score += 100;
   return score;
 }
 
@@ -723,6 +768,83 @@ async function pipeHlsDownload(m3u8Url, req, res) {
   req.on('close', () => {
     aborted = true;
   });
+
+  // Fast memory remux via ffmpeg: outputs standardized, fully-indexed MP3 stream
+  // Starts in 0ms on WebView with zero fragmented decoding stalls and flawless background playback
+  if (isFfmpegAvailable()) {
+    try {
+      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+      const headers = `User-Agent: ${userAgent}\r\nAccept: */*\r\n`;
+      const args = [
+        '-y',
+        '-headers', headers,
+        '-i', m3u8Url,
+        '-vn',
+        '-c:a', 'libmp3lame',
+        '-b:a', '192k',
+        '-f', 'mp3',
+        'pipe:1'
+      ];
+      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      let hasData = false;
+      let killed = false;
+
+      const cleanup = () => {
+        if (!killed) {
+          killed = true;
+          try { proc.kill('SIGKILL'); } catch (e) {}
+        }
+      };
+
+      req.on('close', cleanup);
+
+      const ffmpegDone = await new Promise((resolve) => {
+        proc.stdout.on('data', (chunk) => {
+          if (!hasData) {
+            hasData = true;
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Cache-Control', 'no-store');
+            if (typeof res.flushHeaders === 'function') res.flushHeaders();
+          }
+          if (!res.writableEnded) {
+            const ok = res.write(chunk);
+            if (!ok) {
+              proc.stdout.pause();
+              res.once('drain', () => {
+                if (!killed) proc.stdout.resume();
+              });
+            }
+          }
+        });
+
+        proc.stderr.on('data', () => {});
+
+        proc.on('error', () => {
+          cleanup();
+          resolve(false);
+        });
+
+        proc.on('close', (code) => {
+          req.removeListener('close', cleanup);
+          if (code === 0 && hasData) {
+            if (!res.writableEnded) res.end();
+            resolve(true);
+          } else {
+            resolve(false);
+          }
+        });
+      });
+
+      if (ffmpegDone) {
+        return;
+      }
+    } catch (e) {
+      console.warn('[OfflineDownloader] ffmpeg remux fallback:', e.message);
+    }
+  }
 
   const m3u8Res = await axios.get(m3u8Url, {
     timeout: 6000,

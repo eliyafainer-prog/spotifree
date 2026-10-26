@@ -89,6 +89,11 @@ export async function saveTrackOffline(track, audioBlob, lyricsData = null) {
   const cachedThumb = await fetchCoverAsDataUrl(track.thumbnail);
   const db = await openDB();
 
+  // Ensure audioBlob has explicit audio MIME type
+  const finalBlob = audioBlob.type && audioBlob.type.startsWith('audio/')
+    ? audioBlob
+    : new Blob([audioBlob], { type: 'audio/mpeg' });
+
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
@@ -101,14 +106,16 @@ export async function saveTrackOffline(track, audioBlob, lyricsData = null) {
       id: primaryId,
       streamableId: track.streamableId || primaryId,
       originalId: track.originalId || track.id,
+      spotifyId: track.spotifyId || (String(track.id).startsWith('sp_') ? track.id : null),
+      videoId: track.videoId || null,
       title: track.title,
       artist: track.artist,
       album: track.album || 'SpotiFree',
       thumbnail: cachedThumb || track.thumbnail || '',
       duration: track.duration,
       durationSeconds: track.durationSeconds,
-      audioBlob: audioBlob,
-      sizeBytes: audioBlob.size,
+      audioBlob: finalBlob,
+      sizeBytes: finalBlob.size,
       lyrics: lyricsData || track.lyrics || null,
       downloadedAt: Date.now()
     };
@@ -141,23 +148,29 @@ export async function saveOfflineTrackLyrics(trackOrId, lyricsData) {
   }
 }
 
+function normMetaStr(str) {
+  return String(str || '').toLowerCase().replace(/[\s\-_'".()\[\],]+/g, ' ').trim();
+}
+
 export function getTrackNormKey(track) {
   if (!track || !track.title) return null;
-  const title = String(track.title).toLowerCase().trim();
-  const artist = String(track.artist || '').toLowerCase().trim();
+  const title = normMetaStr(track.title);
+  const artist = normMetaStr(track.artist);
   return title ? `meta:::${title}:::${artist}` : null;
 }
 
 /**
- * Build a Set of all IDs (id, streamableId, originalId, and normalized title+artist key) for downloaded tracks
+ * Build a Set of all IDs (id, streamableId, originalId, spotifyId, videoId, and normalized title+artist key) for downloaded tracks
  */
 export function buildDownloadedIdSet(tracks = []) {
   const set = new Set();
   for (const t of tracks) {
     if (!t) continue;
-    if (t.id) set.add(t.id);
-    if (t.streamableId) set.add(t.streamableId);
-    if (t.originalId) set.add(t.originalId);
+    if (t.id) set.add(String(t.id));
+    if (t.streamableId) set.add(String(t.streamableId));
+    if (t.originalId) set.add(String(t.originalId));
+    if (t.spotifyId) set.add(String(t.spotifyId));
+    if (t.videoId) set.add(String(t.videoId));
     const normKey = getTrackNormKey(t);
     if (normKey) set.add(normKey);
   }
@@ -171,60 +184,77 @@ export function isTrackInIdSet(track, idSet) {
   if (!track || !idSet) return false;
   const normKey = getTrackNormKey(track);
   return Boolean(
-    (track.id && idSet.has(track.id)) ||
-    (track.streamableId && idSet.has(track.streamableId)) ||
-    (track.originalId && idSet.has(track.originalId)) ||
+    (track.id && idSet.has(String(track.id))) ||
+    (track.streamableId && idSet.has(String(track.streamableId))) ||
+    (track.originalId && idSet.has(String(track.originalId))) ||
+    (track.spotifyId && idSet.has(String(track.spotifyId))) ||
+    (track.videoId && idSet.has(String(track.videoId))) ||
     (normKey && idSet.has(normKey))
   );
 }
 
 /**
- * Get offline track by ID or by track metadata (supports id, streamableId, originalId, and title+artist fallback)
+ * Get offline track by ID or by track metadata (supports id, streamableId, originalId, spotifyId, videoId, and normalized title+artist fallback)
  */
 export async function getOfflineTrack(trackOrId) {
   if (!trackOrId) return null;
-  const lookupId = typeof trackOrId === 'string'
-    ? trackOrId
-    : (trackOrId.streamableId || trackOrId.id);
+  const isObj = typeof trackOrId === 'object';
+  const lookupIds = isObj
+    ? [trackOrId.streamableId, trackOrId.id, trackOrId.originalId, trackOrId.spotifyId, trackOrId.videoId].filter(Boolean)
+    : [trackOrId];
+
+  if (lookupIds.length === 0) return null;
 
   try {
     const db = await openDB();
     return new Promise((resolve) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
-      const request = store.get(lookupId);
 
-      request.onsuccess = () => {
-        if (request.result) return resolve(request.result);
-
+      const searchAll = () => {
         const allReq = store.getAll();
         allReq.onsuccess = () => {
           const all = allReq.result || [];
-          if (typeof trackOrId === 'object') {
-            const candidateIds = [trackOrId.id, trackOrId.streamableId, trackOrId.originalId].filter(Boolean);
-            const idMatch = all.find(item =>
-              candidateIds.includes(item.id) ||
-              candidateIds.includes(item.streamableId) ||
-              candidateIds.includes(item.originalId)
-            );
+          if (isObj) {
+            const candidateIds = lookupIds.map(String);
+            const idMatch = all.find(item => {
+              const itemIds = [item.id, item.streamableId, item.originalId, item.spotifyId, item.videoId].filter(Boolean).map(String);
+              return candidateIds.some(cid => itemIds.includes(cid));
+            });
             if (idMatch) return resolve(idMatch);
 
             if (trackOrId.title) {
-              const titleMatch = all.find(item =>
-                item.title?.toLowerCase().trim() === trackOrId.title?.toLowerCase().trim() &&
-                (!trackOrId.artist || item.artist?.toLowerCase().trim() === trackOrId.artist?.toLowerCase().trim())
-              );
+              const targetTitle = normMetaStr(trackOrId.title);
+              const targetArtist = normMetaStr(trackOrId.artist);
+              const titleMatch = all.find(item => {
+                const iTitle = normMetaStr(item.title);
+                const iArtist = normMetaStr(item.artist);
+                const titleEqual = iTitle === targetTitle || (targetTitle.length > 5 && (iTitle.includes(targetTitle) || targetTitle.includes(iTitle)));
+                if (!titleEqual) return false;
+                if (!targetArtist || !iArtist) return true;
+                return iArtist === targetArtist || iArtist.includes(targetArtist) || targetArtist.includes(iArtist);
+              });
               if (titleMatch) return resolve(titleMatch);
             }
           } else {
-            const strMatch = all.find(item => item.streamableId === lookupId || item.originalId === lookupId);
+            const strId = String(trackOrId);
+            const strMatch = all.find(item => {
+              const itemIds = [item.id, item.streamableId, item.originalId, item.spotifyId, item.videoId].filter(Boolean).map(String);
+              return itemIds.includes(strId);
+            });
             if (strMatch) return resolve(strMatch);
           }
           resolve(null);
         };
         allReq.onerror = () => resolve(null);
       };
-      request.onerror = () => resolve(null);
+
+      const request = store.get(lookupIds[0]);
+      request.onsuccess = () => {
+        if (request.result) return resolve(request.result);
+        searchAll();
+      };
+      request.onerror = () => searchAll();
     });
   } catch {
     return null;

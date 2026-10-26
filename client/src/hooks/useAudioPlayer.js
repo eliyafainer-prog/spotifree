@@ -200,22 +200,25 @@ export function useAudioPlayer() {
       const srcAttr = audio.getAttribute('src');
       if (!srcAttr) return; // Ignore empty src reset
 
-      // If a local offline blob fails, attempt immediate network failover silently without triggering error popup
+      // If a local offline blob fails, handle gracefully without spurious toasts on AbortError
       if (isOfflinePlaybackRef.current || srcAttr.startsWith('blob:')) {
-        console.warn('Local offline blob playback failed, attempting network stream fallback...');
-        isOfflinePlaybackRef.current = false;
+        console.warn('Local offline blob playback failed');
         if (activeBlobUrlRef.current) {
           revokeOfflineObjectUrl(activeBlobUrlRef.current);
           activeBlobUrlRef.current = null;
         }
 
-        // Clean up broken cached offline blob from IndexedDB so future plays don't choke on it
-        const brokenTrackId = currentTrackRef.current?.id || currentTrackRef.current?.streamableId;
-        if (brokenTrackId) {
-          deleteOfflineTrack(brokenTrackId).catch(() => {});
+        // If currently offline, NEVER make network calls or fall back to YouTube iframe
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          setIsLoading(false);
+          setIsPlaying(false);
+          setPlaybackError('שגיאה בניגון הקובץ השמור במצב לא מקוון');
+          return;
         }
 
-        if (currentTrackRef.current && typeof navigator !== 'undefined' && navigator.onLine) {
+        // If online, attempt silent progressive network fallback
+        isOfflinePlaybackRef.current = false;
+        if (currentTrackRef.current) {
           const networkUrl = getPlayableAudioUrl(currentTrackRef.current);
           audioRef.current.src = networkUrl;
           audioRef.current.load();
@@ -223,9 +226,7 @@ export function useAudioPlayer() {
             setIsPlaying(true);
             setIsLoading(false);
           }).catch((err) => {
-            // Strictly ignore AbortError caused by load() or rapid navigation
             if (err?.name === 'AbortError') return;
-            // Only show toast if progressive network retry also fails completely
             setIsLoading(false);
             setIsPlaying(false);
             setPlaybackError('שגיאה בניגון השיר');
@@ -234,7 +235,7 @@ export function useAudioPlayer() {
         }
         setIsLoading(false);
         setIsPlaying(false);
-        setPlaybackError('שגיאה בניגון הקובץ השמור במצב לא מקוון');
+        setPlaybackError('שגיאה בניגון הקובץ השמור');
         return;
       }
 
@@ -286,9 +287,12 @@ export function useAudioPlayer() {
               audioRef.current.load();
               audioRef.current.play().catch(() => {});
             } else if (
+              !isOfflinePlaybackRef.current &&
               currentTrackRef.current?.streamableId &&
               /^[a-zA-Z0-9_-]{11}$/.test(currentTrackRef.current.streamableId) &&
-              typeof playViaYouTubePlayerRef.current === 'function'
+              typeof playViaYouTubePlayerRef.current === 'function' &&
+              typeof navigator !== 'undefined' &&
+              navigator.onLine
             ) {
               console.log('Failing over to client YouTube player for reliable playback...');
               playViaYouTubePlayerRef.current(currentTrackRef.current);
@@ -300,9 +304,12 @@ export function useAudioPlayer() {
           }).catch(() => {
             if (playSessionIdRef.current !== activeSession || userPausedRef.current) return;
             if (
+              !isOfflinePlaybackRef.current &&
               currentTrackRef.current?.streamableId &&
               /^[a-zA-Z0-9_-]{11}$/.test(currentTrackRef.current.streamableId) &&
-              typeof playViaYouTubePlayerRef.current === 'function'
+              typeof playViaYouTubePlayerRef.current === 'function' &&
+              typeof navigator !== 'undefined' &&
+              navigator.onLine
             ) {
               console.log('Failing over to client YouTube player for reliable playback...');
               playViaYouTubePlayerRef.current(currentTrackRef.current);
@@ -316,9 +323,12 @@ export function useAudioPlayer() {
         }
       }
       if (
+        !isOfflinePlaybackRef.current &&
         currentTrackRef.current?.streamableId &&
         /^[a-zA-Z0-9_-]{11}$/.test(currentTrackRef.current.streamableId) &&
-        typeof playViaYouTubePlayerRef.current === 'function'
+        typeof playViaYouTubePlayerRef.current === 'function' &&
+        typeof navigator !== 'undefined' &&
+        navigator.onLine
       ) {
         console.log('Failing over to client YouTube player for reliable playback...');
         playViaYouTubePlayerRef.current(currentTrackRef.current);
@@ -621,7 +631,11 @@ export function useAudioPlayer() {
       let streamUrl;
       if (track.audioBlob) {
         isOfflinePlaybackRef.current = true;
-        streamUrl = URL.createObjectURL(track.audioBlob);
+        // Ensure Blob has explicit valid audio MIME type so Blink/WebView decoder starts in 0ms
+        const typedBlob = (track.audioBlob.type && track.audioBlob.type.startsWith('audio/'))
+          ? track.audioBlob
+          : new Blob([track.audioBlob], { type: 'audio/mpeg' });
+        streamUrl = URL.createObjectURL(typedBlob);
         activeBlobUrlRef.current = streamUrl;
       } else {
         isOfflinePlaybackRef.current = false;
@@ -638,6 +652,15 @@ export function useAudioPlayer() {
       audio.src = streamUrl;
       audio.volume = isMuted ? 0 : (Number.isFinite(volume) ? volume : 0.8);
       audio.load();
+
+      // Immediately keep background audio awake and notify native Android Foreground Service
+      silentAudioRef.current?.play().catch(() => {});
+      updateNativePlayback({
+        title: track.title || 'SpotiFree',
+        artist: track.artist || 'Playing',
+        thumbnail: track.thumbnail || '',
+        isPlaying: true
+      });
 
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
 
@@ -788,10 +811,11 @@ export function useAudioPlayer() {
       const trueMime = await sniffAudioBlobMime(playableTrack.audioBlob);
       const fixedBlob = (playableTrack.audioBlob.type === trueMime)
         ? playableTrack.audioBlob
-        : new Blob([playableTrack.audioBlob], { type: trueMime });
+        : new Blob([playableTrack.audioBlob], { type: trueMime || 'audio/mpeg' });
       playableTrack.audioBlob = fixedBlob;
+      isOfflinePlaybackRef.current = true;
       playViaAudioElement(playableTrack, sessionId);
-      prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
+      return; // Never trigger network resolution or prefetch for local offline playback!
     } else {
       const offlineRecord = await getOfflineTrack(playableTrack).catch(() => null);
       if (playSessionIdRef.current !== sessionId || userPausedRef.current) return;
@@ -800,21 +824,22 @@ export function useAudioPlayer() {
         const trueMime = await sniffAudioBlobMime(offlineRecord.audioBlob);
         const fixedBlob = (offlineRecord.audioBlob.type === trueMime)
           ? offlineRecord.audioBlob
-          : new Blob([offlineRecord.audioBlob], { type: trueMime });
+          : new Blob([offlineRecord.audioBlob], { type: trueMime || 'audio/mpeg' });
         const offlinePlayable = {
           ...playableTrack,
           audioBlob: fixedBlob,
           thumbnail: offlineRecord.thumbnail || playableTrack.thumbnail,
           durationSeconds: offlineRecord.durationSeconds || playableTrack.durationSeconds
         };
+        isOfflinePlaybackRef.current = true;
         setCurrentTrack(offlinePlayable);
         currentTrackRef.current = offlinePlayable;
         playViaAudioElement(offlinePlayable, sessionId);
-        prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
-        return;
+        return; // Never trigger network resolution or prefetch for local offline playback!
       }
 
       // Not saved in Offline DB -> stream from server
+      isOfflinePlaybackRef.current = false;
       playViaAudioElement(playableTrack, sessionId);
       prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
     }
@@ -909,27 +934,56 @@ export function useAudioPlayer() {
     isFetchingSmartRef.current = true;
     try {
       const candidates = await searchTracks(artistName);
-      const existing = new Set(queueRef.current.map(t => (t.id || t.title).toLowerCase()));
-      const filtered = candidates
-        .filter(c => !existing.has((c.id || c.title).toLowerCase()))
-        .slice(0, 4)
-        .map(c => ({ ...c, isRecommendation: true }));
+      const currentQueue = queueRef.current || [];
+      const existingKeys = new Set();
+      for (const t of currentQueue) {
+        if (!t) continue;
+        if (t.id) existingKeys.add(String(t.id).toLowerCase());
+        if (t.streamableId) existingKeys.add(String(t.streamableId).toLowerCase());
+        if (t.originalId) existingKeys.add(String(t.originalId).toLowerCase());
+        if (t.title) existingKeys.add(String(t.title).toLowerCase().trim());
+      }
+
+      const filtered = [];
+      for (const c of candidates) {
+        if (!c) continue;
+        const idKey = c.id ? String(c.id).toLowerCase() : null;
+        const streamableKey = c.streamableId ? String(c.streamableId).toLowerCase() : null;
+        const origKey = c.originalId ? String(c.originalId).toLowerCase() : null;
+        const titleKey = c.title ? String(c.title).toLowerCase().trim() : null;
+
+        const isDuplicate =
+          (idKey && existingKeys.has(idKey)) ||
+          (streamableKey && existingKeys.has(streamableKey)) ||
+          (origKey && existingKeys.has(origKey)) ||
+          (titleKey && existingKeys.has(titleKey));
+
+        if (!isDuplicate) {
+          if (idKey) existingKeys.add(idKey);
+          if (streamableKey) existingKeys.add(streamableKey);
+          if (origKey) existingKeys.add(origKey);
+          if (titleKey) existingKeys.add(titleKey);
+          filtered.push({ ...c, isRecommendation: true });
+          if (filtered.length >= 4) break;
+        }
+      }
 
       if (filtered.length > 0) {
-        setQueue(prev => {
-          const updated = [...prev, ...filtered];
-          queueRef.current = updated;
-          const newIndices = [];
-          for (let i = prev.length; i < updated.length; i++) {
-            newIndices.push(i);
-          }
-          for (let i = newIndices.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [newIndices[i], newIndices[j]] = [newIndices[j], newIndices[i]];
-          }
-          shuffledIndicesRef.current = [...shuffledIndicesRef.current, ...newIndices];
-          return updated;
-        });
+        const prevLen = queueRef.current.length;
+        const updated = [...queueRef.current, ...filtered];
+        queueRef.current = updated;
+        setQueue(updated);
+
+        // Update shuffledIndices OUTSIDE setQueue so React StrictMode or re-renders never duplicate indices
+        const newIndices = [];
+        for (let i = prevLen; i < updated.length; i++) {
+          newIndices.push(i);
+        }
+        for (let i = newIndices.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [newIndices[i], newIndices[j]] = [newIndices[j], newIndices[i]];
+        }
+        shuffledIndicesRef.current = [...shuffledIndicesRef.current, ...newIndices];
       }
     } catch (e) {
       console.warn('Smart shuffle recommendations failed:', e);
