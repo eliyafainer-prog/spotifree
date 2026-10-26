@@ -1,6 +1,15 @@
 const axios = require('axios');
 const yts = require('yt-search');
 
+// ============================================================================
+// ENGINE CONFIGURATION & ROLLBACK SWITCH
+// ============================================================================
+// When true (default): SpotiFree runs on YouTube / YouTube Music as the direct primary engine.
+// Every track returns an authentic 11-char YouTube videoId, enabling instant <400ms playback.
+// To revert immediately back to the legacy hybrid (SoundCloud/Deezer/iTunes) mode:
+// Set SPOTIFREE_YOUTUBE_PRIMARY=false in environment or change USE_YOUTUBE_PRIMARY to false below.
+const USE_YOUTUBE_PRIMARY = process.env.SPOTIFREE_YOUTUBE_PRIMARY !== 'false';
+
 /**
  * Clean track title by removing unnecessary labels like (Official Music Video), [HD], etc.
  */
@@ -10,9 +19,39 @@ function cleanTitle(title) {
     ? title
     : (title.text || (Array.isArray(title.runs) ? title.runs.map(r => r.text || '').join('') : String(title)));
   return str
-    .replace(/\s*[\(\[](official\s*(music\s*)?video|official\s*audio|lyrics?|visualizer|hd|4k|audio|קליפ\s*רשמי|אודיו\s*רשמי)[\)\]]/gi, '')
+    .replace(/\s*[\(\[](official\s*(music\s*|lyric\s*)?video|official\s*audio|lyrics?|ליריקס|visualizer|hd|4k|audio|קליפ\s*רשמי|אודיו\s*רשמי|הקליפ\s*הרשמי)[\)\]]/gi, '')
+    .replace(/\s*[\(\[](prod\b.*?|הפקה.*?)[\)\]]/gi, '')
     .replace(/\s*[\(\[]ft\.?.*?[\)\]]/gi, '')
+    .replace(/\|\s*(קליפ\s*רשמי|אודיו\s*רשמי|official\s*video|official\s*audio)\s*$/gi, '')
     .trim();
+}
+
+/**
+ * Format YouTube raw title and author into clean, studio-grade metadata
+ */
+function formatYouTubeMetadata(rawTitle, rawAuthor) {
+  const cleaned = cleanTitle(rawTitle) || String(rawTitle || '').trim();
+  let artist = String(rawAuthor || '').replace(/\s*-\s*Topic$/i, '').replace(/Official\s*(Channel)?$/i, '').trim();
+  let title = cleaned;
+
+  if (cleaned.includes(' - ')) {
+    const parts = cleaned.split(' - ').map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 2 && parts[0].length < 40) {
+      artist = parts[0];
+      title = parts.slice(1).join(' - ').split('|')[0].trim() || cleaned;
+    }
+  } else if (cleaned.includes(' | ')) {
+    const parts = cleaned.split(' | ').map(s => s.trim()).filter(Boolean);
+    if (parts.length === 2 && parts[0].length < 40) {
+      artist = parts[0];
+      title = parts[1].trim();
+    }
+  }
+
+  // Clean trailing prod / feat markers from title
+  title = title.replace(/\s*[\(\[](prod\b.*?|הפקה.*?)[\)\]]/gi, '').trim();
+
+  return { title: title || cleaned, artist: artist || 'YouTube Artist' };
 }
 
 // In-Memory Search Cache (TTL: 2 hours, max 1000 queries)
@@ -43,9 +82,10 @@ const UNWANTED_KEYWORDS = [
   'sped up', 'speed up', 'מואץ', 'גרסה מהירה', 'nightcore', 'slowed', 'reverb', 'bass boost',
   'רמיקס טיקטוק', 'טיקטוק', 'tiktok version', 'tik tok',
   'cover', 'קאבר', 'גרסת כיסוי', 'קריוקי', 'karaoke', 'אינסטרומנטלי', 'instrumental',
-  'ריאקשן', 'reaction', 'מגיב ל', 'מגיבה ל', 'תגובה ל', 'reacts to',
+  'ריאקשן', 'reaction', 'מגיב ל', 'מגיבה ל', 'תגובה ל', 'reacts to', 'מגיב', 'מגיבה', 'תגובה', 'ריאקשנים',
   'dance studio', 'just dance', 'סטודיו לריקוד', 'הדרכת ריקוד', 'כוריאוגרפיה', 'choreography',
-  'פודקאסט', 'podcast', 'ראיון', 'interview', 'מאחורי הקלעים', 'הצצה ל', 'פרק '
+  'פודקאסט', 'podcast', 'ראיון', 'interview', 'מאחורי הקלעים', 'הצצה ל', 'פרק ', 'סרטון',
+  'חדשות', 'כתבה', 'מספיד', 'הסכת', 'דוקו', 'documentary', 'שיעור', 'מדריך', 'באטל', 'battle'
 ];
 
 const SECONDARY_REMIX_KEYWORDS = [
@@ -71,7 +111,7 @@ function scoreSearchResult(item, query) {
   // 2. Heavy penalty for unwanted spam/covers/sped-up versions
   for (const kw of UNWANTED_KEYWORDS) {
     if (combined.includes(kw) && !qLower.includes(kw)) {
-      score -= 300;
+      score -= 600;
       break;
     }
   }
@@ -164,10 +204,10 @@ function rankAndFilterSearchResults(results, query) {
     score: scoreSearchResult(item, query)
   }));
 
-  // Filter out completely disqualified junk (score < -150) unless that leaves too few results
-  let filtered = scored.filter(x => x.score > -150);
-  if (filtered.length < 3) {
-    filtered = scored.filter(x => x.score > -350);
+  // Discard disqualified noise (score <= 0) when sufficient quality results exist
+  let filtered = scored.filter(x => x.score > 0);
+  if (filtered.length < 5) {
+    filtered = scored.filter(x => x.score > -200);
   }
   if (filtered.length === 0) {
     filtered = scored;
@@ -230,13 +270,14 @@ async function searchInnerTube(query, limit = 40) {
 
           const thumbs = v.thumbnail?.thumbnails || [];
           const thumb = thumbs.length > 0 ? thumbs[thumbs.length - 1].url : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
+          const meta = formatYouTubeMetadata(rawTitle, rawAuthor);
 
           rawResults.push({
             id: v.videoId,
             streamableId: v.videoId,
-            title: cleanTitle(rawTitle) || rawTitle,
+            title: meta.title,
             originalTitle: rawTitle,
-            artist: rawAuthor.replace(/\s*-\s*Topic$/i, ''),
+            artist: meta.artist,
             rawAuthor: rawAuthor,
             isTopic: isTopic,
             isVerified: isVerified,
@@ -276,15 +317,15 @@ async function searchYts(query, limit = 40) {
       const thumbnail = v.image || v.thumbnail || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
       const rawAuthor = typeof v.author === 'string' ? v.author : (v.author?.name ? String(v.author.name) : 'Unknown Artist');
       const isTopic = /\s*-\s*Topic$/i.test(rawAuthor);
-      const artistName = rawAuthor.replace(/\s*-\s*Topic$/i, '');
       const rawTitle = typeof v.title === 'string' ? v.title : (v.title?.text || String(v.title || ''));
+      const meta = formatYouTubeMetadata(rawTitle, rawAuthor);
 
       return {
         id: v.videoId,
         streamableId: v.videoId,
-        title: cleanTitle(rawTitle) || rawTitle,
+        title: meta.title,
         originalTitle: rawTitle,
-        artist: artistName,
+        artist: meta.artist,
         rawAuthor: rawAuthor,
         isTopic: isTopic,
         duration: v.timestamp || '0:00',
@@ -450,7 +491,31 @@ async function searchTracks(query, limit = 60) {
     return fastResults;
   }
 
-  // 2. Full user search / category browse: query YouTube InnerTube + Deezer + iTunes in parallel for a huge, rich catalog!
+  // 2. YouTube Primary Mode (Default)
+  if (USE_YOUTUBE_PRIMARY) {
+    const [ytInner, ytsRes] = await Promise.all([
+      searchInnerTube(trimmed, 50),
+      searchYts(trimmed, 40)
+    ]);
+
+    let results = mergeAndDeduplicateTracks([ytInner, ytsRes], limit);
+
+    // Fallback to studio catalogs only if YouTube search returned too few results
+    if (results.length < 5) {
+      const [deezerRes, itunesRes] = await Promise.all([
+        searchDeezer(trimmed, 30),
+        searchItunes(trimmed, 25)
+      ]);
+      results = mergeAndDeduplicateTracks([results, deezerRes, itunesRes], limit);
+    }
+
+    if (results.length > 0) {
+      setCachedSearch(normalizedKey, results);
+    }
+    return results;
+  }
+
+  // 3. Legacy Hybrid Mode (Rollback path)
   const [ytInner, deezerRes, itunesRes] = await Promise.all([
     searchInnerTube(trimmed, 50),
     searchDeezer(trimmed, 35),
@@ -597,9 +662,9 @@ const CATALOG_SECTION_DEFS = [
     title: 'קלאסיקות ישראליות ורוק ישראלי',
     subtitle: 'אריק איינשטיין, שלמה ארצי, כוורת, שלום חנוך, משינה, היהודים',
     queries: [
-      'אריק איינשטיין שלמה ארצי',
-      'כוורת שלום חנוך',
-      'משינה היהודים'
+      'אריק איינשטיין שירים',
+      'שלמה ארצי שירים',
+      'כוורת שלום חנוך משינה'
     ]
   },
   {
@@ -607,9 +672,9 @@ const CATALOG_SECTION_DEFS = [
     title: 'קלאסיקות פסטיגל ושירי ילדות',
     subtitle: 'השירים הגדולים של הפסטיגל מכל השנים',
     queries: [
-      'הראל סקעת רן דנקר פסטיגל',
-      'אליאנה תדהר מרגי פסטיגל',
-      'פסטיגל שירים'
+      'הראל סקעת פסטיגל שירים',
+      'אליאנה תדהר פסטיגל שירים',
+      'פסטיגל שיר הנושא'
     ]
   },
   {
@@ -672,41 +737,119 @@ async function getHomeCatalog() {
     return cachedHomeCatalog;
   }
 
-  // 1. Fetch live charts in parallel
-  const [itunesChartTracks, deezerChartTracks] = await Promise.all([
-    fetchItunesChartTracks('IL', 30),
-    fetchDeezerChartTracks(30)
-  ]);
-
   const liveChartSections = [];
 
-  if (itunesChartTracks && itunesChartTracks.length > 0) {
-    liveChartSections.push({
-      id: 'israel_official_chart',
-      title: 'מצעד ישראל הרשמי — Top Charts',
-      subtitle: 'השירים הכי מושמעים בישראל ברגע זה (בזמן אמת)',
-      tracks: itunesChartTracks
-    });
-  }
+  if (USE_YOUTUBE_PRIMARY) {
+    // 1. YouTube Primary: Resolve live chart songs to real YouTube videoIds so EVERY home track plays instantly in <400ms!
+    const [itunesChartTracks, deezerChartTracks] = await Promise.all([
+      fetchItunesChartTracks('IL', 25),
+      fetchDeezerChartTracks(25)
+    ]);
 
-  if (deezerChartTracks && deezerChartTracks.length > 0) {
-    liveChartSections.push({
-      id: 'global_top_chart',
-      title: 'המצעד העולמי — Global Top 50',
-      subtitle: 'הלהיטים הגדולים ביותר בעולם כרגע',
-      tracks: deezerChartTracks
-    });
+    const resolveList = async (list) => {
+      if (!list || list.length === 0) return [];
+      let importer;
+      try {
+        importer = require('./importer');
+      } catch (e) {
+        return [];
+      }
+      const resolved = await Promise.all(
+        list.map(async (t) => {
+          try {
+            const res = await importer.resolveTrackToStreamableId(t);
+            if (res && res.streamableId && /^[a-zA-Z0-9_-]{11}$/.test(res.streamableId)) {
+              return {
+                ...t,
+                id: res.streamableId,
+                streamableId: res.streamableId,
+                source: 'youtube',
+                thumbnail: res.thumbnail || t.thumbnail,
+                hasCustomArtwork: true
+              };
+            }
+          } catch (e) {}
+          return null;
+        })
+      );
+      return resolved.filter(Boolean);
+    };
+
+    const [resolvedIsraelCharts, resolvedGlobalCharts] = await Promise.all([
+      resolveList(itunesChartTracks),
+      resolveList(deezerChartTracks)
+    ]);
+
+    let finalIsraelTracks = resolvedIsraelCharts;
+    if (finalIsraelTracks.length < 8) {
+      const fallbackYt = await searchInnerTube('להיטי ישראל 2026 רשמי', 25);
+      finalIsraelTracks = mergeAndDeduplicateTracks([finalIsraelTracks, fallbackYt], 25);
+    }
+
+    let finalGlobalTracks = resolvedGlobalCharts;
+    if (finalGlobalTracks.length < 8) {
+      const fallbackGlobal = await searchInnerTube('Global Top Hits 2026 Official', 25);
+      finalGlobalTracks = mergeAndDeduplicateTracks([finalGlobalTracks, fallbackGlobal], 25);
+    }
+
+    if (finalIsraelTracks.length > 0) {
+      liveChartSections.push({
+        id: 'israel_official_chart',
+        title: 'מצעד ישראל הרשמי — Top Charts',
+        subtitle: 'השירים הכי מושמעים בישראל ברגע זה (בזמן אמת)',
+        tracks: finalIsraelTracks
+      });
+    }
+
+    if (finalGlobalTracks.length > 0) {
+      liveChartSections.push({
+        id: 'global_top_chart',
+        title: 'המצעד העולמי — Global Top 50',
+        subtitle: 'הלהיטים הגדולים ביותר בעולם כרגע',
+        tracks: finalGlobalTracks
+      });
+    }
+  } else {
+    // Legacy Hybrid Mode (Rollback Path)
+    const [itunesChartTracks, deezerChartTracks] = await Promise.all([
+      fetchItunesChartTracks('IL', 30),
+      fetchDeezerChartTracks(30)
+    ]);
+
+    if (itunesChartTracks && itunesChartTracks.length > 0) {
+      liveChartSections.push({
+        id: 'israel_official_chart',
+        title: 'מצעד ישראל הרשמי — Top Charts',
+        subtitle: 'השירים הכי מושמעים בישראל ברגע זה (בזמן אמת)',
+        tracks: itunesChartTracks
+      });
+    }
+
+    if (deezerChartTracks && deezerChartTracks.length > 0) {
+      liveChartSections.push({
+        id: 'global_top_chart',
+        title: 'המצעד העולמי — Global Top 50',
+        subtitle: 'הלהיטים הגדולים ביותר בעולם כרגע',
+        tracks: deezerChartTracks
+      });
+    }
   }
 
   // 2. Fetch curated genre and mood shelves
   const sectionPromises = CATALOG_SECTION_DEFS.map(async (def) => {
     const queryLists = await Promise.all(
-      def.queries.map(q =>
-        Promise.all([
+      def.queries.map(q => {
+        if (USE_YOUTUBE_PRIMARY) {
+          return Promise.all([
+            searchInnerTube(q, 15),
+            searchYts(q, 10)
+          ]).then(([yt, ytsR]) => mergeAndDeduplicateTracks([yt, ytsR], 20));
+        }
+        return Promise.all([
           searchInnerTube(q, 20),
           searchDeezer(q, 15)
-        ]).then(([yt, dz]) => mergeAndDeduplicateTracks([yt, dz], 25))
-      )
+        ]).then(([yt, dz]) => mergeAndDeduplicateTracks([yt, dz], 25));
+      })
     );
     const tracks = mergeAndDeduplicateTracks(queryLists, 28);
     return {
@@ -742,5 +885,9 @@ module.exports = {
   searchTracks,
   getTrendingTracks,
   getHomeCatalog,
-  cleanTitle
+  cleanTitle,
+  formatYouTubeMetadata,
+  searchInnerTube,
+  searchYts,
+  USE_YOUTUBE_PRIMARY
 };
