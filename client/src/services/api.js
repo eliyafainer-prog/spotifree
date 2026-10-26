@@ -406,6 +406,87 @@ export function getOfflineDownloadUrl(track, serverOverride = null) {
 }
 
 /**
+ * Sniff audio binary magic bytes to determine the true MIME type
+ * Ensures mobile WebView / Blink demuxer can decode without MEDIA_ERR_SRC_NOT_SUPPORTED
+ */
+export async function sniffAudioBlobMime(blob) {
+  if (!blob || blob.size < 8) return 'audio/mp4';
+  try {
+    const slice = await blob.slice(0, 16).arrayBuffer();
+    const bytes = new Uint8Array(slice);
+    // MP4 / M4A: byte 4..7 is 'ftyp'
+    if (bytes.length >= 8 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
+      return 'audio/mp4';
+    }
+    // MP3 with ID3v2 header: 'ID3' (0x49, 0x44, 0x33)
+    if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
+      return 'audio/mpeg';
+    }
+    // MP3 raw frame sync: 0xFF followed by bits 111 (0xE0)
+    if (bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0) {
+      return 'audio/mpeg';
+    }
+    // OGG container: 'OggS'
+    if (bytes[0] === 0x4F && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
+      return 'audio/ogg';
+    }
+  } catch (e) {}
+  return blob.type && blob.type.startsWith('audio/') ? blob.type : 'audio/mp4';
+}
+
+/**
+ * Validate audio blob can be decoded by creating a temporary Audio element
+ */
+async function validatePlayableAudioBlob(blob) {
+  if (!blob || blob.size < 10000) {
+    throw new Error('קובץ שמע קטן מדי או לא תקין');
+  }
+  return new Promise((resolve, reject) => {
+    let url = '';
+    let a = null;
+    let timer = null;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (url) URL.revokeObjectURL(url);
+      if (a) {
+        a.removeAttribute('src');
+        a.load();
+        a = null;
+      }
+    };
+
+    try {
+      url = URL.createObjectURL(blob);
+      a = new Audio();
+      a.preload = 'metadata';
+
+      timer = setTimeout(() => {
+        cleanup();
+        resolve(true); // Don't block if device took too long to parse metadata
+      }, 1500);
+
+      a.onloadedmetadata = () => {
+        cleanup();
+        resolve(true);
+      };
+
+      a.onerror = () => {
+        const err = a?.error;
+        cleanup();
+        reject(new Error(`קובץ השמע פגום ולא ניתן לפענוח (קוד ${err?.code || 'unknown'})`));
+      };
+
+      a.src = url;
+      a.load();
+    } catch (e) {
+      cleanup();
+      resolve(true); // Fail-open on environment edge cases
+    }
+  });
+}
+
+/**
  * Download track audio as a Blob for offline playback with real-time progress & 3-stage auto-retry
  */
 export async function downloadTrackAudioBlob(track, onProgress = null) {
@@ -414,16 +495,20 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const baseAudioUrl = attempt <= 2 ? getOfflineDownloadUrl(track) : getPlayableAudioUrl(track);
-      const audioUrl = `${baseAudioUrl}&dl=1&attempt=${attempt}`;
+      const baseAudioUrl = getOfflineDownloadUrl(track);
+      const audioUrl = `${baseAudioUrl}&dl=1&attempt=${attempt}&cb=${Date.now()}`;
       const response = await fetch(audioUrl);
-      if (!response.ok) {
-        throw new Error(`Status ${response.status}`);
+
+      // Reject non-200 responses (strictly reject 206 Partial Content or redirects/errors)
+      if (response.status !== 200) {
+        throw new Error(`שרת החזיר סטטוס ${response.status} במקום 200 OK`);
       }
 
-      const contentType = response.headers.get('content-type') || 'audio/mp4';
       const contentLengthHeader = response.headers.get('content-length');
-      const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : estimatedBytes;
+      const expectedBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+      const totalBytes = expectedBytes > 0 ? expectedBytes : estimatedBytes;
+
+      let rawBlob;
 
       if (response.body && typeof response.body.getReader === 'function') {
         const reader = response.body.getReader();
@@ -445,20 +530,32 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
           }
         }
 
-        const blob = new Blob(chunks, { type: contentType });
-        if (blob.size < 10000) {
-          throw new Error('Incomplete audio file received');
+        // Verify full file was received if Content-Length was declared
+        if (expectedBytes > 0 && receivedBytes < expectedBytes - 512) {
+          throw new Error(`הורדה נחתכה באמצע: התקבלו ${receivedBytes} בתים מתוך ${expectedBytes}`);
         }
-        if (onProgress) onProgress(100, receivedBytes, receivedBytes);
-        return blob;
+
+        rawBlob = new Blob(chunks);
       } else {
-        const blob = await response.blob();
-        if (blob.size < 10000) {
-          throw new Error('Incomplete audio file received');
+        rawBlob = await response.blob();
+        if (expectedBytes > 0 && rawBlob.size < expectedBytes - 512) {
+          throw new Error(`הורדה נחתכה באמצע: התקבלו ${rawBlob.size} בתים מתוך ${expectedBytes}`);
         }
-        if (onProgress) onProgress(100, blob.size, blob.size);
-        return blob;
       }
+
+      if (rawBlob.size < 10000) {
+        throw new Error('קובץ שמע קטן מדי');
+      }
+
+      // Sniff true magic bytes to assign exact audio/mpeg vs audio/mp4
+      const trueMime = await sniffAudioBlobMime(rawBlob);
+      const finalBlob = new Blob([rawBlob], { type: trueMime });
+
+      // Validate decode in Audio element before saving to IndexedDB
+      await validatePlayableAudioBlob(finalBlob);
+
+      if (onProgress) onProgress(100, finalBlob.size, finalBlob.size);
+      return finalBlob;
     } catch (err) {
       lastErr = err;
       if (attempt < 3) {

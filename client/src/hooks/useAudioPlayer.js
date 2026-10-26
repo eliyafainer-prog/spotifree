@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getPlayableAudioUrl, fetchDirectStreamUrl, prefetchNextTracks, resolveTrack, getCachedTrackResolution, searchTracks } from '../services/api';
+import { getPlayableAudioUrl, fetchDirectStreamUrl, prefetchNextTracks, resolveTrack, getCachedTrackResolution, searchTracks, sniffAudioBlobMime } from '../services/api';
 import { addRecentTrack, updateTrackInPlaylists, isSameTrack, getLastPlaybackState, saveLastPlaybackState } from '../services/storage';
-import { getOfflineTrack, revokeOfflineObjectUrl } from '../services/offlineStorage';
+import { getOfflineTrack, revokeOfflineObjectUrl, deleteOfflineTrack } from '../services/offlineStorage';
 
 // Fisher-Yates shuffle helper: produces a non-repeating permutation of indices
 function generateShuffledDeck(length, startingIndex = -1) {
@@ -200,14 +200,21 @@ export function useAudioPlayer() {
       const srcAttr = audio.getAttribute('src');
       if (!srcAttr) return; // Ignore empty src reset
 
-      // If a local offline blob fails or is corrupted, fall back to streaming from network!
+      // If a local offline blob fails, attempt immediate network failover silently without triggering error popup
       if (isOfflinePlaybackRef.current || srcAttr.startsWith('blob:')) {
-        console.warn('Local offline blob playback failed, falling back to network stream...');
+        console.warn('Local offline blob playback failed, attempting network stream fallback...');
         isOfflinePlaybackRef.current = false;
         if (activeBlobUrlRef.current) {
           revokeOfflineObjectUrl(activeBlobUrlRef.current);
           activeBlobUrlRef.current = null;
         }
+
+        // Clean up broken cached offline blob from IndexedDB so future plays don't choke on it
+        const brokenTrackId = currentTrackRef.current?.id || currentTrackRef.current?.streamableId;
+        if (brokenTrackId) {
+          deleteOfflineTrack(brokenTrackId).catch(() => {});
+        }
+
         if (currentTrackRef.current && typeof navigator !== 'undefined' && navigator.onLine) {
           const networkUrl = getPlayableAudioUrl(currentTrackRef.current);
           audioRef.current.src = networkUrl;
@@ -215,7 +222,10 @@ export function useAudioPlayer() {
           audioRef.current.play().then(() => {
             setIsPlaying(true);
             setIsLoading(false);
-          }).catch(() => {
+          }).catch((err) => {
+            // Strictly ignore AbortError caused by load() or rapid navigation
+            if (err?.name === 'AbortError') return;
+            // Only show toast if progressive network retry also fails completely
             setIsLoading(false);
             setIsPlaying(false);
             setPlaybackError('שגיאה בניגון השיר');
@@ -224,7 +234,7 @@ export function useAudioPlayer() {
         }
         setIsLoading(false);
         setIsPlaying(false);
-        setPlaybackError('שגיאה בניגון הקובץ השמור');
+        setPlaybackError('שגיאה בניגון הקובץ השמור במצב לא מקוון');
         return;
       }
 
@@ -412,6 +422,12 @@ export function useAudioPlayer() {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isPlaying) {
         requestWakeLock();
+      }
+      // When PWA moves to background, ensure audio keeps playing and isn't paused by browser throttling
+      if (document.hidden && isPlaying && !userPausedRef.current) {
+        if (audioRef.current && audioRef.current.paused) {
+          audioRef.current.play().catch(() => {});
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -612,8 +628,16 @@ export function useAudioPlayer() {
         streamUrl = getPlayableAudioUrl(track);
       }
 
+      // Pre-reset audio src cleanly and load to avoid stale pipeline decode errors in mobile browser
+      if (audio.src && audio.src !== streamUrl) {
+        try {
+          audio.pause();
+        } catch (e) {}
+      }
+
       audio.src = streamUrl;
       audio.volume = isMuted ? 0 : (Number.isFinite(volume) ? volume : 0.8);
+      audio.load();
 
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
 
@@ -761,6 +785,11 @@ export function useAudioPlayer() {
 
     // STRICT OFFLINE PRIORITY: Always check IndexedDB local offline storage BEFORE initiating any network stream!
     if (playableTrack.audioBlob) {
+      const trueMime = await sniffAudioBlobMime(playableTrack.audioBlob);
+      const fixedBlob = (playableTrack.audioBlob.type === trueMime)
+        ? playableTrack.audioBlob
+        : new Blob([playableTrack.audioBlob], { type: trueMime });
+      playableTrack.audioBlob = fixedBlob;
       playViaAudioElement(playableTrack, sessionId);
       prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
     } else {
@@ -768,9 +797,13 @@ export function useAudioPlayer() {
       if (playSessionIdRef.current !== sessionId || userPausedRef.current) return;
 
       if (offlineRecord && offlineRecord.audioBlob) {
+        const trueMime = await sniffAudioBlobMime(offlineRecord.audioBlob);
+        const fixedBlob = (offlineRecord.audioBlob.type === trueMime)
+          ? offlineRecord.audioBlob
+          : new Blob([offlineRecord.audioBlob], { type: trueMime });
         const offlinePlayable = {
           ...playableTrack,
-          audioBlob: offlineRecord.audioBlob,
+          audioBlob: fixedBlob,
           thumbnail: offlineRecord.thumbnail || playableTrack.thumbnail,
           durationSeconds: offlineRecord.durationSeconds || playableTrack.durationSeconds
         };

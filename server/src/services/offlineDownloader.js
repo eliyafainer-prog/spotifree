@@ -697,6 +697,27 @@ async function fetchSegmentWithRetry(segUrl) {
   }
 }
 
+function detectAudioMime(buf) {
+  if (!buf || buf.length < 4) return null;
+  // MP4 / M4A: bytes 4..7 are 'ftyp'
+  if (buf.length >= 8 && buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) {
+    return 'audio/mp4';
+  }
+  // MP3 ID3 header: 'ID3' (0x49, 0x44, 0x33)
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) {
+    return 'audio/mpeg';
+  }
+  // MP3 raw frame sync: 0xFF followed by bits 111 (0xE0)
+  if (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0) {
+    return 'audio/mpeg';
+  }
+  // OGG: 'OggS'
+  if (buf[0] === 0x4F && buf[1] === 0x67 && buf[2] === 0x67 && buf[3] === 0x53) {
+    return 'audio/ogg';
+  }
+  return null;
+}
+
 async function pipeHlsDownload(m3u8Url, req, res) {
   let aborted = false;
   req.on('close', () => {
@@ -732,31 +753,53 @@ async function pipeHlsDownload(m3u8Url, req, res) {
     throw new Error('Empty HLS playlist');
   }
 
-  const isMp3 = !mapUrl && (mediaUrls[0].includes('.mp3') || m3u8Url.includes('mp3'));
-  res.statusCode = 200;
-  res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'audio/mp4');
-  res.setHeader('Accept-Ranges', 'bytes');
-  res.setHeader('Cache-Control', 'no-store');
-  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  let firstBuf = null;
+  let detectedType = null;
 
   if (mapUrl && !aborted && !res.writableEnded) {
     const initBuf = await fetchSegmentWithRetry(mapUrl);
-    const patchedInit = patchInitMp4Duration(initBuf, totalDurationSec);
+    detectedType = detectAudioMime(initBuf) || 'audio/mp4';
+    const isMp3 = detectedType === 'audio/mpeg';
+    res.statusCode = 200;
+    res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'audio/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'no-store');
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+    const patchedInit = isMp3 ? initBuf : patchInitMp4Duration(initBuf, totalDurationSec);
     if (!aborted && !res.writableEnded) {
       res.write(patchedInit);
     }
+  } else if (mediaUrls.length > 0 && !aborted && !res.writableEnded) {
+    // If no init map, fetch first media segment to sniff true magic bytes
+    firstBuf = await fetchSegmentWithRetry(mediaUrls[0]);
+    detectedType = detectAudioMime(firstBuf);
+    const isMp3 = detectedType === 'audio/mpeg' || mediaUrls[0].includes('.mp3') || m3u8Url.includes('mp3');
+    res.statusCode = 200;
+    res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'audio/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'no-store');
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+    if (firstBuf && !aborted && !res.writableEnded) {
+      const cleanFirst = isMp3 ? firstBuf : stripStypSidx(firstBuf);
+      res.write(cleanFirst);
+    }
   }
 
-  // Fetch segments in parallel batches of 4 while writing in strict sequential order
+  const isMp3Stream = (res.getHeader('Content-Type') || '').includes('mpeg');
+
+  // Fetch remaining segments in parallel batches of 4 while writing in strict sequential order
   const BATCH_SIZE = 4;
-  for (let i = 0; i < mediaUrls.length; i += BATCH_SIZE) {
+  const startIndex = firstBuf ? 1 : 0;
+  for (let i = startIndex; i < mediaUrls.length; i += BATCH_SIZE) {
     if (aborted || res.writableEnded) break;
     const batchUrls = mediaUrls.slice(i, i + BATCH_SIZE);
     const buffers = await Promise.all(batchUrls.map(u => fetchSegmentWithRetry(u)));
 
     for (const rawBuf of buffers) {
       if (aborted || res.writableEnded || !rawBuf) break;
-      const cleanBuf = isMp3 ? rawBuf : stripStypSidx(rawBuf);
+      const cleanBuf = isMp3Stream ? rawBuf : stripStypSidx(rawBuf);
       const canContinue = res.write(cleanBuf);
       if (!canContinue && !aborted && !res.writableEnded) {
         await new Promise(resolve => res.once('drain', resolve));
@@ -811,17 +854,37 @@ async function pipeOfflineDownload(videoId, req, res, fallbackQuery = null, meta
 
       for (const [key, value] of Object.entries(response.headers)) {
         const lower = key.toLowerCase();
-        if (['content-type', 'content-length', 'content-range'].includes(lower)) {
+        if (['content-length', 'content-range'].includes(lower)) {
           res.setHeader(lower, value);
         }
       }
 
-      const ct = String(res.getHeader('Content-Type') || '');
-      if (!ct || ct.includes('video/')) {
-        res.setHeader('Content-Type', 'audio/mp4');
-      }
-      if (typeof res.flushHeaders === 'function') res.flushHeaders();
-      response.data.pipe(res);
+      // Sniff first chunk to accurately set Content-Type header based on true magic bytes
+      let firstChunkHandled = false;
+      const onFirstChunk = (chunk) => {
+        if (firstChunkHandled) return;
+        firstChunkHandled = true;
+        const detected = detectAudioMime(chunk);
+        const upstreamCt = String(response.headers['content-type'] || '').toLowerCase();
+        let finalCt = detected;
+        if (!finalCt) {
+          if (upstreamCt.includes('mpeg') || upstreamCt.includes('mp3')) {
+            finalCt = 'audio/mpeg';
+          } else {
+            finalCt = 'audio/mp4';
+          }
+        }
+        res.setHeader('Content-Type', finalCt);
+        if (typeof res.flushHeaders === 'function') res.flushHeaders();
+        res.write(chunk);
+        response.data.pipe(res);
+      };
+
+      response.data.once('data', onFirstChunk);
+      response.data.once('error', () => {
+        if (!res.headersSent) res.statusCode = 502;
+        res.end();
+      });
       return true;
     }
 
