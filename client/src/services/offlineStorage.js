@@ -4,6 +4,81 @@ const STORE_NAME = 'offline_tracks';
 
 let cachedDbPromise = null;
 
+// Synchronous in-memory index cache for 0ms instant offline checks (preserves browser transient user activation!)
+const offlineIndexSet = new Set();
+let isOfflineCachePopulated = false;
+
+function addToOfflineIndex(item) {
+  if (!item) return;
+  const ids = [item.id, item.streamableId, item.originalId, item.spotifyId, item.videoId].filter(Boolean).map(String);
+  for (const id of ids) {
+    offlineIndexSet.add(id);
+  }
+  if (item.title) {
+    const key = `${normMetaStr(item.title)}:::${normMetaStr(item.artist)}`;
+    offlineIndexSet.add(key);
+  }
+}
+
+function removeFromOfflineIndex(trackId) {
+  if (!trackId) return;
+  offlineIndexSet.delete(String(trackId));
+}
+
+/**
+ * Pre-populate the in-memory offline index on module load
+ */
+export async function initOfflineCache() {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        offlineIndexSet.clear();
+        const items = req.result || [];
+        for (const item of items) {
+          addToOfflineIndex(item);
+        }
+        isOfflineCachePopulated = true;
+        resolve(true);
+      };
+      req.onerror = () => {
+        isOfflineCachePopulated = true;
+        resolve(false);
+      };
+    });
+  } catch {
+    isOfflineCachePopulated = true;
+    return false;
+  }
+}
+
+// Auto-run in browser context
+if (typeof window !== 'undefined') {
+  setTimeout(() => initOfflineCache(), 10);
+}
+
+/**
+ * Synchronous instant check (0ms) to know if a track might exist in offline storage
+ */
+export function isOfflineTrackCachedSync(trackOrId) {
+  if (!trackOrId || !isOfflineCachePopulated) return false;
+  if (typeof trackOrId === 'string') {
+    return offlineIndexSet.has(trackOrId);
+  }
+  const candidateIds = [trackOrId.streamableId, trackOrId.id, trackOrId.originalId, trackOrId.spotifyId, trackOrId.videoId].filter(Boolean).map(String);
+  for (const cid of candidateIds) {
+    if (offlineIndexSet.has(cid)) return true;
+  }
+  if (trackOrId.title) {
+    const key = `${normMetaStr(trackOrId.title)}:::${normMetaStr(trackOrId.artist)}`;
+    if (offlineIndexSet.has(key)) return true;
+  }
+  return false;
+}
+
 /**
  * Open or upgrade IndexedDB database (reuses singleton connection for 1ms lookups)
  */
@@ -121,7 +196,10 @@ export async function saveTrackOffline(track, audioBlob, lyricsData = null) {
     };
 
     const request = store.put(record);
-    request.onsuccess = () => resolve(record);
+    request.onsuccess = () => {
+      addToOfflineIndex(record);
+      resolve(record);
+    };
     request.onerror = () => reject(request.error);
   });
 }
@@ -198,6 +276,12 @@ export function isTrackInIdSet(track, idSet) {
  */
 export async function getOfflineTrack(trackOrId) {
   if (!trackOrId) return null;
+
+  // Instant (0ms) synchronous fast-path: if offline cache is populated and track is not in it, skip IndexedDB completely!
+  if (isOfflineCachePopulated && !isOfflineTrackCachedSync(trackOrId)) {
+    return null;
+  }
+
   const isObj = typeof trackOrId === 'object';
   const lookupIds = isObj
     ? [trackOrId.streamableId, trackOrId.id, trackOrId.originalId, trackOrId.spotifyId, trackOrId.videoId].filter(Boolean)
@@ -293,7 +377,13 @@ export async function getAllOfflineTracks() {
       const request = store.getAll();
 
       request.onsuccess = () => {
-        const results = (request.result || []).sort((a, b) => b.downloadedAt - a.downloadedAt);
+        const rawResults = request.result || [];
+        offlineIndexSet.clear();
+        for (const item of rawResults) {
+          addToOfflineIndex(item);
+        }
+        isOfflineCachePopulated = true;
+        const results = rawResults.sort((a, b) => b.downloadedAt - a.downloadedAt);
         try {
           const rawOrder = localStorage.getItem(OFFLINE_ORDER_KEY);
           if (rawOrder) {
@@ -331,7 +421,10 @@ export async function deleteOfflineTrack(trackId) {
     const store = tx.objectStore(STORE_NAME);
     const request = store.delete(trackId);
 
-    request.onsuccess = () => resolve(true);
+    request.onsuccess = () => {
+      removeFromOfflineIndex(trackId);
+      resolve(true);
+    };
     request.onerror = () => reject(request.error);
   });
 }

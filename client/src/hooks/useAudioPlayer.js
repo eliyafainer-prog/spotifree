@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getPlayableAudioUrl, fetchDirectStreamUrl, prefetchNextTracks, resolveTrack, getCachedTrackResolution, searchTracks, sniffAudioBlobMime } from '../services/api';
 import { addRecentTrack, updateTrackInPlaylists, isSameTrack, getLastPlaybackState, saveLastPlaybackState } from '../services/storage';
-import { getOfflineTrack, revokeOfflineObjectUrl, deleteOfflineTrack } from '../services/offlineStorage';
+import { getOfflineTrack, revokeOfflineObjectUrl, deleteOfflineTrack, isOfflineTrackCachedSync } from '../services/offlineStorage';
 
 // Fisher-Yates shuffle helper: produces a non-repeating permutation of indices
 function generateShuffledDeck(length, startingIndex = -1) {
@@ -168,7 +168,6 @@ export function useAudioPlayer() {
 
     const handleCanPlay = () => {
       if (activeEngineRef.current === 'audio') {
-        isTransitioningRef.current = false;
         setIsLoading(false);
         if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
       }
@@ -184,8 +183,11 @@ export function useAudioPlayer() {
     };
 
     const handlePause = () => {
-      if (activeEngineRef.current === 'audio' && !isTransitioningRef.current) {
-        setIsPlaying(false);
+      if (activeEngineRef.current === 'audio') {
+        // Never mark paused while in the middle of transitioning/loading a new song
+        if (!isTransitioningRef.current) {
+          setIsPlaying(false);
+        }
       }
     };
 
@@ -642,19 +644,13 @@ export function useAudioPlayer() {
         streamUrl = getPlayableAudioUrl(track);
       }
 
-      // Pre-reset audio src cleanly and load to avoid stale pipeline decode errors in mobile browser
-      if (audio.src && audio.src !== streamUrl) {
-        try {
-          audio.pause();
-        } catch (e) {}
+      // Set audio src directly (setting src natively initiates browser buffering without firing spurious pause events)
+      if (audio.src !== streamUrl) {
+        audio.src = streamUrl;
       }
-
-      audio.src = streamUrl;
       audio.volume = isMuted ? 0 : (Number.isFinite(volume) ? volume : 0.8);
-      audio.load();
 
-      // Immediately keep background audio awake and notify native Android Foreground Service
-      silentAudioRef.current?.play().catch(() => {});
+      // Notify native Android Foreground Service
       updateNativePlayback({
         title: track.title || 'SpotiFree',
         artist: track.artist || 'Playing',
@@ -816,6 +812,14 @@ export function useAudioPlayer() {
       isOfflinePlaybackRef.current = true;
       playViaAudioElement(playableTrack, sessionId);
       return; // Never trigger network resolution or prefetch for local offline playback!
+    }
+
+    const mightBeOffline = isOfflineTrackCachedSync(playableTrack);
+    if (!mightBeOffline) {
+      // 100% online stream -> Start playback SYNCHRONOUSLY to preserve user click transient activation!
+      isOfflinePlaybackRef.current = false;
+      playViaAudioElement(playableTrack, sessionId);
+      prefetchUpcomingTracks(targetIdx, shuffleModeRef.current !== 'off');
     } else {
       const offlineRecord = await getOfflineTrack(playableTrack).catch(() => null);
       if (playSessionIdRef.current !== sessionId || userPausedRef.current) return;
@@ -881,20 +885,37 @@ export function useAudioPlayer() {
    */
   const play = useCallback(() => {
     userPausedRef.current = false;
-    silentAudioRef.current?.play().catch(() => {});
     if (activeEngineRef.current === 'yt' && ytPlayerRef.current) {
       try {
+        silentAudioRef.current?.play().catch(() => {});
         if (typeof ytPlayerRef.current.unMute === 'function') {
           ytPlayerRef.current.unMute();
         }
         ytPlayerRef.current.playVideo();
       } catch (e) {}
     } else if (audioRef.current) {
-      if (!audioRef.current.getAttribute('src') && currentTrackRef.current) {
+      const hasSrc = Boolean(audioRef.current.getAttribute('src'));
+      const hasError = Boolean(audioRef.current.error);
+      if ((!hasSrc || hasError) && currentTrackRef.current) {
         playTrack(currentTrackRef.current);
         return;
       }
-      audioRef.current.play().catch(() => {});
+      setIsLoading(true);
+      const playPromise = audioRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            isTransitioningRef.current = false;
+            setIsPlaying(true);
+            setIsLoading(false);
+          })
+          .catch((err) => {
+            console.warn('audio.play() in play():', err?.name, err?.message);
+            if (currentTrackRef.current) {
+              playTrack(currentTrackRef.current);
+            }
+          });
+      }
     }
   }, [playTrack]);
 
@@ -912,6 +933,7 @@ export function useAudioPlayer() {
       audioRef.current.pause();
     }
     setIsPlaying(false);
+    setIsLoading(false);
   }, []);
 
   /**
@@ -919,7 +941,13 @@ export function useAudioPlayer() {
    */
   const togglePlay = useCallback(() => {
     if (!currentTrack) return;
-    if (isPlaying) {
+
+    // Check actual engine state for 100% accurate toggle - never get stuck in desynchronized state!
+    const isActuallyPlaying = (activeEngineRef.current === 'yt' && ytPlayerRef.current)
+      ? (typeof ytPlayerRef.current.getPlayerState === 'function' && ytPlayerRef.current.getPlayerState() === 1)
+      : (audioRef.current ? (!audioRef.current.paused && audioRef.current.currentTime > 0) : isPlaying);
+
+    if (isActuallyPlaying) {
       pause();
     } else {
       play();

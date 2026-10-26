@@ -1,5 +1,5 @@
-// SpotiFree PWA Service Worker v5
-const CACHE_NAME = 'spotifree-pwa-v5';
+// SpotiFree PWA Service Worker v6
+const CACHE_NAME = 'spotifree-pwa-v6';
 
 const PRECACHE_ASSETS = [
   '/',
