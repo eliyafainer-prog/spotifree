@@ -629,6 +629,9 @@ async function searchTracks(query, limit = 60) {
   if (limit <= 15) {
     let fastResults = await searchInnerTube(trimmed, limit);
     if (fastResults.length === 0) {
+      fastResults = await searchYouTubeMusic(trimmed, limit);
+    }
+    if (fastResults.length === 0) {
       fastResults = await searchYts(trimmed, limit);
     }
     if (fastResults.length > 0) {
