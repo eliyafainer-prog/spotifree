@@ -85,7 +85,8 @@ const UNWANTED_KEYWORDS = [
   'ריאקשן', 'reaction', 'מגיב ל', 'מגיבה ל', 'תגובה ל', 'reacts to', 'מגיב', 'מגיבה', 'תגובה', 'ריאקשנים',
   'dance studio', 'just dance', 'סטודיו לריקוד', 'הדרכת ריקוד', 'כוריאוגרפיה', 'choreography',
   'פודקאסט', 'podcast', 'ראיון', 'interview', 'מאחורי הקלעים', 'הצצה ל', 'פרק ', 'סרטון',
-  'חדשות', 'כתבה', 'מספיד', 'הסכת', 'דוקו', 'documentary', 'שיעור', 'מדריך', 'באטל', 'battle'
+  'חדשות', 'כתבה', 'מספיד', 'הסכת', 'דוקו', 'documentary', 'שיעור', 'מדריך', 'באטל', 'battle',
+  'סט להיטים', 'אוסף הלהיטים', 'ברצף', 'שעה של', 'חצי שעה', 'full album'
 ];
 
 const SECONDARY_REMIX_KEYWORDS = [
@@ -218,9 +219,9 @@ function rankAndFilterSearchResults(results, query) {
 }
 
 /**
- * 1. Ultra-fast direct YouTube InnerTube Search API (~0.8-1.2s response, up to 40 results)
+ * 1. Ultra-fast direct YouTube InnerTube Search API with continuation paging (~0.8-1.4s response, up to 60 results)
  */
-async function searchInnerTube(query, limit = 40) {
+async function searchInnerTube(query, limit = 50, fetchContinuation = true) {
   try {
     const response = await axios.post(
       'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
@@ -247,54 +248,199 @@ async function searchInnerTube(query, limit = 40) {
     const data = response.data;
     const rawResults = [];
     const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
+    let continuationToken = null;
+
+    const parseVideoRenderer = (v) => {
+      if (!v || !v.videoId) return null;
+
+      const rawTitle = v.title?.runs?.[0]?.text || '';
+      const rawAuthor = v.ownerText?.runs?.[0]?.text || 'Unknown Artist';
+      const isTopic = /\s*-\s*Topic$/i.test(rawAuthor);
+      const isVerified = Boolean(v.ownerBadges && v.ownerBadges.length > 0);
+      const durStr = v.lengthText?.simpleText || '0:00';
+      const parts = durStr.split(':').map(Number);
+      let sec = 0;
+      if (parts.length === 2) sec = (parts[0] || 0) * 60 + (parts[1] || 0);
+      else if (parts.length === 3) sec = (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
+
+      // Skip ultra-short teasers (< 40s) and long DJ mixes / full albums (> 11 mins)
+      if ((sec > 0 && sec < 40) || sec > 660) return null;
+
+      const thumbs = v.thumbnail?.thumbnails || [];
+      const thumb = thumbs.length > 0 ? thumbs[thumbs.length - 1].url : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
+      const meta = formatYouTubeMetadata(rawTitle, rawAuthor);
+
+      return {
+        id: v.videoId,
+        streamableId: v.videoId,
+        title: meta.title,
+        originalTitle: rawTitle,
+        artist: meta.artist,
+        rawAuthor: rawAuthor,
+        isTopic: isTopic,
+        isVerified: isVerified,
+        duration: durStr,
+        durationSeconds: sec,
+        thumbnail: thumb,
+        views: v.viewCountText?.simpleText || '',
+        source: 'youtube',
+        url: `https://youtube.com/watch?v=${v.videoId}`
+      };
+    };
 
     for (const section of sections) {
-      const items = section?.itemSectionRenderer?.contents || [];
-      for (const item of items) {
-        if (item.videoRenderer) {
-          const v = item.videoRenderer;
-          if (!v.videoId) continue;
-
-          const rawTitle = v.title?.runs?.[0]?.text || '';
-          const rawAuthor = v.ownerText?.runs?.[0]?.text || 'Unknown Artist';
-          const isTopic = /\s*-\s*Topic$/i.test(rawAuthor);
-          const isVerified = Boolean(v.ownerBadges && v.ownerBadges.length > 0);
-          const durStr = v.lengthText?.simpleText || '0:00';
-          const parts = durStr.split(':').map(Number);
-          let sec = 0;
-          if (parts.length === 2) sec = (parts[0] || 0) * 60 + (parts[1] || 0);
-          else if (parts.length === 3) sec = (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
-
-          // Skip ultra-short teasers (< 40s) and long DJ mixes / full albums (> 11 mins)
-          if ((sec > 0 && sec < 40) || sec > 660) continue;
-
-          const thumbs = v.thumbnail?.thumbnails || [];
-          const thumb = thumbs.length > 0 ? thumbs[thumbs.length - 1].url : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
-          const meta = formatYouTubeMetadata(rawTitle, rawAuthor);
-
-          rawResults.push({
-            id: v.videoId,
-            streamableId: v.videoId,
-            title: meta.title,
-            originalTitle: rawTitle,
-            artist: meta.artist,
-            rawAuthor: rawAuthor,
-            isTopic: isTopic,
-            isVerified: isVerified,
-            duration: durStr,
-            durationSeconds: sec,
-            thumbnail: thumb,
-            views: v.viewCountText?.simpleText || '',
-            source: 'youtube',
-            url: `https://youtube.com/watch?v=${v.videoId}`
-          });
+      if (section?.itemSectionRenderer?.contents) {
+        for (const item of section.itemSectionRenderer.contents) {
+          const parsed = parseVideoRenderer(item.videoRenderer);
+          if (parsed) rawResults.push(parsed);
         }
       }
+      if (section?.continuationItemRenderer) {
+        continuationToken = section.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+      }
+    }
+
+    // Follow continuation Page 2 for vast catalogue breadth
+    if (continuationToken && fetchContinuation && limit > 15) {
+      try {
+        const contRes = await axios.post(
+          'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+          {
+            context: {
+              client: {
+                clientName: 'WEB',
+                clientVersion: '2.20240101.00.00',
+                hl: 'he',
+                gl: 'IL'
+              }
+            },
+            continuation: continuationToken
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            timeout: 4500
+          }
+        );
+        const contItems = contRes.data?.onResponseReceivedCommands?.[0]?.appendContinuationItemsAction?.continuationItems || [];
+        for (const ci of contItems) {
+          if (ci?.itemSectionRenderer?.contents) {
+            for (const item of ci.itemSectionRenderer.contents) {
+              const parsed = parseVideoRenderer(item.videoRenderer);
+              if (parsed) rawResults.push(parsed);
+            }
+          }
+        }
+      } catch (contErr) {}
     }
 
     const ranked = rankAndFilterSearchResults(rawResults, query);
     return ranked.slice(0, limit);
   } catch (err) {
+    return [];
+  }
+}
+
+/**
+ * 2. Official YouTube Music Search API (official studio master releases, albums, singles)
+ */
+async function searchYouTubeMusic(query, limit = 35) {
+  try {
+    const res = await axios.post(
+      'https://music.youtube.com/youtubei/v1/search?prettyPrint=false',
+      {
+        context: {
+          client: {
+            clientName: 'WEB_REMIX',
+            clientVersion: '1.20240101.01.00',
+            hl: 'he',
+            gl: 'IL'
+          }
+        },
+        query: query
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        timeout: 4000
+      }
+    );
+
+    const results = [];
+    const secContents = res.data?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+
+    for (const sec of secContents) {
+      const isr = sec.itemSectionRenderer?.contents || [];
+      for (const item of isr) {
+        const r = item.musicResponsiveListItemRenderer;
+        if (!r) continue;
+
+        const flex0 = r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0];
+        const flex1Runs = r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+
+        // Exclude podcasts, talk episodes, interviews
+        const isPodcast = flex1Runs.some(x => {
+          const t = (x.text || '').trim();
+          return t === 'פרק' || t === 'פודקאסט' || t === 'הסכת' || t === 'Episode' || t === 'Podcast';
+        });
+        if (isPodcast) continue;
+
+        const vidId = flex0?.navigationEndpoint?.watchEndpoint?.videoId ||
+                      r.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId;
+
+        if (!vidId || !/^[a-zA-Z0-9_-]{11}$/.test(vidId)) continue;
+
+        const rawTitle = flex0?.text || '';
+        let artist = '';
+        let duration = '3:00';
+        let durSec = 180;
+        for (const run of flex1Runs) {
+          const t = run.text?.trim();
+          if (!t || t === '•') continue;
+          if (/^\d{1,2}:\d{2}$/.test(t)) {
+            duration = t;
+            const parts = t.split(':').map(Number);
+            durSec = (parts[0] || 0) * 60 + (parts[1] || 0);
+          } else if (!artist && t !== 'שיר' && t !== 'סרטון' && t !== 'אלבום' && t !== 'סינגל' && t !== 'Song' && t !== 'Video') {
+            artist = t;
+          }
+        }
+
+        // Skip ultra-short snippets (< 40s) and long DJ mixes / full albums (> 11 mins)
+        if ((durSec > 0 && durSec < 40) || durSec > 660) continue;
+
+        const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+        const thumb = thumbs.length > 0
+          ? thumbs[thumbs.length - 1].url.replace(/=w\d+-h\d+.*$/, '=w500-h500-l90-rj')
+          : `https://i.ytimg.com/vi/${vidId}/hqdefault.jpg`;
+
+        const meta = formatYouTubeMetadata(rawTitle, artist);
+
+        results.push({
+          id: vidId,
+          streamableId: vidId,
+          title: meta.title,
+          originalTitle: rawTitle,
+          artist: meta.artist,
+          rawAuthor: artist || meta.artist,
+          isTopic: true,
+          isVerified: true,
+          duration: duration,
+          durationSeconds: durSec,
+          thumbnail: thumb,
+          source: 'youtube',
+          url: `https://music.youtube.com/watch?v=${vidId}`
+        });
+      }
+    }
+
+    const ranked = rankAndFilterSearchResults(results, query);
+    return ranked.slice(0, limit);
+  } catch (e) {
     return [];
   }
 }
@@ -493,14 +639,22 @@ async function searchTracks(query, limit = 60) {
 
   // 2. YouTube Primary Mode (Default)
   if (USE_YOUTUBE_PRIMARY) {
-    const [ytInner, ytsRes] = await Promise.all([
-      searchInnerTube(trimmed, 50),
-      searchYts(trimmed, 40)
+    const isHebrew = /[\u0590-\u05FF]/.test(trimmed);
+    const extraSuffix = isHebrew ? ' שירים' : ' songs';
+    const shouldAddAlt = !trimmed.includes('שיר') && !trimmed.includes('song') && trimmed.split(/\s+/).length <= 4;
+    const altQuery = shouldAddAlt ? (trimmed + extraSuffix) : null;
+
+    const [ytmRes, ytInner, ytsRes, ytAlt] = await Promise.all([
+      searchYouTubeMusic(trimmed, 40),
+      searchInnerTube(trimmed, 60, true),
+      searchYts(trimmed, 40),
+      altQuery ? searchInnerTube(altQuery, 35, false) : Promise.resolve([])
     ]);
 
-    let results = mergeAndDeduplicateTracks([ytInner, ytsRes], limit);
+    // Give official studio master releases from YouTube Music highest priority
+    let results = mergeAndDeduplicateTracks([ytmRes, ytInner, ytAlt, ytsRes], limit);
 
-    // Fallback to studio catalogs only if YouTube search returned too few results
+    // Fallback to studio catalogs only if YouTube search returned too few results (< 5)
     if (results.length < 5) {
       const [deezerRes, itunesRes] = await Promise.all([
         searchDeezer(trimmed, 30),
@@ -612,9 +766,9 @@ const CATALOG_SECTION_DEFS = [
     title: 'להיטי ישראל — הכי חמים עכשיו',
     subtitle: 'עומר אדם, נועה קירל, אושר כהן, פאר טסי, עדן חסון',
     queries: [
-      'עומר אדם אושר כהן',
-      'נועה קירל עדן חסון',
-      'פאר טסי אודיה יסמין מועלם'
+      'עומר אדם שירים להיטים',
+      'אושר כהן שירים להיטים',
+      'נועה קירל פאר טסי עדן חסון'
     ]
   },
   {
@@ -841,9 +995,10 @@ async function getHomeCatalog() {
       def.queries.map(q => {
         if (USE_YOUTUBE_PRIMARY) {
           return Promise.all([
-            searchInnerTube(q, 15),
+            searchYouTubeMusic(q, 15),
+            searchInnerTube(q, 20, false),
             searchYts(q, 10)
-          ]).then(([yt, ytsR]) => mergeAndDeduplicateTracks([yt, ytsR], 20));
+          ]).then(([ytm, yt, ytsR]) => mergeAndDeduplicateTracks([ytm, yt, ytsR], 25));
         }
         return Promise.all([
           searchInnerTube(q, 20),
@@ -888,6 +1043,7 @@ module.exports = {
   cleanTitle,
   formatYouTubeMetadata,
   searchInnerTube,
+  searchYouTubeMusic,
   searchYts,
   USE_YOUTUBE_PRIMARY
 };

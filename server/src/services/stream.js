@@ -716,6 +716,27 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       try {
         streamUrl = await extractYoutubeDirectVisionOs(videoId, effectiveMeta);
       } catch (e) {}
+
+      // Self-healing: If videoId is dead/unplayable (e.g. copyright taken down), find an active alternative on YouTube
+      if (!streamUrl) {
+        try {
+          const { searchInnerTube } = require('./search');
+          const altQuery = `${effectiveMeta.artist || ''} ${effectiveMeta.title || ''}`.trim() || fallbackQuery;
+          if (altQuery) {
+            const candidates = await searchInnerTube(altQuery, 5, false);
+            for (const cand of candidates) {
+              if (cand.id && cand.id !== videoId && /^[a-zA-Z0-9_-]{11}$/.test(cand.id)) {
+                const altStream = await extractYoutubeDirectVisionOs(cand.id, effectiveMeta);
+                if (altStream) {
+                  streamUrl = altStream;
+                  videoId = cand.id;
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) {}
+      }
     } else if (effectiveMeta.title || effectiveQuery) {
       // If videoId is an unresolved Spotify track ID (e.g. sp_...), resolve it accurately to the official studio track
       try {
@@ -1165,6 +1186,7 @@ async function pipeStream(videoId, req, res, fallbackQuery = null, meta = null) 
 
 module.exports = {
   getAudioStreamUrl,
+  extractYoutubeDirectVisionOs,
   pipeStream,
   pipeHlsInNode,
   prefetchTracks,
