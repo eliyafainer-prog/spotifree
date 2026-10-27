@@ -27,8 +27,16 @@ function addToOfflineIndex(item) {
     offlineIndexSet.add(id);
   }
   if (item.title) {
-    const key = `${normMetaStr(item.title)}:::${normMetaStr(item.artist)}`;
-    offlineIndexSet.add(key);
+    const normTitle = normMetaStr(item.title);
+    const normArtist = normMetaStr(item.artist);
+    offlineIndexSet.add(`${normTitle}:::${normArtist}`);
+    if (normArtist && (normArtist.includes(',') || normArtist.includes('&'))) {
+      const primaryArtist = normArtist.split(/[,&]/)[0].trim();
+      if (primaryArtist) offlineIndexSet.add(`${normTitle}:::${primaryArtist}`);
+    }
+    if (normTitle.length >= 6) {
+      offlineIndexSet.add(`title_only:::${normTitle}`);
+    }
   }
 }
 
@@ -89,8 +97,14 @@ export function isOfflineTrackCachedSync(trackOrId) {
     if (offlineIndexSet.has(cid)) return true;
   }
   if (trackOrId.title) {
-    const key = `${normMetaStr(trackOrId.title)}:::${normMetaStr(trackOrId.artist)}`;
-    if (offlineIndexSet.has(key)) return true;
+    const normTitle = normMetaStr(trackOrId.title);
+    const normArtist = normMetaStr(trackOrId.artist);
+    if (offlineIndexSet.has(`${normTitle}:::${normArtist}`)) return true;
+    if (normArtist && (normArtist.includes(',') || normArtist.includes('&'))) {
+      const primaryArtist = normArtist.split(/[,&]/)[0].trim();
+      if (primaryArtist && offlineIndexSet.has(`${normTitle}:::${primaryArtist}`)) return true;
+    }
+    if (normTitle.length >= 6 && offlineIndexSet.has(`title_only:::${normTitle}`)) return true;
   }
   return false;
 }
@@ -331,6 +345,18 @@ export async function getOfflineTrack(trackOrId) {
           deleteOfflineTrack(record.id).catch(() => {});
         }
         return null;
+      }
+      // Auto-migrate record: bind current YouTube videoId if available
+      if (isObj && (trackOrId.id || trackOrId.streamableId)) {
+        const candidateYtId = [trackOrId.streamableId, trackOrId.id].find(x => x && /^[a-zA-Z0-9_-]{11}$/.test(x));
+        if (candidateYtId && record.videoId !== candidateYtId) {
+          record.videoId = candidateYtId;
+          addToOfflineIndex(record);
+          try {
+            const wTx = db.transaction(STORE_NAME, 'readwrite');
+            wTx.objectStore(STORE_NAME).put(record);
+          } catch (e) {}
+        }
       }
       return record;
     };

@@ -2,9 +2,10 @@ const LIKED_SONGS_KEY = 'spotifree_liked_songs';
 const PLAYLISTS_KEY = 'spotifree_playlists';
 const RECENT_KEY = 'spotifree_recent_tracks';
 const PLAYBACK_STATE_KEY = 'spotifree_last_playback';
-const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v7';
+const STUDIO_MIGRATION_KEY = 'spotifree_studio_migrated_v8_pure_yt';
 
-// One-time migration: clear old non-studio streamableId on Spotify-imported tracks while keeping their cover artwork intact
+// One-time migration: migrate all existing playlists, liked songs, recent tracks, and playback state
+// to pure YouTube architecture, clearing any legacy Deezer/iTunes/SoundCloud IDs or stale streamable IDs
 try {
   if (typeof localStorage !== 'undefined' && localStorage.getItem(STUDIO_MIGRATION_KEY) !== '1') {
     const cleanTrackList = (list) => {
@@ -12,17 +13,25 @@ try {
       return list.map(t => {
         if (!t || typeof t !== 'object') return t;
         const origId = String(t.originalId || t.id || '');
-        if ((origId.startsWith('sp_') || t.source === 'spotify') && !t.studioResolvedV7) {
+        const isLegacyId = origId.startsWith('sp_') ||
+          t.source === 'spotify' ||
+          t.source === 'deezer' ||
+          t.source === 'itunes' ||
+          String(t.streamableId || '').startsWith('sp_');
+
+        if (isLegacyId) {
           return {
             ...t,
-            originalId: origId.startsWith('sp_') ? origId : (t.originalId || `sp_${t.spotifyId || t.title}`),
-            id: origId.startsWith('sp_') ? origId : (t.originalId || `sp_${t.spotifyId || t.title}`),
+            originalId: origId,
+            id: origId,
             streamableId: null,
+            source: 'youtube',
             studioResolvedV3: false,
             studioResolvedV4: false,
             studioResolvedV5: false,
             studioResolvedV6: false,
             studioResolvedV7: false,
+            studioResolvedV8: false,
             durationSeconds: (t.durationSeconds && t.durationSeconds <= 420) ? t.durationSeconds : 0
           };
         }
@@ -44,6 +53,14 @@ try {
       const parsed = JSON.parse(rawLiked);
       if (Array.isArray(parsed)) {
         localStorage.setItem(LIKED_SONGS_KEY, JSON.stringify(cleanTrackList(parsed)));
+      }
+    }
+
+    const rawRecent = localStorage.getItem(RECENT_KEY);
+    if (rawRecent) {
+      const parsed = JSON.parse(rawRecent);
+      if (Array.isArray(parsed)) {
+        localStorage.setItem(RECENT_KEY, JSON.stringify(cleanTrackList(parsed)));
       }
     }
 

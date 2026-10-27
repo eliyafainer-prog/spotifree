@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getPlayableAudioUrl, fetchDirectStreamUrl, prefetchNextTracks, resolveTrack, getCachedTrackResolution, searchTracks, sniffAudioBlobMime } from '../services/api';
 import { addRecentTrack, updateTrackInPlaylists, isSameTrack, getLastPlaybackState, saveLastPlaybackState } from '../services/storage';
-import { getOfflineTrack, revokeOfflineObjectUrl, deleteOfflineTrack, isOfflineTrackCachedSync } from '../services/offlineStorage';
+import { getOfflineTrack, revokeOfflineObjectUrl, deleteOfflineTrack, isOfflineTrackCachedSync, saveTrackOffline } from '../services/offlineStorage';
 
 // Fisher-Yates shuffle helper: produces a non-repeating permutation of indices
 function generateShuffledDeck(length, startingIndex = -1) {
@@ -218,15 +218,27 @@ export function useAudioPlayer() {
           return;
         }
 
-        // If online, attempt silent progressive network fallback
+        // If online, attempt silent progressive network fallback and self-heal offline storage
         isOfflinePlaybackRef.current = false;
         if (currentTrackRef.current) {
-          const networkUrl = getPlayableAudioUrl(currentTrackRef.current);
+          const brokenTrack = currentTrackRef.current;
+          const networkUrl = getPlayableAudioUrl(brokenTrack);
           audioRef.current.src = networkUrl;
           audioRef.current.load();
           audioRef.current.play().then(() => {
             setIsPlaying(true);
             setIsLoading(false);
+            // Background self-heal: replace broken/outdated offline blob with fresh YouTube audio
+            if (brokenTrack.id && typeof fetch === 'function') {
+              fetch(networkUrl)
+                .then(r => r.ok ? r.blob() : null)
+                .then(freshBlob => {
+                  if (freshBlob && freshBlob.size >= 50 * 1024) {
+                    saveTrackOffline(brokenTrack, freshBlob).catch(() => {});
+                  }
+                })
+                .catch(() => {});
+            }
           }).catch((err) => {
             if (err?.name === 'AbortError') return;
             setIsLoading(false);

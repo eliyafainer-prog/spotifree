@@ -430,6 +430,18 @@ export async function sniffAudioBlobMime(blob) {
     if (bytes[0] === 0x4F && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
       return 'audio/ogg';
     }
+    // WebM / MKV container (Opus / Vorbis): 0x1A 0x45 0xDF 0xA3
+    if (bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3) {
+      return 'audio/webm';
+    }
+    // AAC ADTS: 0xFF followed by bits 1111000x
+    if (bytes[0] === 0xFF && (bytes[1] & 0xF6) === 0xF0) {
+      return 'audio/aac';
+    }
+    // WAV: 'RIFF'
+    if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) {
+      return 'audio/wav';
+    }
   } catch (e) {}
   return blob.type && blob.type.startsWith('audio/') ? blob.type : 'audio/mp4';
 }
@@ -567,13 +579,14 @@ export async function downloadTrackAudioBlob(track, onProgress = null) {
   throw lastErr || new Error('הורדת קובץ השמע נכשלה מהשרת.');
 }
 
-// Persistent resolved tracks cache in localStorage for 0ms repeat playback
-const RESOLVED_CACHE_KEY = 'spotifree_resolved_v7';
+// Persistent resolved tracks cache in localStorage for 0ms repeat playback (V8 pure YouTube)
+const RESOLVED_CACHE_KEY = 'spotifree_resolved_v8';
 let persistedResolveCache = {};
 try {
   localStorage.removeItem('spotifree_resolved_v4');
   localStorage.removeItem('spotifree_resolved_v5');
   localStorage.removeItem('spotifree_resolved_v6');
+  localStorage.removeItem('spotifree_resolved_v7');
   const stored = localStorage.getItem(RESOLVED_CACHE_KEY);
   if (stored) {
     const parsed = JSON.parse(stored);
