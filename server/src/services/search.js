@@ -1,5 +1,14 @@
 const axios = require('axios');
+const https = require('https');
 const yts = require('yt-search');
+
+// Shared HTTP Keep-Alive Agent to eliminate TCP/TLS handshake latency for search requests
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 32,
+  maxFreeSockets: 10,
+  timeout: 60000
+});
 
 // ============================================================================
 // PURE YOUTUBE ENGINE CONFIGURATION
@@ -217,9 +226,9 @@ function rankAndFilterSearchResults(results, query) {
 }
 
 /**
- * 1. Ultra-fast direct YouTube InnerTube Search API with continuation paging (~0.8-1.4s response, up to 60 results)
+ * 1. Ultra-fast direct YouTube InnerTube Search API (~400-700ms response, up to 35 results per page)
  */
-async function searchInnerTube(query, limit = 50, fetchContinuation = true) {
+async function searchInnerTube(query, limit = 50, fetchContinuation = false) {
   try {
     const response = await axios.post(
       'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
@@ -239,7 +248,8 @@ async function searchInnerTube(query, limit = 50, fetchContinuation = true) {
           'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         },
-        timeout: 4500
+        httpsAgent,
+        timeout: 3500
       }
     );
 
@@ -298,8 +308,8 @@ async function searchInnerTube(query, limit = 50, fetchContinuation = true) {
       }
     }
 
-    // Follow continuation Page 2 for vast catalogue breadth
-    if (continuationToken && fetchContinuation && limit > 15) {
+    // Follow continuation Page 2 only when explicitly requested
+    if (continuationToken && fetchContinuation && limit > 20) {
       try {
         const contRes = await axios.post(
           'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
@@ -319,7 +329,8 @@ async function searchInnerTube(query, limit = 50, fetchContinuation = true) {
               'Content-Type': 'application/json',
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             },
-            timeout: 4500
+            httpsAgent,
+            timeout: 3500
           }
         );
         const contItems = contRes.data?.onResponseReceivedCommands?.[0]?.appendContinuationItemsAction?.continuationItems || [];
@@ -364,7 +375,8 @@ async function searchYouTubeMusic(query, limit = 35) {
           'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         },
-        timeout: 4000
+        httpsAgent,
+        timeout: 3500
       }
     );
 
@@ -530,9 +542,9 @@ function mergeAndDeduplicateTracks(lists, limit = 60) {
 }
 
 /**
- * Main Search Function (Unified Pure YouTube: YouTube Music + InnerTube + yt-search)
+ * Main Search Function (High-Speed Pure YouTube: YouTube Music + InnerTube with Keep-Alive)
  */
-async function searchTracks(query, limit = 60) {
+async function searchTracks(query, limit = 50) {
   if (!query || !query.trim()) return [];
   const trimmed = query.trim();
   const normalizedKey = `${trimmed.toLowerCase()}:::${limit}`;
@@ -545,7 +557,7 @@ async function searchTracks(query, limit = 60) {
 
   // For small internal resolution queries (limit <= 15), keep ultra-fast single-source YouTube lookup
   if (limit <= 15) {
-    let fastResults = await searchInnerTube(trimmed, limit);
+    let fastResults = await searchInnerTube(trimmed, limit, false);
     if (fastResults.length === 0) {
       fastResults = await searchYouTubeMusic(trimmed, limit);
     }
@@ -558,22 +570,28 @@ async function searchTracks(query, limit = 60) {
     return fastResults;
   }
 
-  // 2. Multi-engine YouTube aggregation
-  const isHebrew = /[\u0590-\u05FF]/.test(trimmed);
-  const extraSuffix = isHebrew ? ' שירים' : ' songs';
-  const shouldAddAlt = !trimmed.includes('שיר') && !trimmed.includes('song') && trimmed.split(/\s+/).length <= 4;
-  const altQuery = shouldAddAlt ? (trimmed + extraSuffix) : null;
-
-  const [ytmRes, ytInner, ytsRes, ytAlt] = await Promise.all([
-    searchYouTubeMusic(trimmed, 40),
-    searchInnerTube(trimmed, 60, true),
-    searchYts(trimmed, 40),
-    altQuery ? searchInnerTube(altQuery, 35, false) : Promise.resolve([])
+  // 2. High-speed parallel YouTube engine:
+  // - YouTube Music (official studio masters, albums, singles)
+  // - YouTube InnerTube (top video clips, live performances, official artist channel releases)
+  // Both run in parallel with Keep-Alive connection (~400-700ms total)
+  const [ytmRes, ytInner] = await Promise.all([
+    searchYouTubeMusic(trimmed, Math.min(25, limit)).catch(() => []),
+    searchInnerTube(trimmed, Math.min(30, limit), false).catch(() => [])
   ]);
 
-  // Give official studio master releases from YouTube Music highest priority
-  const results = mergeAndDeduplicateTracks([ytmRes, ytInner, ytAlt, ytsRes], limit);
+  let results = mergeAndDeduplicateTracks([ytmRes, ytInner], limit);
 
+  // 3. Fallback: only if primary fast search returned very few results (< 5)
+  if (results.length < 5) {
+    try {
+      const fallbackResults = await searchYts(trimmed, limit);
+      if (fallbackResults.length > 0) {
+        results = mergeAndDeduplicateTracks([results, fallbackResults], limit);
+      }
+    } catch (e) {}
+  }
+
+  // Give official studio master releases from YouTube Music highest priority
   if (results.length > 0) {
     setCachedSearch(normalizedKey, results);
   }

@@ -607,11 +607,17 @@ export default function App() {
     return () => { isMounted = false; };
   }, [currentTrackKey]);
 
-  // Live debounced search as the user types (240ms for snappy instant feedback)
+  // Live debounced search as the user types (220ms for snappy instant feedback)
   useEffect(() => {
     const trimmed = searchQuery.trim();
     if (!trimmed) {
       setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    // Require at least 2 characters for live search to prevent noisy single-character queries
+    if (trimmed.length < 2) {
       setIsSearching(false);
       return;
     }
@@ -621,13 +627,10 @@ export default function App() {
       searchTracks(trimmed)
         .then(results => {
           setSearchResults(results);
-          if (results && results.length > 0) {
-            prefetchNextTracks(results.slice(0, 4));
-          }
         })
         .catch(err => console.error('Live search error:', err))
         .finally(() => setIsSearching(false));
-    }, 240);
+    }, 220);
 
     return () => clearTimeout(timer);
   }, [searchQuery]);
@@ -643,9 +646,6 @@ export default function App() {
     try {
       const results = await searchTracks(trimmed);
       setSearchResults(results);
-      if (results && results.length > 0) {
-        prefetchNextTracks(results.slice(0, 4));
-      }
     } catch (err) {
       console.error('Search error:', err);
     } finally {
