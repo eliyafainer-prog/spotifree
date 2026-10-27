@@ -83,14 +83,14 @@ public class BackgroundAudioService extends Service {
     }
 
     private void initializeExoPlayer() {
-        // Setup AudioAttributes with audio focus and becoming noisy handling
+        // Setup AudioAttributes without hijacking audio focus from WebView's HTML5 <audio> tag
         AudioAttributes audioAttributes = new AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                 .build();
 
         player = new ExoPlayer.Builder(this)
-                .setAudioAttributes(audioAttributes, true)
+                .setAudioAttributes(audioAttributes, false) // false = DO NOT compete with WebView AudioFocus!
                 .setHandleAudioBecomingNoisy(true)
                 .setWakeMode(C.WAKE_MODE_NETWORK)
                 .build();
@@ -107,7 +107,10 @@ public class BackgroundAudioService extends Service {
                         releaseLocks();
                     }
                 }
-                BackgroundAudioPlugin.dispatchMediaAction(isPlaying ? "play" : "pause");
+                // Only dispatch action if ExoPlayer is actually loaded with media (prevents fake "pause" on startup)
+                if (player != null && player.getMediaItemCount() > 0) {
+                    BackgroundAudioPlugin.dispatchMediaAction(isPlaying ? "play" : "pause");
+                }
                 updateForegroundNotification();
             }
 
@@ -127,12 +130,18 @@ public class BackgroundAudioService extends Service {
             }
         });
 
-        // Wrap ExoPlayer in a ForwardingPlayer to force Next/Previous command availability
+        // Wrap ExoPlayer in a ForwardingPlayer to force Play/Pause/Next/Previous command availability
         ForwardingPlayer forwardingPlayer = new ForwardingPlayer(player) {
+            @Override
+            public boolean isPlaying() {
+                return (player != null && player.isPlaying()) || isServicePlaying;
+            }
+
             @NonNull
             @Override
             public Player.Commands getAvailableCommands() {
                 return super.getAvailableCommands().buildUpon()
+                        .add(COMMAND_PLAY_PAUSE)
                         .add(COMMAND_SEEK_TO_NEXT)
                         .add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
                         .add(COMMAND_SEEK_TO_PREVIOUS)
@@ -142,13 +151,38 @@ public class BackgroundAudioService extends Service {
 
             @Override
             public boolean isCommandAvailable(int command) {
-                if (command == COMMAND_SEEK_TO_NEXT ||
+                if (command == COMMAND_PLAY_PAUSE ||
+                    command == COMMAND_SEEK_TO_NEXT ||
                     command == COMMAND_SEEK_TO_NEXT_MEDIA_ITEM ||
                     command == COMMAND_SEEK_TO_PREVIOUS ||
                     command == COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM) {
                     return true;
                 }
                 return super.isCommandAvailable(command);
+            }
+
+            @Override
+            public void play() {
+                if (player != null && player.getMediaItemCount() > 0) {
+                    super.play();
+                } else {
+                    isServicePlaying = true;
+                    acquireLocks();
+                    BackgroundAudioPlugin.dispatchMediaAction("play");
+                    updateForegroundNotification();
+                }
+            }
+
+            @Override
+            public void pause() {
+                if (player != null && player.isPlaying()) {
+                    super.pause();
+                } else {
+                    isServicePlaying = false;
+                    releaseLocks();
+                    BackgroundAudioPlugin.dispatchMediaAction("pause");
+                    updateForegroundNotification();
+                }
             }
 
             @Override

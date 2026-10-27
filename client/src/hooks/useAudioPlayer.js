@@ -645,18 +645,10 @@ export function useAudioPlayer() {
       }
 
       // Set audio src directly (setting src natively initiates browser buffering without firing spurious pause events)
-      if (audio.src !== streamUrl) {
+      if (audio.src !== streamUrl || audio.error) {
         audio.src = streamUrl;
       }
       audio.volume = isMuted ? 0 : (Number.isFinite(volume) ? volume : 0.8);
-
-      // Notify native Android Foreground Service
-      updateNativePlayback({
-        title: track.title || 'SpotiFree',
-        artist: track.artist || 'Playing',
-        thumbnail: track.thumbnail || '',
-        isPlaying: true
-      });
 
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
 
@@ -669,6 +661,13 @@ export function useAudioPlayer() {
             setIsPlaying(true);
             setIsLoading(false);
             if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+            // Notify native Android Foreground Service AFTER playback starts, without preempting audio focus
+            updateNativePlayback({
+              title: track.title || 'SpotiFree',
+              artist: track.artist || 'Playing',
+              thumbnail: track.thumbnail || '',
+              isPlaying: true
+            });
           })
           .catch((err) => {
             // Ignore AbortError when interrupted by rapid Next/Prev or selecting a new song
