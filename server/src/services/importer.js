@@ -850,108 +850,31 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
     ? `${primaryArtist} ${track.album}`.trim()
     : (hasHebrew ? `${primaryArtist || cleanArtist} ${cleanTrackTitle} אודיו` : `${baseQuery} official audio`);
 
-  const needsIndividualCover = !track.hasCustomArtwork || !track.thumbnail || track.thumbnail.includes('default') || track.thumbnail.includes('spotifree');
-
-  // 1. Fetch official studio catalog metadata (cover, exact studio duration, English artist alias) from Deezer & iTunes in parallel
-  const catalogQuery = `${primaryArtist || cleanArtist} ${cleanTrackTitle}`.trim();
-  const catalogPromise = (async () => {
-    const [deezerItems, itunesItems] = await Promise.all([
-      axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(catalogQuery)}`, { timeout: 1500 })
-        .then(r => r.data?.data || [])
-        .catch(() => []),
-      axios.get('https://itunes.apple.com/search', {
-        params: { term: catalogQuery, entity: 'song', limit: 5 },
-        timeout: 1500
-      }).then(r => r.data?.results || [])
-        .catch(() => [])
-    ]);
-
-    function isCatalogTitleMatch(candTitle, tgtTitle) {
-      if (!candTitle || !tgtTitle) return false;
-      const clean1 = normalizeQuotes(candTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '').trim();
-      const clean2 = normalizeQuotes(tgtTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '').trim();
-      if (clean1 === clean2) return true;
-
-      const words1 = normalizeQuotes(candTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
-      const words2 = normalizeQuotes(tgtTitle).toLowerCase().replace(/\s*[\(\[][^)\]]*[\)\]]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
-
-      if (words1.length === 0 || words2.length === 0) return false;
-      if (words1.length === 1 || words2.length === 1) {
-        return clean1 === clean2;
-      }
-      const matched = words1.filter(w => words2.includes(w)).length;
-      return (matched / Math.max(words1.length, words2.length)) >= 0.75;
-    }
-
-    let bestCover = !needsIndividualCover ? track.thumbnail : null;
-    let catalogDuration = Number(track.durationSeconds) || 0;
-    const artistAliases = [];
-
-    for (const d of deezerItems) {
-      const dTitle = String(d.title || '');
-      if (isCatalogTitleMatch(dTitle, cleanTrackTitle)) {
-        if (d.artist?.name) artistAliases.push(d.artist.name);
-        if (!bestCover) {
-          bestCover = d.album?.cover_big || d.album?.cover_medium || null;
-        }
-        if (!catalogDuration && d.duration >= 45 && d.duration <= 500) {
-          catalogDuration = d.duration;
-        }
-        if (track.durationSeconds && Math.abs((d.duration || 0) - track.durationSeconds) <= 5) {
-          if (needsIndividualCover && (d.album?.cover_big || d.album?.cover_medium)) {
-            bestCover = d.album?.cover_big || d.album?.cover_medium;
-          }
-          break;
-        }
-      }
-    }
-
-    for (const it of itunesItems) {
-      const itTitle = String(it.trackName || '');
-      const itDur = Math.round((it.trackTimeMillis || 0) / 1000);
-      if (isCatalogTitleMatch(itTitle, cleanTrackTitle)) {
-        if (it.artistName) artistAliases.push(it.artistName);
-        const art = it.artworkUrl100 ? it.artworkUrl100.replace('100x100bb', '600x600bb') : null;
-        if (!bestCover && art) bestCover = art;
-        if (!catalogDuration && itDur >= 45 && itDur <= 500) {
-          catalogDuration = itDur;
-        }
-      }
-    }
-
-    return { bestCover, catalogDuration, artistAliases };
-  })();
-
   const prelimTrack = { ...track, artist: cleanArtist, title: cleanTrackTitle };
 
-  // 2. Search YouTube candidates (run baseQuery and studioQuery in parallel for maximum studio accuracy)
-  const searchPromise = (async () => {
-    const [res1, res2] = await Promise.all([
-      searchTracks(baseQuery, 12).catch(() => []),
-      searchTracks(studioQuery, 12).catch(() => [])
-    ]);
-    const combined = [...(res1 || []), ...(res2 || [])];
+  // 1. Search YouTube candidates directly (run baseQuery and studioQuery in parallel for maximum studio accuracy)
+  const [res1, res2] = await Promise.all([
+    searchTracks(baseQuery, 12).catch(() => []),
+    searchTracks(studioQuery, 12).catch(() => [])
+  ]);
+  const combined = [...(res1 || []), ...(res2 || [])];
 
-    // Fallback when primary artist is censored by YouTube search (e.g. Track #3) or collaborated under secondary/group artist
-    const bestCombinedScore = combined.length > 0 ? Math.max(...combined.map(c => scoreCandidate(c, prelimTrack))) : -999;
-    if ((combined.length === 0 || bestCombinedScore < 80) && (secondaryArtist || isFestigal)) {
-      const fallbackQuery = isFestigal ? `${cleanTrackTitle} פסטיגל` : `${secondaryArtist} - ${cleanTrackTitle}`;
-      const res3 = await searchTracks(fallbackQuery, 10).catch(() => []);
-      combined.push(...(res3 || []));
+  // Fallback when primary artist is censored by YouTube search (e.g. Track #3) or collaborated under secondary/group artist
+  const bestCombinedScore = combined.length > 0 ? Math.max(...combined.map(c => scoreCandidate(c, prelimTrack))) : -999;
+  if ((combined.length === 0 || bestCombinedScore < 80) && (secondaryArtist || isFestigal)) {
+    const fallbackQuery = isFestigal ? `${cleanTrackTitle} פסטיגל` : `${secondaryArtist} - ${cleanTrackTitle}`;
+    const res3 = await searchTracks(fallbackQuery, 10).catch(() => []);
+    combined.push(...(res3 || []));
+  }
+
+  const seen = new Set();
+  const allCandidates = [];
+  for (const item of combined) {
+    if (item && item.id && !seen.has(item.id)) {
+      seen.add(item.id);
+      allCandidates.push(item);
     }
-
-    const seen = new Set();
-    const deduped = [];
-    for (const item of combined) {
-      if (item && item.id && !seen.has(item.id)) {
-        seen.add(item.id);
-        deduped.push(item);
-      }
-    }
-    return deduped;
-  })();
-
-  const [{ bestCover, catalogDuration, artistAliases }, allCandidates] = await Promise.all([catalogPromise, searchPromise]);
+  }
 
   if (allCandidates.length === 0) {
     throw new Error(`לא נמצא מקור שמע עבור: ${track.title}`);
@@ -961,13 +884,13 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
     ...track,
     title: cleanTrackTitle,
     artist: cleanArtist,
-    durationSeconds: Number(track.durationSeconds) || catalogDuration || 0
+    durationSeconds: Number(track.durationSeconds) || 0
   };
 
-  // 3. Score candidates with full catalog duration + English/Hebrew artist aliases and pick highest scoring official studio match
+  // 2. Score candidates and pick highest scoring official studio match from YouTube
   const scored = allCandidates.map(cand => ({
     cand,
-    score: scoreCandidate(cand, effectiveTrack, artistAliases)
+    score: scoreCandidate(cand, effectiveTrack, [])
   })).sort((a, b) => b.score - a.score);
 
   const topEntry = scored[0];
@@ -984,7 +907,9 @@ async function resolveTrackToStreamableId(track, forceRefresh = false) {
   const resolutionResult = {
     streamableId: resolvedId,
     artist: cleanArtist,
-    thumbnail: bestCover || track.thumbnail || ytThumb || '',
+    thumbnail: track.thumbnail && !track.thumbnail.includes('default') && !track.thumbnail.includes('spotifree')
+      ? track.thumbnail
+      : (ytThumb || track.thumbnail || ''),
     hasCustomArtwork: true,
     studioResolvedV3: true,
     studioResolvedV4: true,

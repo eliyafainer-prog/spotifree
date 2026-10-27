@@ -2,8 +2,9 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const { spawn } = require('child_process');
 
-// Persistent HTTP Keep-Alive Agent for 0ms TLS reuse across SoundCloud & CDN sockets
+// Persistent HTTP Keep-Alive Agent for 0ms TLS reuse across YouTube CDN sockets
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
 
 // Ensure cache directory exists
@@ -97,397 +98,52 @@ function evictStreamCache(videoId, fallbackQuery) {
 }
 
 // ============================================================================
-// PURE NODE.JS SOUNDCLOUD API V2 ENGINE (0MB extra RAM, ~300-500ms extraction)
+// DIRECT YT-DLP / WORKER AUDIO EXTRACTOR (100% Reliable Official YouTube M4A Fallback)
 // ============================================================================
-let scClientId = 'tHVbSbDP4TaoMbPppngv6Tdry83vNbMQ';
-let scClientIdRefreshPromise = null;
-
-async function refreshSoundCloudClientId() {
-  if (scClientIdRefreshPromise) return scClientIdRefreshPromise;
-  scClientIdRefreshPromise = (async () => {
-    try {
-      const home = await axios.get('https://soundcloud.com', {
-        timeout: 4000,
-        httpsAgent,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-        }
-      });
-      const scripts = [...String(home.data || '').matchAll(/src="(https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)].map(m => m[1]);
-      for (const s of scripts.slice(-4).reverse()) {
-        try {
-          const js = await axios.get(s, { timeout: 3500, httpsAgent });
-          const m = String(js.data || '').match(/client_id\s*:\s*"([a-zA-Z0-9]{32})"/) ||
-                    String(js.data || '').match(/client_id="([a-zA-Z0-9]{32})"/);
-          if (m && m[1]) {
-            scClientId = m[1];
-            console.log('[SoundCloud] Refreshed client_id:', scClientId);
-            return scClientId;
-          }
-        } catch (e) {}
-      }
-    } catch (e) {
-      console.warn('[SoundCloud] Failed to refresh client_id:', e.message);
-    } finally {
-      scClientIdRefreshPromise = null;
-    }
-    return scClientId;
-  })();
-  return scClientIdRefreshPromise;
-}
-
-const VERSION_SUFFIX_RE = /^(?:(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|radio\s+edit|clean\s+edit|club\s+edit|edit|original\s+mix|extended(?:\s+mix)?|live(?:\s+.*)?|acoustic(?:\s+version)?|instrumental|version|mono|stereo|deluxe|bonus\s+track|אקוסטי|לייב|בהופעה.*|מתוך.*|רמיקס|רימיקס|גרסת\s+.*|גרסה\s+.*|שיר\s+הנושא.*)$/i;
-
-function extractSongAndArtistFromMeta(meta = {}) {
-  const rawTitle = String(meta?.title || '')
-    .replace(/([\u0590-\u05FF])([a-zA-Z0-9])/g, '$1 $2')
-    .replace(/([a-zA-Z0-9])([\u0590-\u05FF])/g, '$1 $2')
-    .replace(/\s*[\(\[][^)\]]*[\)\]]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const rawArtist = String(meta?.artist || '')
-    .replace(/([\u0590-\u05FF])([a-zA-Z0-9])/g, '$1 $2')
-    .replace(/([a-zA-Z0-9])([\u0590-\u05FF])/g, '$1 $2')
-    .replace(/\s*-\s*Topic$/i, '')
-    .replace(/\b(?:official|music|channel|הערוץ הרשמי|תאגיד השידור הישראלי|ישראל בידור|גלגלצ)\b/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  let working = rawTitle;
-  if (working.includes('|')) {
-    const p = working.split('|').map(s => s.trim()).filter(Boolean);
-    if (p[0] && /\s*-\s*/.test(p[0])) {
-      working = p[0];
-    } else if (p.length >= 2 && /\s*-\s*/.test(p[1])) {
-      working = `${p[0]} ${p.slice(1).join(' ')}`;
-    } else if (p[0]) {
-      working = p[0];
-    }
-  }
-
-  const dashParts = working.split(/\s+-\s+|\s*-\s+/).map(s => s.trim()).filter(Boolean);
-  let coreTitle = working;
-  let extractedArtist = rawArtist;
-  const titleCandidates = [];
-
-  if (dashParts.length >= 2) {
-    const left = dashParts[0];
-    const right = dashParts.slice(1).join(' - ').trim();
-    const artistLower = rawArtist.toLowerCase();
-    const artistWords = artistLower.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1);
-    const leftLower = left.toLowerCase();
-    const rightLower = right.toLowerCase();
-
-    const leftMatchesArtist = artistWords.length > 0 && artistWords.some(w => leftLower.includes(w));
-    const rightMatchesArtist = artistWords.length > 0 && artistWords.some(w => rightLower.includes(w));
-
-    if (VERSION_SUFFIX_RE.test(right)) {
-      coreTitle = left;
-      titleCandidates.push(left);
-    } else if (leftMatchesArtist || !rightMatchesArtist) {
-      // Standard "Artist - Song" (e.g. "עומר אדם - כשאת הולכת")
-      coreTitle = right;
-      titleCandidates.push(right);
-      if (!extractedArtist) extractedArtist = left;
-      else if (!leftMatchesArtist) extractedArtist = `${extractedArtist}, ${left}`;
-    } else {
-      // Reversed "Song - Artist"
-      coreTitle = left;
-      titleCandidates.push(left);
-    }
-  } else if (working) {
-    titleCandidates.push(working);
-  }
-
-  for (const tc of [...titleCandidates]) {
-    if (tc.includes('+')) {
-      tc.split('+').map(s => s.trim()).filter(Boolean).forEach(sub => titleCandidates.push(sub));
-    }
-  }
-
-  return {
-    coreTitle: coreTitle.trim(),
-    artist: extractedArtist.trim(),
-    titleCandidates: [...new Set(titleCandidates.filter(Boolean))]
-  };
-}
+const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
 
 /**
- * Score a SoundCloud track candidate for studio accuracy, duration proximity, and artist match
+ * Fast direct yt-dlp fallback engine (~1.5s) for extracting official YouTube audio streams
  */
-function scoreSoundCloudCandidate(item, queryLower, meta = {}) {
-  if (!item || item.snipped || item.policy === 'SNIP' || item.policy === 'BLOCK') return -999;
-  const dur = Math.round((item.duration || 0) / 1000);
-  const fullDur = Math.round((item.full_duration || item.duration || 0) / 1000);
-  if (dur <= 45 || dur > 660) return -999;
-  if (fullDur > dur + 5) return -999; // Reject truncated / Go+ preview tracks!
+async function extractYoutubeYtDlp(videoId) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+  return new Promise((resolve) => {
+    const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const proc = spawn(PYTHON_BIN, [
+      '-m', 'yt_dlp',
+      '-g',
+      '-f', '140/ba[protocol^=http][ext=m4a]/ba[protocol^=http]/ba/best',
+      '--no-warnings',
+      '--no-playlist',
+      '--socket-timeout', '5',
+      targetUrl
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  const transcodings = item.media?.transcodings || [];
-  const validTranscodings = transcodings.filter(t => t && t.url && !t.url.includes('preview') && !t.snipped);
-  if (validTranscodings.length === 0) return -999;
+    let stdout = '';
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch (e) {}
+      resolve(null);
+    }, 7000);
 
-  const title = String(item.title || '')
-    .replace(/([\u0590-\u05FF])([a-zA-Z0-9])/g, '$1 $2')
-    .replace(/([a-zA-Z0-9])([\u0590-\u05FF])/g, '$1 $2')
-    .replace(/['׳’`]/g, '')
-    .toLowerCase();
-  const username = String(item.user?.username || '').replace(/['׳’`]/g, '').toLowerCase();
-  const combined = `${title} ${username}`;
-
-  // Disqualify podcasts, radio promos, jingles, or ad tracks
-  const adOrPodcastWords = [
-    'podcast', 'פודקאסט', 'פרק ', 'שידור', 'פרסומת', 'חסות', 'גינגל',
-    'jingle', 'commercial', 'promo', 'פרומו', 'teaser', 'טיזר', 'trailer', 'טריילר'
-  ];
-  for (const aw of adOrPodcastWords) {
-    if (combined.includes(aw)) return -999;
-  }
-
-  const targetDur = Number(meta?.durationSeconds) || 0;
-  const rawTargetTitle = String(meta?.title || '').replace(/['׳’`]/g, '').toLowerCase().trim();
-  const { titleCandidates: coreTitleCandidates, artist: parsedArtist } = extractSongAndArtistFromMeta(meta);
-  const targetArtist = String(parsedArtist || meta?.artist || '').replace(/['׳’`]/g, '').toLowerCase().trim();
-  const artistWordSet = new Set(
-    targetArtist.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1)
-  );
-
-  let score = 100;
-
-  // 1. Core title word match (never allow artist words alone to count as song title!)
-  const stopWords = new Set(['כל', 'כך', 'של', 'את', 'עם', 'זה', 'על', 'אל', 'מן', 'זה', 'מה', 'לא', 'כי', 'גם', 'the', 'in', 'of', 'and', 'to', 'a', 'an']);
-  const candTitleTokens = new Set(title.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/));
-
-  let bestRatio = -1;
-  let tWords = [];
-  for (const candCore of coreTitleCandidates) {
-    const cleanCore = candCore.replace(/['׳’`]/g, '').toLowerCase();
-    const words = cleanCore ? cleanCore.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1 || /\p{N}/u.test(w)) : [];
-    const nonArtist = words.filter(w => !artistWordSet.has(w));
-    const effectiveWords = nonArtist.length > 0 ? nonArtist : words;
-    const imp = effectiveWords.filter(w => !stopWords.has(w));
-    const toTest = imp.length > 0 ? imp : effectiveWords;
-    if (toTest.length > 0) {
-      const matched = toTest.filter(w => candTitleTokens.has(w) || candTitleTokens.has('ו' + w) || candTitleTokens.has('ה' + w) || (w.length >= 4 && title.includes(w))).length;
-      const ratio = matched / toTest.length;
-      if (ratio > bestRatio) {
-        bestRatio = ratio;
-        tWords = effectiveWords;
-      }
-    }
-  }
-
-  if (bestRatio >= 0) {
-    if (bestRatio < 0.65) return -999;
-    score += Math.round(bestRatio * 95);
-  } else if (queryLower) {
-    const qWords = queryLower.replace(/['׳’`]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 1 && !stopWords.has(w) && !artistWordSet.has(w));
-    if (qWords.length > 0) {
-      const matched = qWords.filter(w => candTitleTokens.has(w) || (w.length >= 4 && combined.includes(w))).length;
-      const ratio = matched / qWords.length;
-      if (ratio < 0.6) return -999;
-      score += Math.round(ratio * 70);
-    } else {
-      return -999;
-    }
-  }
-
-  // 2. Duration proximity against Spotify studio duration
-  if (targetDur > 40) {
-    const diff = Math.abs(dur - targetDur);
-    if (diff <= 3) score += 135;       // Exact Spotify studio master length!
-    else if (diff <= 8) score += 95;   // Studio release within 8s
-    else if (diff <= 15) score += 55;  // Close match
-    else if (diff <= 25) score += 15;
-    else if (diff <= 40) score -= 75;
-    else score -= 180;
-  } else if (dur >= 110 && dur <= 320) {
-    score += 30;
-  }
-
-  // 3. Strictly reject non-studio versions (Remix / Cover / Bootleg / Slowed / Sped Up / Karaoke / Mashup)
-  const hardRejectWords = [
-    'remix', 'rmx', 'rework', 'bootleg', 'flip', 'vip', 'blend', 'remake', 'cover', 'slowed',
-    'reverb', 'sped up', 'spedup', 'speed up', 'nightcore', '8d', 'instrumental', 'karaoke', 'mashup', 'mash up',
-    'רמיקס', 'רימיקס', 'קאבר', 'בביצוע', 'מאשאפ', 'משאפ', 'קריוקי', 'מחרוזת', 'ווקאלי', 'ווקאלים', 'אקפלה', 'acapella',
-    'מואץ', 'גרסה מהירה', 'דיבוב', 'זומבה', 'zumba'
-  ];
-  const candTokensAll = new Set(combined.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/));
-  for (const hw of hardRejectWords) {
-    const hasHw = hw.includes(' ') ? title.includes(hw) : candTokensAll.has(hw);
-    if (hasHw && !rawTargetTitle.includes(hw) && !queryLower.includes(hw)) {
-      return -999;
-    }
-  }
-
-  // Penalize Live / Stage / Edit versions unless requested
-  const softPenaltyWords = [
-    'live', 'edit', 'לייב', 'הופעה', 'בהופעה', 'מהבמה', 'מתוך המופע', 'מהמופע', 'במופע', 'חי באולפן', 'באולפן'
-  ];
-  for (const sw of softPenaltyWords) {
-    const hasSw = sw.includes(' ') ? title.includes(sw) : candTokensAll.has(sw);
-    if (hasSw && !rawTargetTitle.includes(sw) && !queryLower.includes(sw)) {
-      score -= 185;
-    }
-  }
-
-  // 4. Artist & Uploader verification
-  if (targetArtist) {
-    const aWords = targetArtist
-      .replace(/[,&•/]+/g, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 1 && !['פסטיגל', 'משתתפי', 'הפסטיגל', 'various', 'artists'].includes(w));
-    if (aWords.length > 0) {
-      if (aWords.some(w => username.includes(w))) {
-        score += 75; // Official artist / uploader match!
-      } else if (aWords.some(w => title.includes(w)) || (combined.includes('פסטיגל') && (targetArtist.includes('פסטיגל') || String(meta?.album || '').includes('פסטיגל')))) {
-        score += 45;
-      } else {
-        // Artist not mentioned in username or title: only allow if candidate title has no unrelated artist/song words!
-        const candTitleClean = title.replace(/\.(mp3|m4a|wav)$/i, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
-        const candWords = candTitleClean.split(/\s+/).filter(w => w.length > 1 && w !== 'פסטיגל');
-        const extraWords = candWords.filter(cw => !tWords.some(tw => cw.includes(tw) || tw.includes(cw)));
-        if (extraWords.length > 0) {
-          return -999; // Rejects songs by other artists with a shared title word
-        }
-        score -= 35;
-      }
-    }
-  }
-
-  if (item.user?.verified) score += 45;
-
-  // 5. Strongly prefer 160kbps High-Efficiency AAC studio quality (aac_160k) over 96kbps
-  const hasHighQualityAac = validTranscodings.some(t => t.preset === 'aac_160k' || String(t.preset || '').includes('160k'));
-  const hasProgressive = validTranscodings.some(t => t.format?.protocol === 'progressive');
-  if (hasHighQualityAac) {
-    score += 35;
-  } else if (hasProgressive) {
-    score += 15;
-  } else {
-    score -= 25; // Only 96k/64k available
-  }
-
-  return score;
-}
-
-/**
- * Search SoundCloud API v2 and return track collection
- */
-async function searchSoundCloudApi(query, limit = 10) {
-  const doReq = async (cid) => {
-    const res = await axios.get('https://api-v2.soundcloud.com/search/tracks', {
-      params: { q: query, client_id: cid, limit },
-      timeout: 3200,
-      httpsAgent,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-      }
+    proc.stdout.on('data', chunk => {
+      stdout += chunk.toString();
     });
-    return res.data?.collection || [];
-  };
 
-  try {
-    return await doReq(scClientId);
-  } catch (err) {
-    if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-      const newCid = await refreshSoundCloudClientId();
-      return await doReq(newCid);
-    }
-    throw err;
-  }
-}
-
-/**
- * Resolve a SoundCloud track's highest-bitrate studio transcoding to a direct playable URL
- */
-async function resolveSoundCloudTranscoding(item) {
-  const transcodings = (item.media?.transcodings || []).filter(
-    t => t && t.url && !t.url.includes('preview') && !t.snipped
-  );
-  if (transcodings.length === 0) return null;
-
-  // Priority 1: High-Efficiency 160kbps AAC (aac_160k fMP4 - studio quality, ~256kbps MP3 equivalent)
-  // Priority 2: Progressive HTTP MP3 (128kbps MP3)
-  // Priority 3: Other HLS fMP4/MP3 streams (excluding multi-bitrate mpegurl master manifests)
-  const ordered = [
-    ...transcodings.filter(t => t.preset === 'aac_160k' || String(t.preset || '').includes('160k')),
-    ...transcodings.filter(t => t.format?.protocol === 'progressive'),
-    ...transcodings.filter(
-      t =>
-        t.format?.protocol === 'hls' &&
-        t.preset !== 'aac_160k' &&
-        !String(t.format?.mime_type || '').includes('mpegurl')
-    ),
-    ...transcodings.filter(t => t.format?.protocol === 'hls')
-  ];
-
-  for (const trans of ordered) {
-    try {
-      const res = await axios.get(trans.url, {
-        params: {
-          client_id: scClientId,
-          ...(item.track_authorization ? { track_authorization: item.track_authorization } : {})
-        },
-        timeout: 2500,
-        httpsAgent
-      });
-      if (res.data && res.data.url && isValidCachedStreamUrl(res.data.url)) {
-        return res.data.url;
+    proc.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0 && stdout) {
+        const lines = stdout.split('\n').map(l => l.trim()).filter(Boolean);
+        const directUrl = lines.find(l => l.startsWith('http'));
+        if (directUrl) return resolve(directUrl);
       }
-    } catch (e) {}
-  }
-  return null;
-}
+      resolve(null);
+    });
 
-/**
- * Fast pure-Node.js SoundCloud studio track extractor (~300-500ms, 0MB Python overhead)
- */
-async function extractSoundCloudDirect(rawQuery, meta = {}) {
-  const { coreTitle, artist: extractedArtist } = extractSongAndArtistFromMeta(meta);
-  const primaryArtist = String(extractedArtist || meta?.artist || '').split(/[,&/]/)[0].trim();
-  const isFestigal = String(meta?.album || '').includes('פסטיגל') || String(meta?.artist || '').includes('פסטיגל');
-
-  let primaryQuery = rawQuery || '';
-  if (primaryArtist && coreTitle && !coreTitle.toLowerCase().includes(primaryArtist.toLowerCase())) {
-    primaryQuery = `${primaryArtist} ${coreTitle}`;
-  } else if (coreTitle) {
-    primaryQuery = coreTitle;
-  }
-
-  const cleanPrimary = primaryQuery.replace(/[^\p{L}\p{N}\s\-']/gu, ' ').replace(/\s+/g, ' ').trim();
-  if (!cleanPrimary) throw new Error('Empty SoundCloud query');
-
-  const items1 = await searchSoundCloudApi(cleanPrimary, 15).catch(() => []);
-  const qLower = cleanPrimary.toLowerCase();
-  let scored = items1
-    .map(item => ({ item, score: scoreSoundCloudCandidate(item, qLower, meta) }))
-    .filter(x => x.score > -500)
-    .sort((a, b) => b.score - a.score);
-
-  // Secondary fallback query if artist+title had no strong studio match
-  if ((!scored.length || scored[0].score < 175) && coreTitle) {
-    const secondaryRaw = isFestigal && !coreTitle.includes('פסטיגל') ? `${coreTitle} פסטיגל` : coreTitle;
-    const cleanSecondary = secondaryRaw.replace(/[^\p{L}\p{N}\s\-']/gu, ' ').replace(/\s+/g, ' ').trim();
-    if (cleanSecondary && cleanSecondary.toLowerCase() !== cleanPrimary.toLowerCase()) {
-      const items2 = await searchSoundCloudApi(cleanSecondary, 15).catch(() => []);
-      const seenIds = new Set(scored.map(x => x.item.id));
-      for (const it of items2) {
-        if (!seenIds.has(it.id)) {
-          const s = scoreSoundCloudCandidate(it, cleanSecondary.toLowerCase(), meta);
-          if (s > -500) scored.push({ item: it, score: s });
-        }
-      }
-      scored.sort((a, b) => b.score - a.score);
-    }
-  }
-
-  for (const cand of scored.slice(0, 4)) {
-    const url = await resolveSoundCloudTranscoding(cand.item);
-    if (url) return url;
-  }
-
-  throw new Error('No matching SoundCloud stream found');
+    proc.on('error', () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
 }
 
 /**
@@ -670,7 +326,7 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
 
   const cached = urlCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() && isValidCachedStreamUrl(cached.url)) {
-    // If cacheKey is a YouTube videoId, reject any stale .m3u8 from SoundCloud and re-extract pure YouTube M4A!
+    // If cacheKey is a YouTube videoId, reject any stale .m3u8 and re-extract pure YouTube M4A!
     if (isVideoId && cached.url.includes('.m3u8')) {
       urlCache.delete(cacheKey);
     } else {
@@ -755,28 +411,38 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
       } catch (e) {}
     }
 
-    // 2. Secondary Fast Engine: Pure Node.js SoundCloud 160kbps AAC Studio Extractor (~300-500ms)
-    if (!streamUrl) {
+    // 2. Direct yt-dlp fallback if VisionOS extraction failed for videoId
+    if (!streamUrl && isVideoId) {
       try {
-        const qToUse = effectiveQuery || `${effectiveMeta.artist} ${effectiveMeta.title}`.trim();
-        if (qToUse) {
-          streamUrl = await extractSoundCloudDirect(qToUse, effectiveMeta);
-        }
+        streamUrl = await extractYoutubeYtDlp(videoId);
       } catch (e) {}
     }
 
-    // 3. If SoundCloud missed and we have a YouTube videoId whose oEmbed title wasn't checked yet, try oEmbed title
-    if (!streamUrl && isVideoId) {
-      const oembed = await fetchVideoMetaFromOembed(videoId);
-      if (oembed && oembed.title) {
-        try {
-          streamUrl = await extractSoundCloudDirect(oembed.query || oembed.title, {
-            ...effectiveMeta,
-            title: oembed.title,
-            artist: oembed.artist || effectiveMeta.artist
-          });
-        } catch (e) {}
-      }
+    // 3. Self-healing YouTube search via InnerTube or yt-search if track still not resolved
+    if (!streamUrl) {
+      try {
+        const { searchInnerTube, searchYts } = require('./search');
+        const qToUse = effectiveQuery || `${effectiveMeta.artist} ${effectiveMeta.title}`.trim();
+        if (qToUse) {
+          let candidates = await searchInnerTube(qToUse, 3, false).catch(() => []);
+          if (!candidates.length) {
+            candidates = await searchYts(qToUse, 3).catch(() => []);
+          }
+          for (const cand of candidates) {
+            if (cand.id && /^[a-zA-Z0-9_-]{11}$/.test(cand.id)) {
+              streamUrl = await extractYoutubeDirectVisionOs(cand.id, effectiveMeta);
+              if (!streamUrl) {
+                streamUrl = await extractYoutubeYtDlp(cand.id);
+              }
+              if (streamUrl) {
+                videoId = cand.id;
+                isVideoId = true;
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {}
     }
 
     // 4. Final Fallback: Invidious instances if videoId is available
@@ -789,7 +455,7 @@ async function getAudioStreamUrl(videoId, fallbackQuery = null, isPriority = tru
     }
 
     const signedExp = getSignedUrlExpirationMs(streamUrl);
-    let ttlMs = 4 * 60 * 1000; // Default 4 minutes for SoundCloud signed URLs (which expire in ~5-7 mins)
+    let ttlMs = 30 * 60 * 1000; // Default 30 minutes for YouTube signed URLs
     if (signedExp > Date.now() + 60000) {
       ttlMs = Math.min(45 * 60 * 1000, signedExp - Date.now() - 45000);
     } else if (streamUrl.includes('googlevideo.com')) {
@@ -910,12 +576,11 @@ function stripStypSidx(buf) {
 }
 
 /**
- * Build unified browser-like HTTP headers for upstream CDN requests (SoundCloud / CloudFront / googlevideo / Invidious)
+ * Build unified browser-like HTTP headers for upstream CDN requests (googlevideo / Invidious)
  */
 function buildUpstreamHeaders(targetUrl = '', rangeHeader = null) {
   const urlStr = String(targetUrl || '');
   const isGoogleVideo = urlStr.includes('googlevideo.com') || urlStr.includes('youtube.com');
-  const isSoundCloud = urlStr.includes('sndcdn.com') || urlStr.includes('soundcloud.com');
 
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -929,10 +594,8 @@ function buildUpstreamHeaders(targetUrl = '', rangeHeader = null) {
     headers['Origin'] = 'https://www.youtube.com';
     // googlevideo requires Range header to avoid throttling / 403 blocks
     headers['Range'] = rangeHeader || 'bytes=0-';
-  } else if (isSoundCloud) {
-    headers['Referer'] = 'https://soundcloud.com/';
-    headers['Origin'] = 'https://soundcloud.com';
-    if (rangeHeader) headers['Range'] = rangeHeader;
+  } else if (rangeHeader) {
+    headers['Range'] = rangeHeader;
   } else if (rangeHeader) {
     headers['Range'] = rangeHeader;
   }
@@ -1113,29 +776,30 @@ async function pipeStream(videoId, req, res, fallbackQuery = null, meta = null) 
       validateStatus: () => true
     });
 
-    // If cached URL expired or returned 403, re-extract fresh from SoundCloud immediately
+    // If cached URL expired or returned 403, evict and re-extract fresh from YouTube immediately
     if (response.status >= 400) {
       urlCache.delete(videoId);
       if (fallbackQuery) urlCache.delete(fallbackQuery);
-      const qToUse = fallbackQuery || `${meta?.artist || ''} ${meta?.title || ''}`.trim();
-      if (qToUse) {
-        streamUrl = await extractSoundCloudDirect(qToUse, meta || {});
-        if (streamUrl.includes('.m3u8')) {
-          await pipeHlsInNode(streamUrl, req, res);
-          return;
+      try {
+        streamUrl = await getAudioStreamUrl(videoId, fallbackQuery, true, meta || {});
+        if (streamUrl) {
+          if (streamUrl.includes('.m3u8')) {
+            await pipeHlsInNode(streamUrl, req, res);
+            return;
+          }
+          headers = buildUpstreamHeaders(streamUrl, range);
+          response = await axios({
+            method: 'GET',
+            url: streamUrl,
+            responseType: 'stream',
+            headers,
+            httpsAgent,
+            decompress: false,
+            maxRedirects: 5,
+            validateStatus: () => true
+          });
         }
-        headers = buildUpstreamHeaders(streamUrl, range);
-        response = await axios({
-          method: 'GET',
-          url: streamUrl,
-          responseType: 'stream',
-          headers,
-          httpsAgent,
-          decompress: false,
-          maxRedirects: 5,
-          validateStatus: () => true
-        });
-      }
+      } catch (e) {}
     }
 
     if (response.status >= 200 && response.status < 400) {
@@ -1190,7 +854,7 @@ module.exports = {
   pipeStream,
   pipeHlsInNode,
   prefetchTracks,
-  scoreSoundCloudCandidate,
+  extractYoutubeYtDlp,
   evictStreamCache,
   buildUpstreamHeaders,
   fetchFromInvidious,

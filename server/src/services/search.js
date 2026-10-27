@@ -2,13 +2,11 @@ const axios = require('axios');
 const yts = require('yt-search');
 
 // ============================================================================
-// ENGINE CONFIGURATION & ROLLBACK SWITCH
+// PURE YOUTUBE ENGINE CONFIGURATION
 // ============================================================================
-// When true (default): SpotiFree runs on YouTube / YouTube Music as the direct primary engine.
+// SpotiFree runs on YouTube / YouTube Music as the direct unified engine.
 // Every track returns an authentic 11-char YouTube videoId, enabling instant <400ms playback.
-// To revert immediately back to the legacy hybrid (SoundCloud/Deezer/iTunes) mode:
-// Set SPOTIFREE_YOUTUBE_PRIMARY=false in environment or change USE_YOUTUBE_PRIMARY to false below.
-const USE_YOUTUBE_PRIMARY = process.env.SPOTIFREE_YOUTUBE_PRIMARY !== 'false';
+const USE_YOUTUBE_PRIMARY = true;
 
 /**
  * Clean track title by removing unnecessary labels like (Official Music Video), [HD], etc.
@@ -490,87 +488,7 @@ async function searchYts(query, limit = 40) {
   }
 }
 
-/**
- * 3. Deezer Official Studio Catalog Search (~200ms response, rich Hebrew & Global catalog)
- */
-async function searchDeezer(query, limit = 30) {
-  try {
-    const res = await axios.get('https://api.deezer.com/search', {
-      params: { q: query, limit },
-      timeout: 2800
-    });
-    const items = res.data?.data || [];
-    return items
-      .filter(t => t && t.duration >= 45 && t.duration <= 600)
-      .map((t, idx) => {
-        const durSec = Number(t.duration) || 0;
-        const mins = Math.floor(durSec / 60);
-        const secs = durSec % 60;
-        const artwork = t.album?.cover_big || t.album?.cover_medium || t.artist?.picture_big || '';
-        const title = String(t.title || 'Unknown Title').trim();
-        const artist = String(t.artist?.name || 'Unknown Artist').trim();
 
-        return {
-          id: `sp_dz_${t.id || idx}`,
-          title,
-          originalTitle: title,
-          artist,
-          album: t.album?.title || 'Single',
-          duration: `${mins}:${secs < 10 ? '0' : ''}${secs}`,
-          durationSeconds: durSec,
-          thumbnail: artwork,
-          hasCustomArtwork: Boolean(artwork),
-          source: 'deezer',
-          query: `${artist} - ${title}`
-        };
-      });
-  } catch (e) {
-    return [];
-  }
-}
-
-/**
- * 4. iTunes Official Catalog Search (~250ms response)
- */
-async function searchItunes(query, limit = 30) {
-  try {
-    const res = await axios.get('https://itunes.apple.com/search', {
-      params: {
-        term: query,
-        entity: 'song',
-        country: 'IL',
-        limit: limit
-      },
-      timeout: 2800
-    });
-
-    const items = res.data?.results || [];
-    return items
-      .filter(t => t && (t.trackTimeMillis || 0) >= 45000 && (t.trackTimeMillis || 0) <= 600000)
-      .map((t, idx) => {
-        const durSec = Math.round((t.trackTimeMillis || 0) / 1000);
-        const mins = Math.floor(durSec / 60);
-        const secs = durSec % 60;
-        const artwork = (t.artworkUrl100 || '').replace('100x100bb', '600x600bb');
-
-        return {
-          id: `sp_it_${t.trackId || idx}`,
-          title: t.trackName || 'Unknown Title',
-          originalTitle: t.trackName || 'Unknown Title',
-          artist: t.artistName || 'Unknown Artist',
-          album: t.collectionName || 'Single',
-          duration: `${mins}:${secs < 10 ? '0' : ''}${secs}`,
-          durationSeconds: durSec,
-          thumbnail: artwork,
-          hasCustomArtwork: Boolean(artwork),
-          source: 'itunes',
-          query: `${t.artistName} - ${t.trackName}`
-        };
-      });
-  } catch (e) {
-    return [];
-  }
-}
 
 /**
  * Deduplicate and merge multi-source tracks while preserving all distinct videos & studio songs
@@ -612,7 +530,7 @@ function mergeAndDeduplicateTracks(lists, limit = 60) {
 }
 
 /**
- * Main Search Function with multi-source aggregation (YouTube InnerTube + Deezer + yt-search + iTunes)
+ * Main Search Function (Unified Pure YouTube: YouTube Music + InnerTube + yt-search)
  */
 async function searchTracks(query, limit = 60) {
   if (!query || !query.trim()) return [];
@@ -640,122 +558,26 @@ async function searchTracks(query, limit = 60) {
     return fastResults;
   }
 
-  // 2. YouTube Primary Mode (Default)
-  if (USE_YOUTUBE_PRIMARY) {
-    const isHebrew = /[\u0590-\u05FF]/.test(trimmed);
-    const extraSuffix = isHebrew ? ' שירים' : ' songs';
-    const shouldAddAlt = !trimmed.includes('שיר') && !trimmed.includes('song') && trimmed.split(/\s+/).length <= 4;
-    const altQuery = shouldAddAlt ? (trimmed + extraSuffix) : null;
+  // 2. Multi-engine YouTube aggregation
+  const isHebrew = /[\u0590-\u05FF]/.test(trimmed);
+  const extraSuffix = isHebrew ? ' שירים' : ' songs';
+  const shouldAddAlt = !trimmed.includes('שיר') && !trimmed.includes('song') && trimmed.split(/\s+/).length <= 4;
+  const altQuery = shouldAddAlt ? (trimmed + extraSuffix) : null;
 
-    const [ytmRes, ytInner, ytsRes, ytAlt] = await Promise.all([
-      searchYouTubeMusic(trimmed, 40),
-      searchInnerTube(trimmed, 60, true),
-      searchYts(trimmed, 40),
-      altQuery ? searchInnerTube(altQuery, 35, false) : Promise.resolve([])
-    ]);
-
-    // Give official studio master releases from YouTube Music highest priority
-    let results = mergeAndDeduplicateTracks([ytmRes, ytInner, ytAlt, ytsRes], limit);
-
-    // Fallback to studio catalogs only if YouTube search returned too few results (< 5)
-    if (results.length < 5) {
-      const [deezerRes, itunesRes] = await Promise.all([
-        searchDeezer(trimmed, 30),
-        searchItunes(trimmed, 25)
-      ]);
-      results = mergeAndDeduplicateTracks([results, deezerRes, itunesRes], limit);
-    }
-
-    if (results.length > 0) {
-      setCachedSearch(normalizedKey, results);
-    }
-    return results;
-  }
-
-  // 3. Legacy Hybrid Mode (Rollback path)
-  const [ytInner, deezerRes, itunesRes] = await Promise.all([
-    searchInnerTube(trimmed, 50),
-    searchDeezer(trimmed, 35),
-    searchItunes(trimmed, 30)
+  const [ytmRes, ytInner, ytsRes, ytAlt] = await Promise.all([
+    searchYouTubeMusic(trimmed, 40),
+    searchInnerTube(trimmed, 60, true),
+    searchYts(trimmed, 40),
+    altQuery ? searchInnerTube(altQuery, 35, false) : Promise.resolve([])
   ]);
 
-  let ytsRes = [];
-  if (ytInner.length < 20) {
-    ytsRes = await searchYts(trimmed, 40);
-  }
-
-  const results = mergeAndDeduplicateTracks([ytInner, ytsRes, deezerRes, itunesRes], limit);
+  // Give official studio master releases from YouTube Music highest priority
+  const results = mergeAndDeduplicateTracks([ytmRes, ytInner, ytAlt, ytsRes], limit);
 
   if (results.length > 0) {
     setCachedSearch(normalizedKey, results);
   }
-
   return results;
-}
-
-/**
- * 5. Official Apple Music / iTunes Top Songs in Israel (Live Charts)
- */
-async function fetchItunesChartTracks(country = 'IL', limit = 35) {
-  try {
-    const res = await axios.get(`https://itunes.apple.com/${country.toLowerCase()}/rss/topsongs/limit=${limit}/json`, { timeout: 3500 });
-    const entries = res.data?.feed?.entry || [];
-    return entries.map((e, idx) => {
-      const title = e['im:name']?.label || 'Unknown';
-      const artist = e['im:artist']?.label || 'Unknown Artist';
-      const rawImg = e['im:image']?.[2]?.label || '';
-      const artwork = rawImg ? rawImg.replace(/\/\d+x\d+bb\./, '/600x600bb.') : '';
-      const id = e.id?.attributes?.['im:id'] || idx;
-      return {
-        id: `sp_it_${id}`,
-        title: title,
-        originalTitle: title,
-        artist: artist,
-        album: e['im:collection']?.['im:name']?.label || 'Single',
-        duration: '3:30',
-        durationSeconds: 210,
-        thumbnail: artwork,
-        hasCustomArtwork: Boolean(artwork),
-        source: 'itunes',
-        query: `${artist} - ${title}`
-      };
-    });
-  } catch (e) {
-    return [];
-  }
-}
-
-/**
- * 6. Official Deezer Global Top 50 Chart
- */
-async function fetchDeezerChartTracks(limit = 35) {
-  try {
-    const res = await axios.get(`https://api.deezer.com/chart/0/tracks?limit=${limit}`, { timeout: 3500 });
-    const items = res.data?.data || [];
-    return items
-      .filter(t => t && t.duration >= 45 && t.duration <= 600)
-      .map(t => {
-        const durSec = Number(t.duration) || 0;
-        const mins = Math.floor(durSec / 60);
-        const secs = durSec % 60;
-        const artwork = t.album?.cover_big || t.album?.cover_medium || t.artist?.picture_big || '';
-        return {
-          id: `sp_dz_${t.id}`,
-          title: t.title,
-          originalTitle: t.title,
-          artist: t.artist?.name || 'Unknown Artist',
-          album: t.album?.title || 'Single',
-          duration: `${mins}:${secs < 10 ? '0' : ''}${secs}`,
-          durationSeconds: durSec,
-          thumbnail: artwork,
-          hasCustomArtwork: Boolean(artwork),
-          source: 'deezer',
-          query: `${t.artist?.name || ''} - ${t.title}`
-        };
-      });
-  } catch (e) {
-    return [];
-  }
 }
 
 // Cached rich home catalog (refreshes every 30 minutes)
@@ -896,118 +718,49 @@ async function getHomeCatalog() {
 
   const liveChartSections = [];
 
-  if (USE_YOUTUBE_PRIMARY) {
-    // 1. YouTube Primary: Resolve live chart songs to real YouTube videoIds so EVERY home track plays instantly in <400ms!
-    const [itunesChartTracks, deezerChartTracks] = await Promise.all([
-      fetchItunesChartTracks('IL', 25),
-      fetchDeezerChartTracks(25)
-    ]);
+  // 1. Official YouTube Israeli & Global Live Charts (Direct 11-char video IDs for instant playback)
+  const [israelChartTracks, globalChartTracks] = await Promise.all([
+    Promise.all([
+      searchYouTubeMusic('מצעד ישראל הרשמי להיטים', 20),
+      searchInnerTube('להיטי ישראל 2026 רשמי', 25, false),
+      searchYts('מצעד ישראל 2026', 15)
+    ]).then(([ytm, yt, ytsR]) => mergeAndDeduplicateTracks([ytm, yt, ytsR], 25)),
 
-    const resolveList = async (list) => {
-      if (!list || list.length === 0) return [];
-      let importer;
-      try {
-        importer = require('./importer');
-      } catch (e) {
-        return [];
-      }
-      const resolved = await Promise.all(
-        list.map(async (t) => {
-          try {
-            const res = await importer.resolveTrackToStreamableId(t);
-            if (res && res.streamableId && /^[a-zA-Z0-9_-]{11}$/.test(res.streamableId)) {
-              return {
-                ...t,
-                id: res.streamableId,
-                streamableId: res.streamableId,
-                source: 'youtube',
-                thumbnail: res.thumbnail || t.thumbnail,
-                hasCustomArtwork: true
-              };
-            }
-          } catch (e) {}
-          return null;
-        })
-      );
-      return resolved.filter(Boolean);
-    };
+    Promise.all([
+      searchYouTubeMusic('Global Top Hits 2026', 20),
+      searchInnerTube('Top 50 Global Hits Official', 25, false),
+      searchYts('Billboard Hot 100 2026', 15)
+    ]).then(([ytm, yt, ytsR]) => mergeAndDeduplicateTracks([ytm, yt, ytsR], 25))
+  ]);
 
-    const [resolvedIsraelCharts, resolvedGlobalCharts] = await Promise.all([
-      resolveList(itunesChartTracks),
-      resolveList(deezerChartTracks)
-    ]);
-
-    let finalIsraelTracks = resolvedIsraelCharts;
-    if (finalIsraelTracks.length < 8) {
-      const fallbackYt = await searchInnerTube('להיטי ישראל 2026 רשמי', 25);
-      finalIsraelTracks = mergeAndDeduplicateTracks([finalIsraelTracks, fallbackYt], 25);
-    }
-
-    let finalGlobalTracks = resolvedGlobalCharts;
-    if (finalGlobalTracks.length < 8) {
-      const fallbackGlobal = await searchInnerTube('Global Top Hits 2026 Official', 25);
-      finalGlobalTracks = mergeAndDeduplicateTracks([finalGlobalTracks, fallbackGlobal], 25);
-    }
-
-    if (finalIsraelTracks.length > 0) {
-      liveChartSections.push({
-        id: 'israel_official_chart',
-        title: 'מצעד ישראל הרשמי — Top Charts',
-        subtitle: 'השירים הכי מושמעים בישראל ברגע זה (בזמן אמת)',
-        tracks: finalIsraelTracks
-      });
-    }
-
-    if (finalGlobalTracks.length > 0) {
-      liveChartSections.push({
-        id: 'global_top_chart',
-        title: 'המצעד העולמי — Global Top 50',
-        subtitle: 'הלהיטים הגדולים ביותר בעולם כרגע',
-        tracks: finalGlobalTracks
-      });
-    }
-  } else {
-    // Legacy Hybrid Mode (Rollback Path)
-    const [itunesChartTracks, deezerChartTracks] = await Promise.all([
-      fetchItunesChartTracks('IL', 30),
-      fetchDeezerChartTracks(30)
-    ]);
-
-    if (itunesChartTracks && itunesChartTracks.length > 0) {
-      liveChartSections.push({
-        id: 'israel_official_chart',
-        title: 'מצעד ישראל הרשמי — Top Charts',
-        subtitle: 'השירים הכי מושמעים בישראל ברגע זה (בזמן אמת)',
-        tracks: itunesChartTracks
-      });
-    }
-
-    if (deezerChartTracks && deezerChartTracks.length > 0) {
-      liveChartSections.push({
-        id: 'global_top_chart',
-        title: 'המצעד העולמי — Global Top 50',
-        subtitle: 'הלהיטים הגדולים ביותר בעולם כרגע',
-        tracks: deezerChartTracks
-      });
-    }
+  if (israelChartTracks.length > 0) {
+    liveChartSections.push({
+      id: 'israel_official_chart',
+      title: 'מצעד ישראל הרשמי — Top Charts',
+      subtitle: 'השירים הכי מושמעים בישראל ברגע זה (בזמן אמת מיוטיוב)',
+      tracks: israelChartTracks
+    });
   }
 
-  // 2. Fetch curated genre and mood shelves
+  if (globalChartTracks.length > 0) {
+    liveChartSections.push({
+      id: 'global_top_chart',
+      title: 'המצעד העולמי — Global Top 50',
+      subtitle: 'הלהיטים הגדולים ביותר בעולם כרגע (בזמן אמת מיוטיוב)',
+      tracks: globalChartTracks
+    });
+  }
+
+  // 2. Fetch curated genre and mood shelves (Pure YouTube)
   const sectionPromises = CATALOG_SECTION_DEFS.map(async (def) => {
     const queryLists = await Promise.all(
-      def.queries.map(q => {
-        if (USE_YOUTUBE_PRIMARY) {
-          return Promise.all([
-            searchYouTubeMusic(q, 15),
-            searchInnerTube(q, 20, false),
-            searchYts(q, 10)
-          ]).then(([ytm, yt, ytsR]) => mergeAndDeduplicateTracks([ytm, yt, ytsR], 25));
-        }
-        return Promise.all([
-          searchInnerTube(q, 20),
-          searchDeezer(q, 15)
-        ]).then(([yt, dz]) => mergeAndDeduplicateTracks([yt, dz], 25));
-      })
+      def.queries.map(q =>
+        Promise.all([
+          searchYouTubeMusic(q, 15),
+          searchInnerTube(q, 20, false),
+          searchYts(q, 10)
+        ]).then(([ytm, yt, ytsR]) => mergeAndDeduplicateTracks([ytm, yt, ytsR], 25))
+      )
     );
     const tracks = mergeAndDeduplicateTracks(queryLists, 28);
     return {
