@@ -185,6 +185,48 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [activeSearchFilter, setActiveSearchFilter] = useState('all'); // 'all' | 'songs'
+
+  // Recent searches state (persisted in localStorage)
+  const [recentSearches, setRecentSearches] = useState(() => {
+    try {
+      const saved = localStorage.getItem('spotifree_recent_searches');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const addRecentSearch = useCallback((query) => {
+    const trimmed = String(query || '').trim();
+    if (!trimmed || trimmed.length < 2) return;
+    setRecentSearches(prev => {
+      const filtered = prev.filter(q => q.toLowerCase() !== trimmed.toLowerCase());
+      const updated = [trimmed, ...filtered].slice(0, 10);
+      try {
+        localStorage.setItem('spotifree_recent_searches', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+  }, []);
+
+  const removeRecentSearch = useCallback((queryToRemove, e) => {
+    e?.stopPropagation();
+    setRecentSearches(prev => {
+      const updated = prev.filter(q => q !== queryToRemove);
+      try {
+        localStorage.setItem('spotifree_recent_searches', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+  }, []);
+
+  const clearAllRecentSearches = useCallback(() => {
+    setRecentSearches([]);
+    try {
+      localStorage.removeItem('spotifree_recent_searches');
+    } catch (e) {}
+  }, []);
 
   // Trending tracks & multi-shelf catalog for Home view
   const [trendingTracks, setTrendingTracks] = useState([]);
@@ -565,7 +607,7 @@ export default function App() {
     return () => { isMounted = false; };
   }, [currentTrackKey]);
 
-  // Live debounced search as the user types (320ms)
+  // Live debounced search as the user types (240ms for snappy instant feedback)
   useEffect(() => {
     const trimmed = searchQuery.trim();
     if (!trimmed) {
@@ -585,7 +627,7 @@ export default function App() {
         })
         .catch(err => console.error('Live search error:', err))
         .finally(() => setIsSearching(false));
-    }, 320);
+    }, 240);
 
     return () => clearTimeout(timer);
   }, [searchQuery]);
@@ -596,6 +638,7 @@ export default function App() {
     if (!trimmed) return;
     if (currentView !== 'search') setCurrentView('search');
 
+    addRecentSearch(trimmed);
     setIsSearching(true);
     try {
       const results = await searchTracks(trimmed);
@@ -696,6 +739,9 @@ export default function App() {
   };
 
   const handlePlayTrack = (track, queueList = null, index = -1) => {
+    if (currentView === 'search' && searchQuery.trim()) {
+      addRecentSearch(searchQuery.trim());
+    }
     player.playTrack(track, queueList, index);
     recordTrackPlay(track);
     setTimeout(() => {
@@ -850,10 +896,13 @@ export default function App() {
             <Search className="w-5 h-5 text-[#b3b3b3] flex-shrink-0" />
             <input
               type="text"
-              placeholder="מה אתם רוצים לנגן?"
+              placeholder="מה אתם רוצים לנגן? (חיפוש ביוטיוב)"
               value={searchQuery}
               onFocus={() => {
                 if (currentView !== 'search') setCurrentView('search');
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setSearchQuery('');
               }}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
@@ -865,9 +914,10 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
-                className="text-[#b3b3b3] hover:text-white"
+                className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center text-[#b3b3b3] hover:text-white transition-colors flex-shrink-0"
+                title="נקה חיפוש"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             ) : (
               <div className="flex items-center gap-2.5 pr-2 border-r border-white/15 text-[#b3b3b3]">
@@ -1000,18 +1050,22 @@ export default function App() {
                     <Search className="w-5 h-5 absolute right-3.5 top-1/2 -translate-y-1/2 text-[#121212]" />
                     <input
                       type="text"
-                      placeholder="מה אתם רוצים לנגן?"
+                      placeholder="מה אתם רוצים לנגן? (ביוטיוב)"
                       value={searchQuery}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') setSearchQuery('');
+                      }}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full h-11 bg-white text-[#121212] font-semibold text-[15px] pr-11 pl-10 rounded-[6px] focus:outline-none placeholder:text-zinc-500 text-right shadow-sm"
+                      className="w-full h-11 bg-white text-[#121212] font-semibold text-[15px] pr-11 pl-10 rounded-[8px] focus:outline-none placeholder:text-zinc-500 text-right shadow-sm focus:ring-2 focus:ring-spotify-green"
                     />
                     {searchQuery && (
                       <button
                         type="button"
                         onClick={() => setSearchQuery('')}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600"
+                        className="w-7 h-7 rounded-full bg-black/10 hover:bg-black/20 flex items-center justify-center absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-700"
+                        title="נקה חיפוש"
                       >
-                        <X className="w-5 h-5" />
+                        <X className="w-4 h-4" />
                       </button>
                     )}
                   </form>
@@ -1465,157 +1519,278 @@ export default function App() {
 
             {/* ==================== VIEW: SEARCH ==================== */}
             {currentView === 'search' && (
-              <div className="flex flex-col gap-4 animate-fadeIn">
-                {isSearching ? (
-                  <div className="flex items-center justify-center p-12 text-[#b3b3b3] gap-3">
-                    <Loader2 className="w-6 h-6 animate-spin text-spotify-green" />
-                    <span className="text-sm">מחפש במאגר המורחב (YouTube, Deezer, iTunes)...</span>
-                  </div>
-                ) : searchResults.length > 0 ? (
+              <div className="flex flex-col gap-6 animate-fadeIn pb-12">
+                {/* Search Quick Suggestions & Recent Searches when no query typed */}
+                {!searchQuery.trim() && (
                   <div className="flex flex-col gap-6">
-                    {/* Top Result + Top 4 Songs layout */}
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                      {/* Top Result Card ("התוצאה העליונה") */}
-                      <div className="lg:col-span-5 flex flex-col gap-3">
-                        <h2 className="text-xl md:text-2xl font-bold text-white">התוצאה העליונה</h2>
-                        {(() => {
-                          const topTrack = searchResults[0];
-                          const isCurrent = isSameTrack(player.currentTrack, topTrack);
-                          const isCurrentPlaying = isCurrent && player.isPlaying;
-                          const isCurrentLoading = isCurrent && player.isLoading;
-                          return (
-                            <div
-                              onClick={() => handlePlayTrack(topTrack, searchResults, 0)}
-                              className="relative group bg-[#181818] hover:bg-[#282828] p-5 rounded-lg transition-colors cursor-pointer flex flex-col justify-between min-h-[220px]"
-                            >
-                              <div className="flex flex-col gap-3">
-                                {topTrack.thumbnail ? (
-                                  <img
-                                    src={topTrack.thumbnail}
-                                    alt={topTrack.title}
-                                    className="w-24 h-24 md:w-28 md:h-28 rounded-md object-cover shadow-2xl"
-                                    onError={(e) => {
-                                      e.target.style.display = 'none';
-                                    }}
-                                  />
-                                ) : (
-                                  <div className="w-24 h-24 md:w-28 md:h-28 rounded-md bg-[#282828] flex items-center justify-center shadow-2xl">
-                                    <Music2 className="w-10 h-10 text-[#b3b3b3]" />
-                                  </div>
-                                )}
-                                <div>
-                                  <h3 className="text-2xl md:text-3xl font-extrabold text-white line-clamp-1">
-                                    {topTrack.title}
-                                  </h3>
-                                  <div className="flex items-center gap-2 mt-2 text-sm text-[#b3b3b3]">
-                                    <span className="font-medium text-white">{topTrack.artist || 'אמן לא ידוע'}</span>
-                                    <span className="bg-[#121212] text-xs font-bold px-2.5 py-0.5 rounded-full text-white">שיר</span>
-                                  </div>
-                                </div>
-                              </div>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handlePlayTrack(topTrack, searchResults, 0);
-                                }}
-                                className="absolute bottom-5 left-5 w-12 h-12 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-xl opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 hover:scale-105 active:scale-95"
-                                title={isCurrentPlaying ? 'השהה' : 'נגן'}
-                              >
-                                {isCurrentLoading ? (
-                                  <Loader2 className="w-5 h-5 animate-spin text-black" />
-                                ) : isCurrentPlaying ? (
-                                  <Pause className="w-5 h-5 fill-black" />
-                                ) : (
-                                  <Play className="w-5 h-5 fill-black translate-x-0.5" />
-                                )}
-                              </button>
-                            </div>
-                          );
-                        })()}
-                      </div>
-
-                      {/* Top 4 Songs List ("שירים") */}
-                      <div className="lg:col-span-7 flex flex-col gap-3">
+                    {/* Recent Searches */}
+                    {recentSearches.length > 0 && (
+                      <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between">
-                          <h2 className="text-xl md:text-2xl font-bold text-white">שירים</h2>
+                          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                            <Clock className="w-5 h-5 text-spotify-green" />
+                            <span>חיפושים אחרונים</span>
+                          </h2>
                           <button
-                            onClick={() => handlePlayTrack(searchResults[0], searchResults, 0)}
-                            className="text-xs font-bold text-spotify-green hover:underline flex items-center gap-1"
+                            onClick={clearAllRecentSearches}
+                            className="text-xs font-semibold text-[#b3b3b3] hover:text-white transition-colors"
                           >
-                            <Play className="w-3.5 h-3.5 fill-spotify-green" />
-                            <span>נגן את כל התוצאות</span>
+                            נקה הכל
                           </button>
                         </div>
-                        <div className="flex flex-col">
-                          {searchResults.slice(0, 4).map((track, idx) => (
-                            <TrackRow
-                              key={track.id || idx}
-                              index={idx}
-                              track={track}
-                              isCurrentTrack={isSameTrack(player.currentTrack, track)}
-                              isPlaying={player.isPlaying}
-                              isLoading={player.isLoading}
-                              onPlay={(t) => handlePlayTrack(t, searchResults, idx)}
-                              isLiked={likedSongs.some(s => isSameTrack(s, track))}
-                              onToggleLike={handleToggleLike}
-                              isDownloaded={isTrackInIdSet(track, downloadedIds)}
-                              isDownloading={isTrackInIdSet(track, downloadingIds)}
-                              isQueuedDownload={isTrackInIdSet(track, queuedDownloadIds)}
-                              downloadProgress={
-                                downloadProgress[track.id] ||
-                                downloadProgress[track.streamableId] ||
-                                downloadProgress[track.originalId] ||
-                                0
-                              }
-                              onDownload={handleDownloadTrack}
-                              onOpenAddToPlaylist={handleOpenAddToPlaylist}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* More Results ("תוצאות נוספות") */}
-                    {searchResults.length > 4 && (
-                      <div className="flex flex-col gap-2 mt-2">
-                        <h2 className="text-xl font-bold text-white px-2">תוצאות נוספות</h2>
-                        <div className="flex flex-col">
-                          {searchResults.slice(4).map((track, idx) => (
-                            <TrackRow
-                              key={track.id || (idx + 4)}
-                              index={idx + 4}
-                              track={track}
-                              isCurrentTrack={isSameTrack(player.currentTrack, track)}
-                              isPlaying={player.isPlaying}
-                              isLoading={player.isLoading}
-                              onPlay={(t) => handlePlayTrack(t, searchResults, idx + 4)}
-                              isLiked={likedSongs.some(s => isSameTrack(s, track))}
-                              onToggleLike={handleToggleLike}
-                              isDownloaded={isTrackInIdSet(track, downloadedIds)}
-                              isDownloading={isTrackInIdSet(track, downloadingIds)}
-                              isQueuedDownload={isTrackInIdSet(track, queuedDownloadIds)}
-                              downloadProgress={
-                                downloadProgress[track.id] ||
-                                downloadProgress[track.streamableId] ||
-                                downloadProgress[track.originalId] ||
-                                0
-                              }
-                              onDownload={handleDownloadTrack}
-                              onOpenAddToPlaylist={handleOpenAddToPlaylist}
-                            />
+                        <div className="flex flex-wrap gap-2.5">
+                          {recentSearches.map((term, i) => (
+                            <div
+                              key={i}
+                              onClick={() => {
+                                setSearchQuery(term);
+                                addRecentSearch(term);
+                              }}
+                              className="group flex items-center gap-2 bg-[#222222] hover:bg-[#2e2e2e] text-white text-xs font-medium px-4 py-2 rounded-full cursor-pointer transition-all border border-white/5 hover:border-white/20 active:scale-95"
+                            >
+                              <Clock className="w-3.5 h-3.5 text-[#b3b3b3] group-hover:text-spotify-green transition-colors" />
+                              <span className="font-semibold">{term}</span>
+                              <button
+                                onClick={(e) => removeRecentSearch(term, e)}
+                                className="w-4 h-4 rounded-full hover:bg-white/20 flex items-center justify-center text-[#888] hover:text-white transition-colors mr-1"
+                                title="הסר מחיפושים אחרונים"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
                           ))}
                         </div>
                       </div>
                     )}
+
+                    {/* Trending / Hot Searches */}
+                    <div className="flex flex-col gap-3">
+                      <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                        <Flame className="w-5 h-5 text-[#ff4b4b]" />
+                        <span>חיפושים פופולריים ביוטיוב</span>
+                      </h2>
+                      <div className="flex flex-wrap gap-2.5">
+                        {[
+                          'פאר טסי', 'עומר אדם', 'אושר כהן', 'טונה', 'עדן חסון',
+                          'רביד פלוטניק', 'יסמין מועלם', 'שירים שקטים', 'להיטים 2026', 'פסטיגל'
+                        ].map((suggestion, i) => (
+                          <button
+                            key={i}
+                            onClick={() => {
+                              setSearchQuery(suggestion);
+                              addRecentSearch(suggestion);
+                            }}
+                            className="bg-[#181818] hover:bg-[#252525] border border-white/10 hover:border-spotify-green/50 text-[#e0e0e0] hover:text-white text-xs font-semibold px-4 py-2 rounded-full transition-all flex items-center gap-2 active:scale-95 shadow-sm"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-spotify-green flex-shrink-0" />
+                            <span>{suggestion}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Search in progress */}
+                {isSearching ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-[#b3b3b3] gap-3">
+                    <Loader2 className="w-8 h-8 animate-spin text-spotify-green" />
+                    <span className="text-base font-bold text-white">מחפש שירים ואמנים ביוטיוב...</span>
+                    <span className="text-xs text-[#888]">שולף תוצאות רשמיות באיכות אולפן מיוטיוב</span>
+                  </div>
+                ) : searchResults.length > 0 ? (
+                  <div className="flex flex-col gap-6">
+                    {/* Quick Filters & Actions Bar */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => setActiveSearchFilter('all')}
+                        className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
+                          activeSearchFilter === 'all'
+                            ? 'bg-white text-black shadow-md'
+                            : 'bg-[#222222] text-[#b3b3b3] hover:text-white hover:bg-[#2c2c2c]'
+                        }`}
+                      >
+                        הכל ({searchResults.length})
+                      </button>
+                      <button
+                        onClick={() => setActiveSearchFilter('songs')}
+                        className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
+                          activeSearchFilter === 'songs'
+                            ? 'bg-white text-black shadow-md'
+                            : 'bg-[#222222] text-[#b3b3b3] hover:text-white hover:bg-[#2c2c2c]'
+                        }`}
+                      >
+                        שירים בלבד
+                      </button>
+                      <button
+                        onClick={() => handlePlayTrack(searchResults[0], searchResults, 0)}
+                        className="mr-auto px-4 py-1.5 rounded-full bg-spotify-green text-black hover:scale-105 active:scale-95 transition-all text-xs font-bold flex items-center gap-1.5 shadow-lg"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-black" />
+                        <span>נגן את כל התוצאות</span>
+                      </button>
+                    </div>
+
+                    {/* Top Result + Top 4 Songs layout (when filter is 'all') */}
+                    {activeSearchFilter === 'all' && (
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        {/* Top Result Card ("התוצאה העליונה") */}
+                        <div className="lg:col-span-5 flex flex-col gap-3">
+                          <h2 className="text-xl md:text-2xl font-bold text-white">התוצאה העליונה</h2>
+                          {(() => {
+                            const topTrack = searchResults[0];
+                            const isCurrent = isSameTrack(player.currentTrack, topTrack);
+                            const isCurrentPlaying = isCurrent && player.isPlaying;
+                            const isCurrentLoading = isCurrent && player.isLoading;
+                            return (
+                              <div
+                                onClick={() => handlePlayTrack(topTrack, searchResults, 0)}
+                                className="relative group bg-[#181818] hover:bg-[#282828] p-5 rounded-lg transition-colors cursor-pointer flex flex-col justify-between min-h-[220px]"
+                              >
+                                <div className="flex flex-col gap-3">
+                                  {topTrack.thumbnail ? (
+                                    <img
+                                      src={topTrack.thumbnail}
+                                      alt={topTrack.title}
+                                      className="w-24 h-24 md:w-28 md:h-28 rounded-md object-cover shadow-2xl"
+                                      onError={(e) => {
+                                        e.target.style.display = 'none';
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className="w-24 h-24 md:w-28 md:h-28 rounded-md bg-[#282828] flex items-center justify-center shadow-2xl">
+                                      <Music2 className="w-10 h-10 text-[#b3b3b3]" />
+                                    </div>
+                                  )}
+                                  <div>
+                                    <h3 className="text-2xl md:text-3xl font-extrabold text-white line-clamp-1">
+                                      {topTrack.title}
+                                    </h3>
+                                    <div className="flex items-center gap-2 mt-2 text-sm text-[#b3b3b3]">
+                                      <span className="font-medium text-white">{topTrack.artist || 'אמן לא ידוע'}</span>
+                                      <span className="bg-[#121212] text-xs font-bold px-2.5 py-0.5 rounded-full text-white">שיר</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handlePlayTrack(topTrack, searchResults, 0);
+                                  }}
+                                  className="absolute bottom-5 left-5 w-12 h-12 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-xl opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 hover:scale-105 active:scale-95"
+                                  title={isCurrentPlaying ? 'השהה' : 'נגן'}
+                                >
+                                  {isCurrentLoading ? (
+                                    <Loader2 className="w-5 h-5 animate-spin text-black" />
+                                  ) : isCurrentPlaying ? (
+                                    <Pause className="w-5 h-5 fill-black" />
+                                  ) : (
+                                    <Play className="w-5 h-5 fill-black translate-x-0.5" />
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        {/* Top 4 Songs List ("שירים") */}
+                        <div className="lg:col-span-7 flex flex-col gap-3">
+                          <h2 className="text-xl md:text-2xl font-bold text-white">שירים</h2>
+                          <div className="flex flex-col">
+                            {searchResults.slice(0, 4).map((track, idx) => (
+                              <TrackRow
+                                key={track.id || idx}
+                                index={idx}
+                                track={track}
+                                isCurrentTrack={isSameTrack(player.currentTrack, track)}
+                                isPlaying={player.isPlaying}
+                                isLoading={player.isLoading}
+                                onPlay={(t) => handlePlayTrack(t, searchResults, idx)}
+                                isLiked={likedSongs.some(s => isSameTrack(s, track))}
+                                onToggleLike={handleToggleLike}
+                                isDownloaded={isTrackInIdSet(track, downloadedIds)}
+                                isDownloading={isTrackInIdSet(track, downloadingIds)}
+                                isQueuedDownload={isTrackInIdSet(track, queuedDownloadIds)}
+                                downloadProgress={
+                                  downloadProgress[track.id] ||
+                                  downloadProgress[track.streamableId] ||
+                                  downloadProgress[track.originalId] ||
+                                  0
+                                }
+                                onDownload={handleDownloadTrack}
+                                onOpenAddToPlaylist={handleOpenAddToPlaylist}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* All / More Results */}
+                    {((activeSearchFilter === 'all' && searchResults.length > 4) || activeSearchFilter === 'songs') && (
+                      <div className="flex flex-col gap-2 mt-2">
+                        <h2 className="text-xl font-bold text-white px-2">
+                          {activeSearchFilter === 'songs' ? 'כל השירים' : 'תוצאות נוספות'}
+                        </h2>
+                        <div className="flex flex-col">
+                          {(activeSearchFilter === 'songs' ? searchResults : searchResults.slice(4)).map((track, idx) => {
+                            const actualIdx = activeSearchFilter === 'songs' ? idx : idx + 4;
+                            return (
+                              <TrackRow
+                                key={track.id || actualIdx}
+                                index={actualIdx}
+                                track={track}
+                                isCurrentTrack={isSameTrack(player.currentTrack, track)}
+                                isPlaying={player.isPlaying}
+                                isLoading={player.isLoading}
+                                onPlay={(t) => handlePlayTrack(t, searchResults, actualIdx)}
+                                isLiked={likedSongs.some(s => isSameTrack(s, track))}
+                                onToggleLike={handleToggleLike}
+                                isDownloaded={isTrackInIdSet(track, downloadedIds)}
+                                isDownloading={isTrackInIdSet(track, downloadingIds)}
+                                isQueuedDownload={isTrackInIdSet(track, queuedDownloadIds)}
+                                downloadProgress={
+                                  downloadProgress[track.id] ||
+                                  downloadProgress[track.streamableId] ||
+                                  downloadProgress[track.originalId] ||
+                                  0
+                                }
+                                onDownload={handleDownloadTrack}
+                                onOpenAddToPlaylist={handleOpenAddToPlaylist}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : searchQuery.trim() ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
+                    <div className="w-16 h-16 rounded-full bg-[#1e1e1e] flex items-center justify-center text-[#888]">
+                      <Search className="w-8 h-8" />
+                    </div>
+                    <h3 className="text-xl font-bold text-white">לא נמצאו תוצאות עבור &quot;{searchQuery}&quot;</h3>
+                    <p className="text-sm text-[#b3b3b3] max-w-sm">
+                      ודאו שאין שגיאות כתיב, או נסו לחפש שיר אחר, שם אמן או סגנון מוזיקלי ביוטיוב.
+                    </p>
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="mt-2 px-6 py-2.5 rounded-full bg-white text-black font-bold text-xs hover:scale-105 active:scale-95 transition-all shadow-md"
+                    >
+                      נקה חיפוש
+                    </button>
                   </div>
                 ) : (
                   <div className="flex flex-col gap-3 mt-1">
-                    <h2 className="font-bold text-base text-white">עיון בהכל</h2>
+                    <h2 className="font-bold text-base text-white">עיון בכל הקטגוריות</h2>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                       {BROWSE_CATEGORIES.map((cat, idx) => (
                         <div
                           key={idx}
-                          onClick={() => setSearchQuery(cat.query)}
+                          onClick={() => {
+                            setSearchQuery(cat.query);
+                            addRecentSearch(cat.title);
+                          }}
                           className={`${cat.color} h-24 sm:h-28 rounded-[8px] p-3.5 relative overflow-hidden cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-transform shadow-md`}
                         >
                           <span className="font-extrabold text-base text-white leading-snug block max-w-[75%] text-right">
