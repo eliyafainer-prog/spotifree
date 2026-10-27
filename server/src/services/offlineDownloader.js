@@ -787,8 +787,10 @@ async function pipeHlsDownload(m3u8Url, req, res) {
       ];
       const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-      let hasData = false;
       let killed = false;
+      let totalBytesOut = 0;
+      let bufferedChunks = [];
+      const PRE_FLUSH_THRESHOLD = 50 * 1024; // Buffer at least 50KB to verify ffmpeg output before committing headers
 
       const cleanup = () => {
         if (!killed) {
@@ -801,15 +803,23 @@ async function pipeHlsDownload(m3u8Url, req, res) {
 
       const ffmpegDone = await new Promise((resolve) => {
         proc.stdout.on('data', (chunk) => {
-          if (!hasData) {
-            hasData = true;
-            res.statusCode = 200;
-            res.setHeader('Content-Type', 'audio/mpeg');
-            res.setHeader('Accept-Ranges', 'bytes');
-            res.setHeader('Cache-Control', 'no-store');
-            if (typeof res.flushHeaders === 'function') res.flushHeaders();
-          }
-          if (!res.writableEnded) {
+          totalBytesOut += chunk.length;
+
+          if (!res.headersSent) {
+            bufferedChunks.push(chunk);
+            if (totalBytesOut >= PRE_FLUSH_THRESHOLD) {
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'audio/mpeg');
+              res.setHeader('Accept-Ranges', 'bytes');
+              res.setHeader('Cache-Control', 'no-store');
+              if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+              for (const b of bufferedChunks) {
+                if (!res.writableEnded) res.write(b);
+              }
+              bufferedChunks = null;
+            }
+          } else if (!res.writableEnded) {
             const ok = res.write(chunk);
             if (!ok) {
               proc.stdout.pause();
@@ -829,7 +839,20 @@ async function pipeHlsDownload(m3u8Url, req, res) {
 
         proc.on('close', (code) => {
           req.removeListener('close', cleanup);
-          if (code === 0 && hasData) {
+          if (code === 0 && totalBytesOut >= PRE_FLUSH_THRESHOLD) {
+            if (!res.headersSent) {
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'audio/mpeg');
+              res.setHeader('Accept-Ranges', 'bytes');
+              res.setHeader('Cache-Control', 'no-store');
+              if (typeof res.flushHeaders === 'function') res.flushHeaders();
+              if (bufferedChunks) {
+                for (const b of bufferedChunks) {
+                  if (!res.writableEnded) res.write(b);
+                }
+                bufferedChunks = null;
+              }
+            }
             if (!res.writableEnded) res.end();
             resolve(true);
           } else {
@@ -841,9 +864,17 @@ async function pipeHlsDownload(m3u8Url, req, res) {
       if (ffmpegDone) {
         return;
       }
+
+      console.warn(`[OfflineDownloader] ffmpeg produced insufficient data (${totalBytesOut} bytes), falling back to Node.js segment unpacker...`);
     } catch (e) {
       console.warn('[OfflineDownloader] ffmpeg remux fallback:', e.message);
     }
+  }
+
+  // If headers were already committed by ffmpeg, we cannot fall back to Node.js HLS unpacker
+  if (res.headersSent) {
+    if (!res.writableEnded) res.end();
+    return;
   }
 
   const m3u8Res = await axios.get(m3u8Url, {

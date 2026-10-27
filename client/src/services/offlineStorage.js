@@ -2,11 +2,23 @@ const DB_NAME = 'SpotiFreeOfflineDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'offline_tracks';
 
+export const MIN_AUDIO_SIZE_BYTES = 50 * 1024; // 50 KB
+
 let cachedDbPromise = null;
 
 // Synchronous in-memory index cache for 0ms instant offline checks (preserves browser transient user activation!)
 const offlineIndexSet = new Set();
 let isOfflineCachePopulated = false;
+
+/**
+ * Validate that an offline track record contains a valid, playable audio blob (>= 50KB).
+ * If corrupted/empty, deletes the record from IndexedDB and memory index.
+ */
+function isRecordValidAudio(record) {
+  if (!record || !record.audioBlob) return false;
+  const size = record.audioBlob.size !== undefined ? record.audioBlob.size : (record.sizeBytes || 0);
+  return typeof size === 'number' && size >= MIN_AUDIO_SIZE_BYTES;
+}
 
 function addToOfflineIndex(item) {
   if (!item) return;
@@ -39,7 +51,11 @@ export async function initOfflineCache() {
         offlineIndexSet.clear();
         const items = req.result || [];
         for (const item of items) {
-          addToOfflineIndex(item);
+          if (isRecordValidAudio(item)) {
+            addToOfflineIndex(item);
+          } else if (item?.id) {
+            deleteOfflineTrack(item.id).catch(() => {});
+          }
         }
         isOfflineCachePopulated = true;
         resolve(true);
@@ -160,14 +176,30 @@ async function fetchCoverAsDataUrl(url) {
  * Save track, audio blob, and optional lyrics data to IndexedDB (with cached offline artwork and all ID aliases)
  */
 export async function saveTrackOffline(track, audioBlob, lyricsData = null) {
-  if (!track || !audioBlob) throw new Error('Track and audioBlob are required');
-  const cachedThumb = await fetchCoverAsDataUrl(track.thumbnail);
-  const db = await openDB();
+  if (!track || !audioBlob) {
+    throw new Error('Track and audioBlob are required for offline saving');
+  }
+
+  // Validate Blob / ArrayBuffer size (must be at least 50KB to ensure valid audio data and prevent saving 0:00 corrupted files)
+  const MIN_AUDIO_SIZE_BYTES = 50 * 1024; // 50 KB
+  const blobSize = audioBlob.size !== undefined ? audioBlob.size : (audioBlob.byteLength || 0);
+
+  if (!blobSize || blobSize < MIN_AUDIO_SIZE_BYTES) {
+    throw new Error(`קובץ השמע אינו תקין או קטן מדי (${Math.round((blobSize || 0) / 1024)}KB). נדרש לפחות 50KB.`);
+  }
 
   // Ensure audioBlob has explicit audio MIME type
   const finalBlob = audioBlob.type && audioBlob.type.startsWith('audio/')
     ? audioBlob
     : new Blob([audioBlob], { type: 'audio/mpeg' });
+
+  // Secondary verification on constructed blob size
+  if (finalBlob.size < MIN_AUDIO_SIZE_BYTES) {
+    throw new Error(`קובץ השמע פגום או ריק (${Math.round(finalBlob.size / 1024)}KB). ההורדה לא הושלמה.`);
+  }
+
+  const cachedThumb = await fetchCoverAsDataUrl(track.thumbnail);
+  const db = await openDB();
 
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -291,6 +323,18 @@ export async function getOfflineTrack(trackOrId) {
 
   try {
     const db = await openDB();
+    const handleResult = (record) => {
+      if (!record) return null;
+      if (!isRecordValidAudio(record)) {
+        console.warn(`[OfflineStorage] Auto-cleaning corrupt/short offline record: ${record.id} (${record.title})`);
+        if (record.id) {
+          deleteOfflineTrack(record.id).catch(() => {});
+        }
+        return null;
+      }
+      return record;
+    };
+
     return new Promise((resolve) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
@@ -305,7 +349,7 @@ export async function getOfflineTrack(trackOrId) {
               const itemIds = [item.id, item.streamableId, item.originalId, item.spotifyId, item.videoId].filter(Boolean).map(String);
               return candidateIds.some(cid => itemIds.includes(cid));
             });
-            if (idMatch) return resolve(idMatch);
+            if (idMatch) return resolve(handleResult(idMatch));
 
             if (trackOrId.title) {
               const targetTitle = normMetaStr(trackOrId.title);
@@ -318,7 +362,7 @@ export async function getOfflineTrack(trackOrId) {
                 if (!targetArtist || !iArtist) return true;
                 return iArtist === targetArtist || iArtist.includes(targetArtist) || targetArtist.includes(iArtist);
               });
-              if (titleMatch) return resolve(titleMatch);
+              if (titleMatch) return resolve(handleResult(titleMatch));
             }
           } else {
             const strId = String(trackOrId);
@@ -326,7 +370,7 @@ export async function getOfflineTrack(trackOrId) {
               const itemIds = [item.id, item.streamableId, item.originalId, item.spotifyId, item.videoId].filter(Boolean).map(String);
               return itemIds.includes(strId);
             });
-            if (strMatch) return resolve(strMatch);
+            if (strMatch) return resolve(handleResult(strMatch));
           }
           resolve(null);
         };
@@ -335,7 +379,7 @@ export async function getOfflineTrack(trackOrId) {
 
       const request = store.get(lookupIds[0]);
       request.onsuccess = () => {
-        if (request.result) return resolve(request.result);
+        if (request.result) return resolve(handleResult(request.result));
         searchAll();
       };
       request.onerror = () => searchAll();
@@ -379,11 +423,20 @@ export async function getAllOfflineTracks() {
       request.onsuccess = () => {
         const rawResults = request.result || [];
         offlineIndexSet.clear();
+        const validResults = [];
+
         for (const item of rawResults) {
-          addToOfflineIndex(item);
+          if (isRecordValidAudio(item)) {
+            addToOfflineIndex(item);
+            validResults.push(item);
+          } else if (item?.id) {
+            console.warn(`[OfflineStorage] Cleaning invalid/empty offline record: ${item.id} (${item.title})`);
+            deleteOfflineTrack(item.id).catch(() => {});
+          }
         }
+
         isOfflineCachePopulated = true;
-        const results = rawResults.sort((a, b) => b.downloadedAt - a.downloadedAt);
+        const results = validResults.sort((a, b) => b.downloadedAt - a.downloadedAt);
         try {
           const rawOrder = localStorage.getItem(OFFLINE_ORDER_KEY);
           if (rawOrder) {
