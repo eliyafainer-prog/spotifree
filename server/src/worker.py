@@ -122,14 +122,6 @@ def extract_best_audio(info):
         if u and u.startswith('http') and '.m3u8' not in u and not is_preview_url(u, fid):
             return u
 
-    # Priority 5: Full-length SoundCloud HLS AAC 160k / 96k / MP3 (remuxed by server ffmpeg at 0% CPU)
-    for pref_fid in ('hls_aac_160k', 'hls_aac_96k', 'hls_mp3_1_0', 'hls_mp3_0_0'):
-        for f in formats:
-            u = f.get('url') or ''
-            fid = (f.get('format_id') or '').lower()
-            if u and fid == pref_fid and not is_preview_url(u, fid):
-                return u
-
     for f in formats:
         u = f.get('url') or ''
         fid = (f.get('format_id') or '').lower()
